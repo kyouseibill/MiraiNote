@@ -1,7 +1,8 @@
-import os
 import re
 import json
-from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext
+
 import openpyxl
 
 
@@ -99,16 +100,12 @@ def read_weekly_report(file_path):
     读取单个周报Excel文件并提取信息
     返回包含日期和工作内容的字典
     """
-    print(f"\n{'='*80}")
-    print(f"文件: {os.path.basename(file_path)}")
-    print(f"{'='*80}")
-    
     result = {
         "start_date": None,
         "end_date": None,
         "work_items": []
     }
-    
+
     try:
         # 打开Excel文件
         workbook = openpyxl.load_workbook(file_path, data_only=True)
@@ -120,13 +117,9 @@ def read_weekly_report(file_path):
             start_date, end_date = extract_date_range(str(date_cell))
             result["start_date"] = start_date
             result["end_date"] = end_date
-            print(f"\n开始日期: {start_date}")
-            print(f"结束日期: {end_date}")
-        
+
         # 2. 提取主要工作内容（从第5行开始）
-        print(f"\n主要工作内容:")
-        print(f"{'-'*80}")
-        
+
         row_num = 5
         while True:
             # 读取A列的序号
@@ -169,78 +162,69 @@ def read_weekly_report(file_path):
             
             # 解析工作内容
             parsed_content = parse_work_content(work_content)
-            
+
             result["work_items"].append(parsed_content)
-            
-            # 输出当前行内容
-            print(f"标题: {parsed_content['title']}")
-            if parsed_content['purpose']:
-                print(f"  目的: {parsed_content['purpose'][:80]}...")
-            if parsed_content['process']:
-                print(f"  做法: {parsed_content['process'][:80]}...")
-            if parsed_content['result']:
-                print(f"  结果: {parsed_content['result'][:80]}...")
-            print()
-            
+
             row_num += 1
-            
+
             # 安全检查：避免无限循环
             if row_num > 1000:
                 break
-        
+
         workbook.close()
-        
+
     except Exception as e:
-        print(f"读取文件时出错: {e}")
-    
+        raise RuntimeError(f"读取文件时出错: {e}")
+
     return result
 
 
 def main():
     """
-    主函数：读取指定路径下的所有Excel文件
+    主函数：提供窗口选择文件并展示解析结果
     """
-    target_path = r"D:\浦林城建\人事与绩效\周报\读取"
-    
-    print(f"正在读取路径: {target_path}")
-    
-    # 检查路径是否存在
-    if not os.path.exists(target_path):
-        print(f"错误: 路径不存在 - {target_path}")
-        return
-    
-    # 获取所有Excel文件
-    excel_files = []
-    for file in os.listdir(target_path):
-        if file.endswith(('.xlsx', '.xls')) and not file.startswith('~$'):
-            excel_files.append(os.path.join(target_path, file))
-    
-    if not excel_files:
-        print("未找到Excel文件")
-        return
-    
-    print(f"找到 {len(excel_files)} 个Excel文件\n")
-    
-    # 存储所有文件的结果
-    all_results = []
-    
-    # 逐个读取并处理Excel文件
-    for file_path in sorted(excel_files):
-        file_result = read_weekly_report(file_path)
-        all_results.append(file_result)
-    
-    # 输出JSON数组
-    print(f"\n\n{'='*80}")
-    print("JSON输出:")
-    print(f"{'='*80}")
-    json_output = json.dumps(all_results, ensure_ascii=False, indent=2)
-    print(json_output)
-    
-    # 可选：保存到文件
-    output_file = os.path.join(target_path, "weekly_reports.json")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(json_output)
-    print(f"\nJSON数据已保存到: {output_file}")
+    root = tk.Tk()
+    root.title("周报解析器")
+    root.geometry("800x600")
+
+    frame = tk.Frame(root, padx=10, pady=10)
+    frame.pack(fill=tk.BOTH, expand=True)
+
+    description = tk.Label(frame, text="选择周报文件后将解析内容并以JSON数组形式显示", anchor="w")
+    description.pack(fill=tk.X, pady=(0, 8))
+
+    output_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, height=25)
+    output_text.pack(fill=tk.BOTH, expand=True)
+
+    def select_files():
+        file_paths = filedialog.askopenfilenames(
+            title="选择周报文件",
+            filetypes=[("Excel 文件", "*.xlsx *.xls"), ("所有文件", "*.*")]
+        )
+
+        if not file_paths:
+            return
+
+        all_results = []
+        for file_path in file_paths:
+            try:
+                file_result = read_weekly_report(file_path)
+                all_results.append(file_result)
+            except Exception as e:
+                messagebox.showerror("读取失败", str(e))
+
+        if all_results:
+            json_output = json.dumps(all_results, ensure_ascii=False, indent=2)
+            output_text.delete("1.0", tk.END)
+            output_text.insert(tk.END, json_output)
+        else:
+            output_text.delete("1.0", tk.END)
+            output_text.insert(tk.END, "未获取到有效数据")
+
+    select_button = tk.Button(frame, text="选择周报文件", command=select_files)
+    select_button.pack(side=tk.TOP, pady=(0, 10))
+
+    root.mainloop()
 
 
 if __name__ == "__main__":
