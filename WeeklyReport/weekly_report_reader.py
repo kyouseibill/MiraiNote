@@ -1,7 +1,8 @@
 import re
 import json
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+import tkinter.font as tkfont
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import openpyxl
 
@@ -184,24 +185,46 @@ def main():
     主函数：提供窗口选择文件并展示解析结果
     """
     root = tk.Tk()
-    root.title("周报解析器")
-    root.geometry("800x600")
+    root.title("周报解析助手")
+    root.geometry("900x650")
+    root.minsize(720, 520)
 
-    frame = tk.Frame(root, padx=10, pady=10)
-    frame.pack(fill=tk.BOTH, expand=True)
+    default_font = tkfont.nametofont("TkDefaultFont")
+    default_font.configure(family="Microsoft YaHei", size=11)
+    root.option_add("*Font", default_font)
 
-    description = tk.Label(frame, text="选择周报文件后将解析内容并以JSON数组形式显示", anchor="w")
-    description.pack(fill=tk.X, pady=(0, 8))
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    style.configure("TButton", padding=(12, 8))
+    style.configure("Title.TLabel", font=("Microsoft YaHei", 16, "bold"))
+    style.configure("Muted.TLabel", foreground="#555")
 
-    output_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, height=25)
-    output_text.pack(fill=tk.BOTH, expand=True)
+    container = ttk.Frame(root, padding=16)
+    container.pack(fill=tk.BOTH, expand=True)
+
+    title_label = ttk.Label(container, text="工作周报解析助手", style="Title.TLabel")
+    title_label.pack(anchor="w")
+
+    description = ttk.Label(
+        container,
+        text="选择一份或多份周报 Excel 文件，程序会解析日期与主要工作内容，并以 JSON 数组形式展示。",
+        style="Muted.TLabel",
+        wraplength=820,
+        anchor="w",
+    )
+    description.pack(fill=tk.X, pady=(6, 12))
+
+    button_row = ttk.Frame(container)
+    button_row.pack(fill=tk.X, pady=(0, 12))
 
     def select_files():
         file_paths = filedialog.askopenfilenames(
             title="选择周报文件",
             filetypes=[("Excel 文件", "*.xlsx *.xls"), ("所有文件", "*.*")]
         )
-
         if not file_paths:
             return
 
@@ -217,12 +240,38 @@ def main():
             json_output = json.dumps(all_results, ensure_ascii=False, indent=2)
             output_text.delete("1.0", tk.END)
             output_text.insert(tk.END, json_output)
+            status_var.set(f"已成功解析 {len(all_results)} 个文件")
         else:
             output_text.delete("1.0", tk.END)
             output_text.insert(tk.END, "未获取到有效数据")
+            status_var.set("未获取到有效数据")
 
-    select_button = tk.Button(frame, text="选择周报文件", command=select_files)
-    select_button.pack(side=tk.TOP, pady=(0, 10))
+    def clear_output():
+        output_text.delete("1.0", tk.END)
+        status_var.set("已清空结果")
+
+    select_button = ttk.Button(button_row, text="选择周报文件", command=select_files)
+    select_button.pack(side=tk.LEFT, padx=(0, 8))
+
+    clear_button = ttk.Button(button_row, text="清空结果", command=clear_output)
+    clear_button.pack(side=tk.LEFT)
+
+    status_var = tk.StringVar(value="尚未选择文件")
+    status_label = ttk.Label(button_row, textvariable=status_var, style="Muted.TLabel")
+    status_label.pack(side=tk.RIGHT)
+
+    output_frame = ttk.LabelFrame(container, text="解析结果", padding=12)
+    output_frame.pack(fill=tk.BOTH, expand=True)
+
+    output_text = scrolledtext.ScrolledText(
+        output_frame,
+        wrap=tk.WORD,
+        height=25,
+        padx=12,
+        pady=12,
+        font=("Microsoft YaHei", 11),
+    )
+    output_text.pack(fill=tk.BOTH, expand=True)
 
     root.mainloop()
 
