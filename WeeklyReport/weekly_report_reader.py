@@ -1,7 +1,7 @@
 import re
 import json
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext, font as tkfont
 
 import openpyxl
 
@@ -185,16 +185,56 @@ def main():
     """
     root = tk.Tk()
     root.title("周报解析器")
-    root.geometry("800x600")
+    root.geometry("940x640")
+    root.configure(bg="#f4f6fb")
 
-    frame = tk.Frame(root, padx=10, pady=10)
+    heading_font = tkfont.Font(family="Microsoft YaHei", size=16, weight="bold")
+    body_font = tkfont.Font(family="Microsoft YaHei", size=11)
+    mono_font = tkfont.Font(family="Consolas", size=11)
+
+    frame = tk.Frame(root, padx=18, pady=18, bg="#f4f6fb")
     frame.pack(fill=tk.BOTH, expand=True)
+    frame.grid_rowconfigure(3, weight=1)
+    frame.grid_columnconfigure(0, weight=1)
 
-    description = tk.Label(frame, text="选择周报文件后将解析内容并以JSON数组形式显示", anchor="w")
-    description.pack(fill=tk.X, pady=(0, 8))
+    title_label = tk.Label(
+        frame,
+        text="周报解析器",
+        font=heading_font,
+        anchor="w",
+        bg="#f4f6fb",
+        fg="#1f2a44"
+    )
+    title_label.grid(row=0, column=0, sticky="w")
 
-    output_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, height=25)
-    output_text.pack(fill=tk.BOTH, expand=True)
+    description = tk.Label(
+        frame,
+        text="选择周报文件后将解析内容并以 JSON 数组形式显示，支持多文件合并。",
+        anchor="w",
+        justify="left",
+        font=body_font,
+        bg="#f4f6fb",
+        fg="#4a5568",
+        wraplength=760
+    )
+    description.grid(row=1, column=0, sticky="we", pady=(6, 14))
+
+    controls = tk.Frame(frame, bg="#f4f6fb")
+    controls.grid(row=2, column=0, sticky="we", pady=(0, 12))
+    controls.grid_columnconfigure(2, weight=1)
+
+    output_text = scrolledtext.ScrolledText(
+        frame,
+        wrap=tk.WORD,
+        height=25,
+        font=mono_font,
+        foreground="#1f2937",
+        background="#ffffff",
+        insertbackground="#1f2937",
+        borderwidth=1,
+        relief="solid"
+    )
+    output_text.grid(row=3, column=0, sticky="nsew")
 
     def select_files():
         file_paths = filedialog.askopenfilenames(
@@ -221,8 +261,35 @@ def main():
             output_text.delete("1.0", tk.END)
             output_text.insert(tk.END, "未获取到有效数据")
 
-    select_button = tk.Button(frame, text="选择周报文件", command=select_files)
-    select_button.pack(side=tk.TOP, pady=(0, 10))
+    select_button = tk.Button(
+        controls,
+        text="选择周报文件",
+        command=select_files,
+        font=body_font,
+        bg="#2563eb",
+        fg="white",
+        activebackground="#1d4ed8",
+        activeforeground="white",
+        padx=14,
+        pady=8,
+        relief="flat"
+    )
+    select_button.grid(row=0, column=0, padx=(0, 10))
+
+    clear_button = tk.Button(
+        controls,
+        text="清空内容",
+        command=lambda: output_text.delete("1.0", tk.END),
+        font=body_font,
+        bg="#e5e7eb",
+        fg="#1f2937",
+        activebackground="#d1d5db",
+        activeforeground="#111827",
+        padx=14,
+        pady=8,
+        relief="flat"
+    )
+    clear_button.grid(row=0, column=1)
 
     root.mainloop()
 
