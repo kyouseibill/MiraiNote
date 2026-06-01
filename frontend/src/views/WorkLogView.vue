@@ -16,7 +16,7 @@ const filterCategory = ref('')
 const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
-// 抽屉内 编辑/预览 切换
+// 鎶藉眽鍐?缂栬緫/棰勮 鍒囨崲
 const previewMode = ref(false)
 
 const form = reactive<CreateWorkLogPayload>({
@@ -31,7 +31,7 @@ const form = reactive<CreateWorkLogPayload>({
 const isEdit = computed(() => editingId.value !== null)
 const totalPages = computed(() => Math.ceil(store.total / store.pageSize))
 
-// 当前选中条目展开详情
+// 褰撳墠閫変腑鏉＄洰灞曞紑璇︽儏
 const expandedId = ref<number | null>(null)
 
 function todayStr(): string {
@@ -56,7 +56,7 @@ async function load(page = 1) {
       category: filterCategory.value || undefined,
     })
   } catch {
-    // 错误已由拦截器处理
+    // 閿欒宸茬敱鎷︽埅鍣ㄥ鐞?
   }
 }
 
@@ -94,7 +94,7 @@ function toggleExpand(item: WorkLog) {
 
 async function submit() {
   if (!form.title.trim()) {
-    toast.error('请填写标题')
+    toast.error('璇峰～鍐欐爣棰?)
     return
   }
   submitting.value = true
@@ -109,25 +109,25 @@ async function submit() {
     }
     if (editingId.value !== null) {
       await store.update(editingId.value, payload)
-      toast.success('已更新')
+      toast.success('宸叉洿鏂?)
     } else {
       await store.create(payload)
-      toast.success('已创建')
+      toast.success('宸插垱寤?)
     }
     drawerOpen.value = false
     resetForm()
   } catch {
-    // 拦截器已 toast
+    // 鎷︽埅鍣ㄥ凡 toast
   } finally {
     submitting.value = false
   }
 }
 
 async function remove(item: WorkLog) {
-  if (!confirm(`确定删除「${item.title}」？`)) return
+  if (!confirm(`纭畾鍒犻櫎銆?{item.title}銆嶏紵`)) return
   try {
     await store.remove(item.id)
-    toast.success('已删除')
+    toast.success('宸插垹闄?)
   } catch {
     // ignore
   }
@@ -146,61 +146,61 @@ onMounted(() => {
 
 <template>
   <div class="max-w-6xl mx-auto px-6 py-6">
-    <!-- 顶部操作栏 -->
+    <!-- 椤堕儴鎿嶄綔鏍?-->
     <div class="flex flex-wrap items-end gap-3 mb-4">
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-xs text-gray-500 mb-1">关键字</label>
+        <label class="block text-xs text-gray-500 mb-1">鍏抽敭瀛?/label>
         <input
           v-model="keyword"
           type="text"
-          placeholder="搜索标题 / 内容 / 标签"
+          placeholder="鎼滅储鏍囬 / 鍐呭 / 鏍囩"
           class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
           @keyup.enter="load(1)"
         />
       </div>
       <div>
-        <label class="block text-xs text-gray-500 mb-1">分类</label>
+        <label class="block text-xs text-gray-500 mb-1">鍒嗙被</label>
         <select
           v-model="filterCategory"
           class="h-9 px-2 rounded-md border border-gray-200 text-sm bg-white"
           @change="load(1)"
         >
-          <option value="">全部分类</option>
+          <option value="">鍏ㄩ儴鍒嗙被</option>
           <option v-for="cat in store.categories" :key="cat" :value="cat">{{ cat }}</option>
         </select>
       </div>
       <div>
-        <label class="block text-xs text-gray-500 mb-1">起始日期</label>
+        <label class="block text-xs text-gray-500 mb-1">璧峰鏃ユ湡</label>
         <input v-model="dateFrom" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
       </div>
       <div>
-        <label class="block text-xs text-gray-500 mb-1">结束日期</label>
+        <label class="block text-xs text-gray-500 mb-1">缁撴潫鏃ユ湡</label>
         <input v-model="dateTo" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
       </div>
       <button
         class="h-9 px-4 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200"
         @click="load(1)"
       >
-        筛选
+        绛涢€?
       </button>
       <button
         class="h-9 px-4 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700 shadow-sm"
         @click="openCreate"
       >
-        + 新建记录
+        + 鏂板缓璁板綍
       </button>
     </div>
 
-    <!-- 数量提示 -->
+    <!-- 鏁伴噺鎻愮ず -->
     <p v-if="!store.loading && store.total > 0" class="text-xs text-gray-400 mb-2">
-      共 {{ store.total }} 条记录
+      鍏?{{ store.total }} 鏉¤褰?
     </p>
 
-    <!-- 列表 -->
+    <!-- 鍒楄〃 -->
     <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
-      <div v-if="store.loading" class="p-10 text-center text-gray-400 text-sm">加载中…</div>
+      <div v-if="store.loading" class="p-10 text-center text-gray-400 text-sm">鍔犺浇涓€?/div>
       <div v-else-if="store.items.length === 0" class="p-10 text-center text-gray-400 text-sm">
-        暂无记录，点击「新建记录」开始
+        鏆傛棤璁板綍锛岀偣鍑汇€屾柊寤鸿褰曘€嶅紑濮?
       </div>
       <ul v-else class="divide-y divide-gray-100">
         <li
@@ -208,7 +208,7 @@ onMounted(() => {
           :key="item.id"
           class="hover:bg-gray-50 transition"
         >
-          <!-- 摘要行 -->
+          <!-- 鎽樿琛?-->
           <div
             class="p-4 cursor-pointer flex items-start justify-between gap-3"
             @click="toggleExpand(item)"
@@ -221,8 +221,8 @@ onMounted(() => {
                 </span>
                 <h3 class="font-medium text-gray-900 truncate">{{ item.title }}</h3>
               </div>
-              <p v-if="item.purpose" class="mt-1 text-xs text-gray-500 line-clamp-1">目的：{{ item.purpose }}</p>
-              <!-- 折叠时显示纯文本摘要 -->
+              <p v-if="item.purpose" class="mt-1 text-xs text-gray-500 line-clamp-1">鐩殑锛歿{ item.purpose }}</p>
+              <!-- 鎶樺彔鏃舵樉绀虹函鏂囨湰鎽樿 -->
               <p
                 v-if="expandedId !== item.id && item.content"
                 class="mt-1 text-sm text-gray-500 line-clamp-2"
@@ -244,19 +244,19 @@ onMounted(() => {
                 class="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-1"
                 @click.stop="openEdit(item)"
               >
-                编辑
+                缂栬緫
               </button>
               <button
                 class="text-xs text-red-400 hover:text-red-600 px-2 py-1"
                 @click.stop="remove(item)"
               >
-                删除
+                鍒犻櫎
               </button>
-              <span class="text-xs text-gray-300 ml-1">{{ expandedId === item.id ? '▲' : '▼' }}</span>
+              <span class="text-xs text-gray-300 ml-1">{{ expandedId === item.id ? '鈻? : '鈻? }}</span>
             </div>
           </div>
 
-          <!-- 展开：Markdown 渲染内容 -->
+          <!-- 灞曞紑锛歁arkdown 娓叉煋鍐呭 -->
           <div v-if="expandedId === item.id && item.content" class="px-4 pb-4">
             <div
               class="prose prose-sm max-w-none text-gray-700 bg-gray-50 rounded-lg p-4 border border-gray-100"
@@ -267,14 +267,14 @@ onMounted(() => {
       </ul>
     </div>
 
-    <!-- 分页 -->
+    <!-- 鍒嗛〉 -->
     <div v-if="totalPages > 1" class="mt-4 flex items-center justify-center gap-2">
       <button
         :disabled="store.page <= 1"
         class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
         @click="load(store.page - 1)"
       >
-        上一页
+        涓婁竴椤?
       </button>
       <div class="flex gap-1">
         <button
@@ -294,12 +294,12 @@ onMounted(() => {
         class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
         @click="load(store.page + 1)"
       >
-        下一页
+        涓嬩竴椤?
       </button>
     </div>
   </div>
 
-  <!-- 抽屉：新增 / 编辑 -->
+  <!-- 鎶藉眽锛氭柊澧?/ 缂栬緫 -->
   <Teleport to="body">
     <div
       v-if="drawerOpen"
@@ -308,27 +308,27 @@ onMounted(() => {
     >
       <div class="w-full max-w-xl h-full bg-white shadow-xl flex flex-col">
         <header class="h-14 px-5 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="font-semibold text-gray-900">{{ isEdit ? '编辑工作记录' : '新建工作记录' }}</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="drawerOpen = false">✕</button>
+          <h3 class="font-semibold text-gray-900">{{ isEdit ? '缂栬緫宸ヤ綔璁板綍' : '鏂板缓宸ヤ綔璁板綍' }}</h3>
+          <button class="text-gray-400 hover:text-gray-600" @click="drawerOpen = false">鉁?/button>
         </header>
 
         <div class="flex-1 overflow-y-auto p-5 space-y-4">
           <div>
-            <label class="block text-sm text-gray-700 mb-1">标题 <span class="text-red-500">*</span></label>
+            <label class="block text-sm text-gray-700 mb-1">鏍囬 <span class="text-red-500">*</span></label>
             <input v-model="form.title" type="text" maxlength="200" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200" />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-sm text-gray-700 mb-1">日期 <span class="text-red-500">*</span></label>
+              <label class="block text-sm text-gray-700 mb-1">鏃ユ湡 <span class="text-red-500">*</span></label>
               <input v-model="form.logDate" type="date" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
             </div>
             <div>
-              <label class="block text-sm text-gray-700 mb-1">分类</label>
+              <label class="block text-sm text-gray-700 mb-1">鍒嗙被</label>
               <input
                 v-model="form.category"
                 type="text"
                 list="category-suggestions"
-                placeholder="如：开发 / 会议"
+                placeholder="濡傦細寮€鍙?/ 浼氳"
                 class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm"
               />
               <datalist id="category-suggestions">
@@ -337,28 +337,28 @@ onMounted(() => {
             </div>
           </div>
           <div>
-            <label class="block text-sm text-gray-700 mb-1">目的</label>
-            <input v-model="form.purpose" type="text" maxlength="500" placeholder="本项工作的目的" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
+            <label class="block text-sm text-gray-700 mb-1">鐩殑</label>
+            <input v-model="form.purpose" type="text" maxlength="500" placeholder="鏈」宸ヤ綔鐨勭洰鐨? class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
           </div>
 
-          <!-- 内容：编辑/预览 切换 -->
+          <!-- 鍐呭锛氱紪杈?棰勮 鍒囨崲 -->
           <div>
             <div class="flex items-center justify-between mb-1">
-              <label class="text-sm text-gray-700">内容（支持 Markdown）</label>
+              <label class="text-sm text-gray-700">鍐呭锛堟敮鎸?Markdown锛?/label>
               <div class="flex rounded-md overflow-hidden border border-gray-200 text-xs">
                 <button
                   class="px-2 py-0.5 transition"
                   :class="!previewMode ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
                   @click="previewMode = false"
                 >
-                  编辑
+                  缂栬緫
                 </button>
                 <button
                   class="px-2 py-0.5 transition"
                   :class="previewMode ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
                   @click="previewMode = true"
                 >
-                  预览
+                  棰勮
                 </button>
               </div>
             </div>
@@ -367,7 +367,7 @@ onMounted(() => {
               v-model="form.content"
               rows="12"
               class="w-full p-3 rounded-md border border-gray-200 text-sm font-mono leading-6 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              placeholder="支持 Markdown 语法，如 **粗体**、# 标题、- 列表…"
+              placeholder="鏀寔 Markdown 璇硶锛屽 **绮椾綋**銆? 鏍囬銆? 鍒楄〃鈥?
             />
             <div
               v-else
@@ -377,282 +377,23 @@ onMounted(() => {
           </div>
 
           <div>
-            <label class="block text-sm text-gray-700 mb-1">标签（逗号分隔）</label>
-            <input v-model="form.tags" type="text" placeholder="例如：项目A, 紧急" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
+            <label class="block text-sm text-gray-700 mb-1">鏍囩锛堥€楀彿鍒嗛殧锛?/label>
+            <input v-model="form.tags" type="text" placeholder="渚嬪锛氶」鐩瓵, 绱ф€? class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
           </div>
         </div>
 
         <footer class="h-14 px-5 border-t border-gray-100 flex items-center justify-end gap-2">
-          <button class="h-9 px-4 rounded-md text-gray-700 hover:bg-gray-100" @click="drawerOpen = false">取消</button>
+          <button class="h-9 px-4 rounded-md text-gray-700 hover:bg-gray-100" @click="drawerOpen = false">鍙栨秷</button>
           <button
             class="h-9 px-4 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
             :disabled="submitting"
             @click="submit"
           >
-            {{ submitting ? '保存中…' : '保存' }}
+            {{ submitting ? '淇濆瓨涓€? : '淇濆瓨' }}
           </button>
         </footer>
       </div>
     </div>
   </Teleport>
-</template>
 
-
-const store = useWorkLogStore()
-const toast = useToast()
-
-const keyword = ref('')
-const dateFrom = ref('')
-const dateTo = ref('')
-
-const drawerOpen = ref(false)
-const editingId = ref<number | null>(null)
-const submitting = ref(false)
-
-const form = reactive<CreateWorkLogPayload>({
-  title: '',
-  purpose: '',
-  content: '',
-  tags: '',
-  category: '',
-  logDate: todayStr(),
-})
-
-const isEdit = computed(() => editingId.value !== null)
-
-function todayStr(): string {
-  const d = new Date()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
-
-function fmtDate(iso: string): string {
-  if (!iso) return ''
-  return iso.slice(0, 10)
-}
-
-async function load() {
-  try {
-    await store.fetchList({
-      page: 1,
-      keyword: keyword.value || undefined,
-      dateFrom: dateFrom.value || undefined,
-      dateTo: dateTo.value || undefined,
-    })
-  } catch (e) {
-    // 错误已由拦截器 toast
-  }
-}
-
-function resetForm() {
-  editingId.value = null
-  form.title = ''
-  form.purpose = ''
-  form.content = ''
-  form.tags = ''
-  form.category = ''
-  form.logDate = todayStr()
-}
-
-function openCreate() {
-  resetForm()
-  drawerOpen.value = true
-}
-
-function openEdit(item: WorkLog) {
-  editingId.value = item.id
-  form.title = item.title
-  form.purpose = item.purpose ?? ''
-  form.content = item.content ?? ''
-  form.tags = item.tags ?? ''
-  form.category = item.category ?? ''
-  form.logDate = fmtDate(item.logDate)
-  drawerOpen.value = true
-}
-
-async function submit() {
-  if (!form.title.trim()) {
-    toast.error('请填写标题')
-    return
-  }
-  submitting.value = true
-  try {
-    const payload: CreateWorkLogPayload = {
-      title: form.title.trim(),
-      purpose: form.purpose?.trim() || null,
-      content: form.content?.trim() || null,
-      tags: form.tags?.trim() || null,
-      category: form.category?.trim() || null,
-      logDate: form.logDate,
-    }
-    if (editingId.value !== null) {
-      await store.update(editingId.value, payload)
-      toast.success('已更新')
-    } else {
-      await store.create(payload)
-      toast.success('已创建')
-    }
-    drawerOpen.value = false
-    resetForm()
-  } catch (e) {
-    // 拦截器已 toast
-  } finally {
-    submitting.value = false
-  }
-}
-
-async function remove(item: WorkLog) {
-  if (!confirm(`确定删除「${item.title}」？`)) return
-  try {
-    await store.remove(item.id)
-    toast.success('已删除')
-  } catch {
-    // ignore
-  }
-}
-
-function tagList(s: string | null): string[] {
-  if (!s) return []
-  return s.split(',').map((t) => t.trim()).filter(Boolean)
-}
-
-onMounted(load)
-</script>
-
-<template>
-  <div class="max-w-6xl mx-auto px-6 py-6">
-    <!-- 顶部操作栏 -->
-    <div class="flex flex-wrap items-end gap-3 mb-4">
-      <div class="flex-1 min-w-[200px]">
-        <label class="block text-xs text-gray-500 mb-1">关键字</label>
-        <input
-          v-model="keyword"
-          type="text"
-          placeholder="搜索标题 / 内容 / 标签"
-          class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
-          @keyup.enter="load"
-        />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">起始日期</label>
-        <input v-model="dateFrom" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">结束日期</label>
-        <input v-model="dateTo" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
-      </div>
-      <button
-        class="h-9 px-4 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200"
-        @click="load"
-      >
-        筛选
-      </button>
-      <button
-        class="h-9 px-4 rounded-md bg-brand text-white text-sm hover:bg-indigo-700 shadow-sm"
-        @click="openCreate"
-      >
-        + 新建记录
-      </button>
-    </div>
-
-    <!-- 列表 -->
-    <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
-      <div v-if="store.loading" class="p-10 text-center text-gray-400 text-sm">加载中…</div>
-      <div v-else-if="store.items.length === 0" class="p-10 text-center text-gray-400 text-sm">
-        暂无记录，点击右上角「新建记录」开始
-      </div>
-      <ul v-else class="divide-y divide-gray-100">
-        <li
-          v-for="item in store.items"
-          :key="item.id"
-          class="p-4 hover:bg-gray-50 transition cursor-pointer"
-          @click="openEdit(item)"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-xs text-gray-500 font-mono">{{ fmtDate(item.logDate) }}</span>
-                <span v-if="item.category" class="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
-                  {{ item.category }}
-                </span>
-                <h3 class="font-medium text-gray-900 truncate">{{ item.title }}</h3>
-              </div>
-              <p v-if="item.purpose" class="mt-1 text-xs text-gray-500 line-clamp-1">目的：{{ item.purpose }}</p>
-              <p v-if="item.content" class="mt-1 text-sm text-gray-600 line-clamp-2">{{ item.content }}</p>
-              <div v-if="tagList(item.tags).length" class="mt-2 flex flex-wrap gap-1">
-                <span
-                  v-for="t in tagList(item.tags)"
-                  :key="t"
-                  class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
-                >
-                  #{{ t }}
-                </span>
-              </div>
-            </div>
-            <button
-              class="shrink-0 text-xs text-red-500 hover:text-red-700 px-2 py-1"
-              @click.stop="remove(item)"
-            >
-              删除
-            </button>
-          </div>
-        </li>
-      </ul>
-    </div>
-
-    <!-- 抽屉：新增 / 编辑 -->
-    <div
-      v-if="drawerOpen"
-      class="fixed inset-0 z-40 bg-black/30 flex justify-end"
-      @click.self="drawerOpen = false"
-    >
-      <div class="w-full max-w-xl h-full bg-white shadow-xl flex flex-col">
-        <header class="h-14 px-5 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="font-semibold text-gray-900">{{ isEdit ? '编辑工作记录' : '新建工作记录' }}</h3>
-          <button class="text-gray-400 hover:text-gray-600" @click="drawerOpen = false">✕</button>
-        </header>
-
-        <div class="flex-1 overflow-y-auto p-5 space-y-4">
-          <div>
-            <label class="block text-sm text-gray-700 mb-1">标题 <span class="text-red-500">*</span></label>
-            <input v-model="form.title" type="text" maxlength="200" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200" />
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-sm text-gray-700 mb-1">日期 <span class="text-red-500">*</span></label>
-              <input v-model="form.logDate" type="date" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm text-gray-700 mb-1">分类</label>
-              <input v-model="form.category" type="text" placeholder="如：开发 / 会议" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
-            </div>
-          </div>
-          <div>
-            <label class="block text-sm text-gray-700 mb-1">目的</label>
-            <input v-model="form.purpose" type="text" maxlength="500" placeholder="本项工作的目的" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
-          </div>
-          <div>
-            <label class="block text-sm text-gray-700 mb-1">内容（支持 Markdown）</label>
-            <textarea v-model="form.content" rows="10" class="w-full p-3 rounded-md border border-gray-200 text-sm font-mono leading-6 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
-          </div>
-          <div>
-            <label class="block text-sm text-gray-700 mb-1">标签（逗号分隔）</label>
-            <input v-model="form.tags" type="text" placeholder="例如：项目A, 紧急" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
-          </div>
-        </div>
-
-        <footer class="h-14 px-5 border-t border-gray-100 flex items-center justify-end gap-2">
-          <button class="h-9 px-4 rounded-md text-gray-700 hover:bg-gray-100" @click="drawerOpen = false">取消</button>
-          <button
-            class="h-9 px-4 rounded-md bg-brand text-white hover:bg-indigo-700 disabled:opacity-60"
-            :disabled="submitting"
-            @click="submit"
-          >
-            {{ submitting ? '保存中…' : '保存' }}
-          </button>
-        </footer>
-      </div>
-    </div>
-  </div>
 </template>
