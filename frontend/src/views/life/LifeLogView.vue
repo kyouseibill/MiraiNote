@@ -19,6 +19,11 @@ const imageUploading = ref(false)
 
 const MOODS = ['开心', '平静', '疲惫', '难过', '兴奋', '焦虑', '感恩']
 
+const MOOD_COLOR: Record<string, string> = {
+  开心: '#f59e0b', 平静: '#6366f1', 疲惫: '#94a3b8', 难过: '#64748b',
+  兴奋: '#ec4899', 焦虑: '#ef4444', 感恩: '#10b981',
+}
+
 const form = reactive<CreateLifeLogPayload>({
   content: '',
   mood: '',
@@ -27,6 +32,24 @@ const form = reactive<CreateLifeLogPayload>({
 })
 
 const isEdit = computed(() => editingId.value !== null)
+
+// 当月心情统计（基于已加载数据，按月筛选时最准确）
+const moodStats = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const item of store.items) {
+    if (item.mood) counts[item.mood] = (counts[item.mood] ?? 0) + 1
+  }
+  const total = Object.values(counts).reduce((s, v) => s + v, 0)
+  return MOODS
+    .filter((m) => counts[m])
+    .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0))
+    .map((m) => ({
+      mood: m,
+      count: counts[m] ?? 0,
+      pct: total > 0 ? Math.round(((counts[m] ?? 0) / total) * 100) : 0,
+      color: MOOD_COLOR[m] ?? '#94a3b8',
+    }))
+})
 
 function todayStr(): string {
   const d = new Date()
@@ -147,8 +170,7 @@ onMounted(() => {
 <template>
   <div class="max-w-3xl mx-auto px-6 py-6">
     <!-- 操作栏 -->
-    <div class="flex flex-wrap items-end gap-3 mb-6">
-      <div class="flex-1 min-w-[180px]">
+    <div class="flex flex-wrap items-end gap-3 mb-6">      <div class="flex-1 min-w-[180px]">
         <label class="block text-xs text-gray-500 mb-1">关键字</label>
         <input
           v-model="keyword"
@@ -184,6 +206,38 @@ onMounted(() => {
       >
         + 新建记录
       </button>
+    </div>
+
+    <!-- 心情分布统计卡 -->
+    <div
+      v-if="moodStats.length >= 2"
+      class="mb-5 bg-white rounded-xl border border-gray-100 shadow-sm p-4"
+    >
+      <p class="text-xs text-gray-500 mb-3">
+        {{ selectedMonth || '当前筛选' }}心情分布（{{ store.items.filter(i => i.mood).length }} 条有记录）
+      </p>
+      <!-- 堆叠色条 -->
+      <div class="flex h-3 rounded-full overflow-hidden gap-0.5 mb-3">
+        <div
+          v-for="s in moodStats"
+          :key="s.mood"
+          :style="{ width: s.pct + '%', backgroundColor: s.color }"
+          :title="`${s.mood} ${s.pct}%`"
+        />
+      </div>
+      <!-- 图例 -->
+      <div class="flex flex-wrap gap-x-4 gap-y-1">
+        <button
+          v-for="s in moodStats"
+          :key="s.mood"
+          class="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 transition"
+          @click="selectedMood = selectedMood === s.mood ? '' : s.mood; load()"
+        >
+          <span class="inline-block w-2.5 h-2.5 rounded-full" :style="{ backgroundColor: s.color }" />
+          {{ moodEmoji(s.mood) }} {{ s.mood }}
+          <span class="text-gray-400">{{ s.pct }}% ({{ s.count }})</span>
+        </button>
+      </div>
     </div>
 
     <!-- 时间轴列表 -->
