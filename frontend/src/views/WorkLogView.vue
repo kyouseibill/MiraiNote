@@ -92,6 +92,22 @@ function toggleExpand(item: WorkLog) {
   expandedId.value = expandedId.value === item.id ? null : item.id
 }
 
+async function copyToClipboard(item: WorkLog) {
+  const lines: string[] = []
+  lines.push(`## ${item.title}`)
+  if (item.category) lines.push(`分类：${item.category}`)
+  lines.push(`日期：${fmtDate(item.logDate)}`)
+  if (item.purpose) lines.push(`\n目的：${item.purpose}`)
+  if (item.content) lines.push(`\n${item.content}`)
+  if (item.tags) lines.push(`\n标签：${item.tags}`)
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'))
+    toast.success('已复制到剪贴板')
+  } catch {
+    toast.error('复制失败，请手动选取')
+  }
+}
+
 async function submit() {
   if (!form.title.trim()) {
     toast.error('请填写标题')
@@ -240,6 +256,13 @@ onMounted(() => {
               </div>
             </div>
             <div class="flex items-center gap-1 shrink-0">
+              <button
+                class="text-xs text-gray-400 hover:text-gray-600 px-2 py-1"
+                title="复制到剪贴板"
+                @click.stop="copyToClipboard(item)"
+              >
+                复制
+              </button>
               <button
                 class="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-1"
                 @click.stop="openEdit(item)"

@@ -106,8 +106,15 @@ onBeforeUnmount(() => reminder.stop())
         </div>
       </nav>
 
-      <div class="px-3 py-3 border-t border-gray-100 text-xs text-gray-500">
-        v0.3 · Phase 5
+      <div class="px-3 py-3 border-t border-gray-100 space-y-1">
+        <RouterLink
+          to="/profile"
+          class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 transition"
+        >
+          <span class="w-5 text-center opacity-70">⚙</span>
+          <span>个人设置</span>
+        </RouterLink>
+        <p class="px-3 text-xs text-gray-400">v0.3 · Phase 5</p>
       </div>
     </aside>
 
@@ -116,10 +123,13 @@ onBeforeUnmount(() => reminder.stop())
       <header class="h-14 bg-white border-b border-gray-200 px-6 flex items-center justify-between">
         <h1 class="text-base font-semibold text-gray-900">{{ currentTitle }}</h1>
         <div class="flex items-center gap-3 text-sm">
-          <span class="text-gray-600 hidden sm:inline">
-            <span class="font-medium text-gray-900">{{ auth.user?.username }}</span>
+          <RouterLink
+            to="/profile"
+            class="text-gray-600 hidden sm:inline hover:text-indigo-600 transition"
+          >
+            <span class="font-medium">{{ auth.user?.username }}</span>
             <span v-if="auth.isAdmin" class="ml-1 inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-xs">管理员</span>
-          </span>
+          </RouterLink>
           <button
             class="px-3 py-1.5 rounded-md text-gray-700 hover:bg-gray-100 transition"
             @click="handleLogout"

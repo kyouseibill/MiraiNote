@@ -58,8 +58,9 @@ export interface ResetPasswordRequest {
   newPassword: string
 }
 
-// 修改密码
+// 修改密码（字段名与后端 DTO 对齐）
 export interface ChangePasswordRequest {
-  oldPassword: string
+  currentPassword: string
   newPassword: string
+  confirmPassword: string
 }
