@@ -2,6 +2,7 @@
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
+import { renderMarkdown } from '@/composables/useMarkdown'
 
 const store = useChatStore()
 const toast = useToast()
@@ -74,10 +75,6 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     send()
   }
-}
-
-function formatContent(content: string): string {
-  return content.replace(/\n/g, '<br>')
 }
 
 watch(() => store.currentSession?.messages.length, () => {
@@ -180,8 +177,8 @@ onMounted(async () => {
             class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed"
             :class="msg.role === 'user'
               ? 'bg-indigo-600 text-white rounded-br-sm'
-              : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm'"
-            v-html="formatContent(msg.content)"
+              : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none'"
+            v-html="msg.role === 'user' ? msg.content.replace(/\n/g, '<br>') : renderMarkdown(msg.content)"
           />
         </div>
         <div v-if="store.sending" class="flex justify-start">

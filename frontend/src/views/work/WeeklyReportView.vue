@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useWeeklyReportStore } from '@/stores/weeklyReport'
 import { useToast } from '@/composables/useToast'
+import { renderMarkdown } from '@/composables/useMarkdown'
 import type { WeeklyReport } from '@/types/weeklyReport'
 
 const store = useWeeklyReportStore()
@@ -246,12 +247,18 @@ onMounted(async () => {
             </div>
           </div>
           <div class="flex-1 overflow-y-auto p-6">
+            <!-- 编辑模式：原始 Markdown 文本 -->
             <textarea
               v-if="isEditing"
               v-model="editingContent"
               class="w-full h-full min-h-[400px] text-sm font-mono border border-gray-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200"
             />
-            <pre v-else class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">{{ selectedReport.content }}</pre>
+            <!-- 阅读模式：渲染 Markdown -->
+            <div
+              v-else
+              class="prose prose-sm max-w-none text-gray-700 leading-relaxed"
+              v-html="renderMarkdown(selectedReport.content)"
+            />
           </div>
         </div>
       </div>
