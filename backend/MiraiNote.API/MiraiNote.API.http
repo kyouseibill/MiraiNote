@@ -1,0 +1,6 @@
+@MiraiNote.API_HostAddress = http://localhost:5273
+
+GET {{MiraiNote.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

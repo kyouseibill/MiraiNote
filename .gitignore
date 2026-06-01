@@ -1,0 +1,25 @@
+# ===== .NET =====
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ===== EF Core =====
+# 不忽略 Migrations 目录
+
+# ===== Local secrets =====
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+**/appsettings.Production.json
+
+# ===== Frontend (预留) =====
+node_modules/
+dist/
+.vite/
+
+# ===== OS / Editor =====
+.DS_Store
+Thumbs.db
+*.log
