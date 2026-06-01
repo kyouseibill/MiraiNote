@@ -14,6 +14,8 @@ public interface IWorkLogService
     Task<WorkLogDto> CreateAsync(int userId, CreateWorkLogRequest request, CancellationToken ct = default);
     Task<WorkLogDto> UpdateAsync(int userId, int id, UpdateWorkLogRequest request, CancellationToken ct = default);
     Task DeleteAsync(int userId, int id, CancellationToken ct = default);
+    /// <summary>返回当前用户所有已用过的分类（去重，升序），用于前端自动补全。</summary>
+    Task<List<string>> GetCategoriesAsync(int userId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -134,6 +136,17 @@ public class WorkLogService : IWorkLogService
             ?? throw new BusinessException("工作记录不存在", 404);
         entity.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<List<string>> GetCategoriesAsync(int userId, CancellationToken ct = default)
+    {
+        return await _db.WorkLogs
+            .AsNoTracking()
+            .Where(w => w.UserId == userId && w.Category != null)
+            .Select(w => w.Category!)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync(ct);
     }
 
     // ===== 私有辅助 =====

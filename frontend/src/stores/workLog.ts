@@ -14,6 +14,7 @@ export const useWorkLogStore = defineStore('workLog', () => {
   const page = ref(1)
   const pageSize = ref(20)
   const loading = ref(false)
+  const categories = ref<string[]>([])
 
   async function fetchList(query: WorkLogListQuery = {}) {
     loading.value = true
@@ -34,9 +35,19 @@ export const useWorkLogStore = defineStore('workLog', () => {
     }
   }
 
+  async function fetchCategories() {
+    try {
+      categories.value = await workLogApi.getCategories()
+    } catch {
+      // 静默：分类仅用于辅助提示
+    }
+  }
+
   async function create(payload: CreateWorkLogPayload) {
     const created = await workLogApi.create(payload)
     await fetchList({ page: 1 })
+    // 刷新分类列表
+    void fetchCategories()
     return created
   }
 
@@ -44,6 +55,7 @@ export const useWorkLogStore = defineStore('workLog', () => {
     const updated = await workLogApi.update(id, payload)
     const idx = items.value.findIndex((w) => w.id === id)
     if (idx >= 0) items.value[idx] = updated
+    void fetchCategories()
     return updated
   }
 
@@ -59,9 +71,12 @@ export const useWorkLogStore = defineStore('workLog', () => {
     page,
     pageSize,
     loading,
+    categories,
     fetchList,
+    fetchCategories,
     create,
     update,
     remove,
   }
 })
+

@@ -11,6 +11,7 @@ const toast = useToast()
 const keyword = ref('')
 const dateFrom = ref('')
 const dateTo = ref('')
+const filterCategory = ref('')
 
 const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -52,6 +53,7 @@ async function load(page = 1) {
       keyword: keyword.value || undefined,
       dateFrom: dateFrom.value || undefined,
       dateTo: dateTo.value || undefined,
+      category: filterCategory.value || undefined,
     })
   } catch {
     // 错误已由拦截器处理
@@ -136,7 +138,10 @@ function tagList(s: string | null): string[] {
   return s.split(',').map((t) => t.trim()).filter(Boolean)
 }
 
-onMounted(() => load(1))
+onMounted(() => {
+  load(1)
+  store.fetchCategories()
+})
 </script>
 
 <template>
@@ -152,6 +157,17 @@ onMounted(() => load(1))
           class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
           @keyup.enter="load(1)"
         />
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">分类</label>
+        <select
+          v-model="filterCategory"
+          class="h-9 px-2 rounded-md border border-gray-200 text-sm bg-white"
+          @change="load(1)"
+        >
+          <option value="">全部分类</option>
+          <option v-for="cat in store.categories" :key="cat" :value="cat">{{ cat }}</option>
+        </select>
       </div>
       <div>
         <label class="block text-xs text-gray-500 mb-1">起始日期</label>
@@ -308,7 +324,16 @@ onMounted(() => load(1))
             </div>
             <div>
               <label class="block text-sm text-gray-700 mb-1">分类</label>
-              <input v-model="form.category" type="text" placeholder="如：开发 / 会议" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm" />
+              <input
+                v-model="form.category"
+                type="text"
+                list="category-suggestions"
+                placeholder="如：开发 / 会议"
+                class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm"
+              />
+              <datalist id="category-suggestions">
+                <option v-for="cat in store.categories" :key="cat" :value="cat" />
+              </datalist>
             </div>
           </div>
           <div>

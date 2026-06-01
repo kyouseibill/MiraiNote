@@ -58,4 +58,11 @@ public class WorkLogsController : ControllerBase
         await _service.DeleteAsync(_currentUser.UserId, id, ct);
         return Ok(ApiResponse.Ok("已删除"));
     }
+
+    [HttpGet("categories")]
+    public async Task<ActionResult<ApiResponse<List<string>>>> GetCategories(CancellationToken ct)
+    {
+        var list = await _service.GetCategoriesAsync(_currentUser.UserId, ct);
+        return Ok(ApiResponse<List<string>>.Ok(list));
+    }
 }

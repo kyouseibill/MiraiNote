@@ -20,4 +20,7 @@ export const workLogApi = {
     unwrap<WorkLog>(http.put(`/worklogs/${id}`, payload)),
 
   remove: (id: number) => unwrap<null>(http.delete(`/worklogs/${id}`)),
+
+  /** 获取当前用户所有已使用的分类（去重，升序），用于前端自动补全 */
+  getCategories: () => unwrap<string[]>(http.get('/worklogs/categories')),
 }
