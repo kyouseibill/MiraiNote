@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useWorkLogStore } from '@/stores/workLog'
 import { useToast } from '@/composables/useToast'
 import { renderMarkdown } from '@/composables/useMarkdown'
-import type { WorkLog, CreateWorkLogPayload } from '@/types/workLog'
+import type { WorkLog, CreateWorkLogPayload, WorkLogStatus } from '@/types/workLog'
 
 const store = useWorkLogStore()
 const toast = useToast()
@@ -12,6 +12,7 @@ const keyword = ref('')
 const dateFrom = ref('')
 const dateTo = ref('')
 const filterCategory = ref('')
+const filterStatus = ref<WorkLogStatus | null>(null)
 
 const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -26,6 +27,7 @@ const form = reactive<CreateWorkLogPayload>({
   tags: '',
   category: '',
   logDate: todayStr(),
+  status: 0,
 })
 
 const isEdit = computed(() => editingId.value !== null)
@@ -46,6 +48,40 @@ function fmtDate(iso: string): string {
   return iso.slice(0, 10)
 }
 
+// ===== 日期快捷选项 =====
+function setDateRange(range: 'today' | 'week' | 'month' | 'all') {
+  const now = new Date()
+  const fmt = (d: Date) => {
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${d.getFullYear()}-${m}-${day}`
+  }
+  if (range === 'today') {
+    dateFrom.value = fmt(now)
+    dateTo.value = fmt(now)
+  } else if (range === 'week') {
+    const mon = new Date(now)
+    mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+    dateFrom.value = fmt(mon)
+    dateTo.value = fmt(now)
+  } else if (range === 'month') {
+    dateFrom.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+    dateTo.value = fmt(now)
+  } else {
+    dateFrom.value = ''
+    dateTo.value = ''
+  }
+  load(1)
+}
+
+const STATUS_LABELS: Record<number, string> = { 0: '未标记', 1: '进行中', 2: '已完成', 3: '已延期' }
+const STATUS_COLORS: Record<number, string> = {
+  0: 'bg-gray-100 text-gray-500',
+  1: 'bg-blue-50 text-blue-600',
+  2: 'bg-green-50 text-green-600',
+  3: 'bg-orange-50 text-orange-600',
+}
+
 async function load(page = 1) {
   try {
     await store.fetchList({
@@ -54,6 +90,7 @@ async function load(page = 1) {
       dateFrom: dateFrom.value || undefined,
       dateTo: dateTo.value || undefined,
       category: filterCategory.value || undefined,
+      status: filterStatus.value ?? undefined,
     })
   } catch {
     // 错误已由拦截器处理
@@ -69,6 +106,7 @@ function resetForm() {
   form.tags = ''
   form.category = ''
   form.logDate = todayStr()
+  form.status = 0
 }
 
 function openCreate() {
@@ -85,6 +123,7 @@ function openEdit(item: WorkLog) {
   form.tags = item.tags ?? ''
   form.category = item.category ?? ''
   form.logDate = fmtDate(item.logDate)
+  form.status = item.status ?? 0
   drawerOpen.value = true
 }
 
@@ -122,6 +161,7 @@ async function submit() {
       tags: form.tags?.trim() || null,
       category: form.category?.trim() || null,
       logDate: form.logDate,
+      status: form.status ?? 0,
     }
     if (editingId.value !== null) {
       await store.update(editingId.value, payload)
@@ -186,19 +226,36 @@ onMounted(() => {
         </select>
       </div>
       <div>
+        <label class="block text-xs text-gray-500 mb-1">状态</label>
+        <select
+          v-model="filterStatus"
+          class="h-9 px-2 rounded-md border border-gray-200 text-sm bg-white"
+          @change="load(1)"
+        >
+          <option :value="null">全部</option>
+          <option :value="1">进行中</option>
+          <option :value="2">已完成</option>
+          <option :value="3">已延期</option>
+          <option :value="0">未标记</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">日期快捷</label>
+        <div class="flex gap-1">
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('today')">今天</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('week')">本周</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('month')">本月</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-gray-100 transition" @click="setDateRange('all')">全部</button>
+        </div>
+      </div>
+      <div>
         <label class="block text-xs text-gray-500 mb-1">起始日期</label>
-        <input v-model="dateFrom" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
+        <input v-model="dateFrom" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" @change="load(1)" />
       </div>
       <div>
         <label class="block text-xs text-gray-500 mb-1">结束日期</label>
-        <input v-model="dateTo" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" />
+        <input v-model="dateTo" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" @change="load(1)" />
       </div>
-      <button
-        class="h-9 px-4 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200"
-        @click="load(1)"
-      >
-        筛选
-      </button>
       <button
         class="h-9 px-4 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700 shadow-sm"
         @click="openCreate"
@@ -209,7 +266,7 @@ onMounted(() => {
 
     <!-- 数量提示 -->
     <p v-if="!store.loading && store.total > 0" class="text-xs text-gray-400 mb-2">
-      共 {{ store.total }} 条记录
+      共 {{ store.total }} 条记录，当前显示第 {{ (store.page - 1) * store.pageSize + 1 }}–{{ Math.min(store.page * store.pageSize, store.total) }} 条
     </p>
 
     <!-- 列表 -->
@@ -234,6 +291,13 @@ onMounted(() => {
                 <span class="text-xs text-gray-400 font-mono shrink-0">{{ fmtDate(item.logDate) }}</span>
                 <span v-if="item.category" class="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 shrink-0">
                   {{ item.category }}
+                </span>
+                <span
+                  v-if="item.status !== 0"
+                  class="text-xs px-1.5 py-0.5 rounded shrink-0"
+                  :class="STATUS_COLORS[item.status]"
+                >
+                  {{ STATUS_LABELS[item.status] }}
                 </span>
                 <h3 class="font-medium text-gray-900 truncate">{{ item.title }}</h3>
               </div>
@@ -327,7 +391,6 @@ onMounted(() => {
     <div
       v-if="drawerOpen"
       class="fixed inset-0 z-50 bg-black/30 flex justify-end"
-      @click.self="drawerOpen = false"
     >
       <div class="w-full max-w-xl h-full bg-white shadow-xl flex flex-col">
         <header class="h-14 px-5 border-b border-gray-100 flex items-center justify-between">
@@ -357,6 +420,23 @@ onMounted(() => {
               <datalist id="category-suggestions">
                 <option v-for="cat in store.categories" :key="cat" :value="cat" />
               </datalist>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-700 mb-1">工作状态</label>
+            <div class="flex gap-2">
+              <button
+                v-for="(label, val) in STATUS_LABELS"
+                :key="val"
+                type="button"
+                class="h-8 px-3 rounded-md text-xs border transition"
+                :class="form.status === Number(val)
+                  ? STATUS_COLORS[Number(val)] + ' border-current font-medium'
+                  : 'border-gray-200 text-gray-500 hover:bg-gray-50'"
+                @click="form.status = Number(val) as WorkLogStatus"
+              >
+                {{ label }}
+              </button>
             </div>
           </div>
           <div>

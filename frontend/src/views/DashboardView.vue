@@ -43,10 +43,16 @@ const overdueCount = computed(() =>
   ).length,
 )
 
+// UTC ISO 字符串 → 本地日期字符串（yyyy-MM-dd）
+function isoToLocalDateStr(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const upcomingTodayCount = computed(() =>
   [...workMemos.value, ...lifeMemos.value].filter((m) => {
     if (!m.remindAt || m.isDone) return false
-    return m.remindAt.slice(0, 10) === todayStr
+    return isoToLocalDateStr(m.remindAt) === todayStr
   }).length,
 )
 
@@ -57,7 +63,7 @@ function isOverdue(m: Memo): boolean {
   return !!m.remindAt && new Date(m.remindAt) < today && !m.isDone
 }
 function isToday(m: Memo): boolean {
-  return !!m.remindAt && m.remindAt.slice(0, 10) === todayStr
+  return !!m.remindAt && isoToLocalDateStr(m.remindAt) === todayStr
 }
 
 function fmtRemind(iso: string): string {

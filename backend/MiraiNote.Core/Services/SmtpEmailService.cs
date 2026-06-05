@@ -70,10 +70,12 @@ public class SmtpEmailService : IEmailService
     public Task SendPasswordChangedAsync(string toEmail, string username, CancellationToken ct = default)
     {
         const string subject = "未来ノート 密码已更改";
+        var cstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+        var nowCst = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cstZone);
         var html = WrapTemplate(
             title: "密码已更改",
             greeting: $"你好，{Escape(username)}：",
-            body: $"您的未来ノート账户密码已于 <strong>{DateTime.UtcNow.AddHours(8):yyyy-MM-dd HH:mm} (UTC+8)</strong> 成功更改。<br/><br/>" +
+            body: $"您的未来ノート账户密码已于 <strong>{nowCst:yyyy-MM-dd HH:mm} (UTC+8)</strong> 成功更改。<br/><br/>" +
                   "若<strong>非本人操作</strong>，请立即联系管理员并重置密码以保护账户安全。",
             buttonText: null,
             buttonLink: null,

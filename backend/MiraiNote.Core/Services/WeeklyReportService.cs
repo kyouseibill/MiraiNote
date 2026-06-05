@@ -152,8 +152,11 @@ public class WeeklyReportService : IWeeklyReportService
         if (ext != ".xlsx" && ext != ".xls")
             throw new BusinessException("只支持 .xlsx / .xls 格式", 400);
 
-        // 保存文件
-        var dir = Path.Combine(_uploadOptions.BasePath, "references");
+        // 物理存储目录：优先使用 PhysicalPath（生产），否则回退到 BasePath
+        var storageRoot = !string.IsNullOrEmpty(_uploadOptions.PhysicalPath)
+            ? _uploadOptions.PhysicalPath
+            : _uploadOptions.BasePath;
+        var dir = Path.Combine(storageRoot, "references");
         Directory.CreateDirectory(dir);
         var savedName = $"{Guid.NewGuid()}{ext}";
         var filePath = Path.Combine(dir, savedName);
@@ -206,27 +209,33 @@ public class WeeklyReportService : IWeeklyReportService
     private string BuildPrompt(DateTime weekStart, DateTime weekEnd, List<Data.Entities.WorkLog> workLogs, List<WeeklyReportReference> references)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一名工作周报撰写助手。请根据下方工作记录，生成一份纯文本格式的工作周报。");
+        sb.AppendLine("你是一名工作周报撰写助手。请根据下方【本周工作记录】，生成一份纯文本格式的工作周报。");
+        sb.AppendLine();
+        sb.AppendLine("【严格内容限制——最高优先级，不得违反】");
+        sb.AppendLine("- 周报内容必须且只能来源于下方【本周工作记录】中已明确写出的信息。");
+        sb.AppendLine("- 允许对记录的文字进行润色、精简、归纳，使其更通顺专业；");
+        sb.AppendLine("- 禁止添加、推测或虚构任何记录中未提及的工作内容、步骤或结论。");
+        sb.AppendLine("- 若某条记录的 \"目的\" 或 \"内容\" 为空，则对应字段跳过，不要自行补充。");
+        sb.AppendLine("- 若本周无工作记录，如实输出 \"本周暂无工作记录。\" ，不要编造内容。");
         sb.AppendLine();
         sb.AppendLine("【输出格式要求】");
         sb.AppendLine("- 禁止使用 Markdown 语法（禁止 #、**、*、-、> 等符号）");
         sb.AppendLine("- 每项工作独立成块，块内依次包含：");
         sb.AppendLine("    工作标题（一行，直接写标题，不加序号和符号）");
-        sb.AppendLine("    目的：（简述目标，一句话）");
+        sb.AppendLine("    目的：（简述目标，一句话；原记录无此字段则省略）");
         sb.AppendLine("    过程：");
         sb.AppendLine("    1.（步骤一）");
         sb.AppendLine("    2.（步骤二）");
         sb.AppendLine("    …");
-        sb.AppendLine("    结果：（完成情况）");
+        sb.AppendLine("    结果：（完成情况；如只是完成了某件事，直接写 \"已完成\" ）");
         sb.AppendLine("- 每项工作结束后输出一行 60 个短横线作为分隔线：");
         sb.AppendLine("    ------------------------------------------------------------");
         sb.AppendLine("- 不需要总体概述，不需要下周计划，直接逐项列出工作内容");
-        sb.AppendLine("- \u5982\u679c\u53ea\u662f\u5b8c\u6210\u4e86\u67d0\u4ef6\u4e8b\uff0c\u7ed3\u679c\u5c31\u76f4\u63a5\u5199\u300e\u5df2\u5b8c\u6210\u300f");
         sb.AppendLine();
 
         if (references.Any())
         {
-            sb.AppendLine("【参考资料（仅供了解工作内容背景，禁止模仿其格式，格式严格按照上述要求）】");
+            sb.AppendLine("【参考资料（仅用于理解工作背景，参考资料的内容不得写入周报，格式严格按照上述要求）】");
             foreach (var r in references)
             {
                 if (!string.IsNullOrWhiteSpace(r.Remark))
@@ -236,27 +245,53 @@ public class WeeklyReportService : IWeeklyReportService
             }
         }
 
-        sb.AppendLine($"【本周工作记录（{weekStart:yyyy-MM-dd} 至 {weekEnd:yyyy-MM-dd}）】");
+        sb.AppendLine($"【本周工作记录（{weekStart:yyyy-MM-dd} 至 {weekEnd:yyyy-MM-dd}，严格只使用此范围内的记录）】");
         if (!workLogs.Any())
         {
             sb.AppendLine("（本周无工作记录）");
         }
         else
         {
-            foreach (var log in workLogs)
+            // 相同标题的记录合并：目的取第一条非空值，内容按日期顺序换行拼接，标签去重合并
+            var groups = workLogs
+                .GroupBy(w => w.Title.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => new
+                {
+                    Title = g.Key,
+                    Dates = g.Select(w => w.LogDate).OrderBy(d => d).ToList(),
+                    Purpose = g.Select(w => w.Purpose).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)),
+                    Contents = g.Where(w => !string.IsNullOrWhiteSpace(w.Content))
+                                .OrderBy(w => w.LogDate)
+                                .Select(w => $"[{w.LogDate:MM-dd}] {w.Content!.Trim()}")
+                                .ToList(),
+                    Tags = g.SelectMany(w => (w.Tags ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                             .Where(t => !string.IsNullOrWhiteSpace(t))
+                             .Distinct(StringComparer.OrdinalIgnoreCase)
+                             .ToList(),
+                });
+
+            foreach (var group in groups)
             {
-                sb.AppendLine($"[{log.LogDate:MM-dd}] {log.Title}");
-                if (!string.IsNullOrWhiteSpace(log.Purpose))
-                    sb.AppendLine($"目的：{log.Purpose}");
-                if (!string.IsNullOrWhiteSpace(log.Content))
-                    sb.AppendLine($"内容：{log.Content}");
-                if (!string.IsNullOrWhiteSpace(log.Tags))
-                    sb.AppendLine($"标签：{log.Tags}");
+                var dateRange = group.Dates.Count == 1
+                    ? $"[{group.Dates[0]:MM-dd}]"
+                    : $"[{group.Dates.First():MM-dd}~{group.Dates.Last():MM-dd}]";
+                sb.AppendLine($"{dateRange} {group.Title}");
+                if (!string.IsNullOrWhiteSpace(group.Purpose))
+                    sb.AppendLine($"目的：{group.Purpose}");
+                if (group.Contents.Any())
+                {
+                    sb.AppendLine("内容：");
+                    foreach (var c in group.Contents)
+                        sb.AppendLine(c);
+                }
+                if (group.Tags.Any())
+                    sb.AppendLine($"标签：{string.Join(", ", group.Tags)}");
                 sb.AppendLine();
             }
         }
 
         sb.AppendLine();
+        sb.AppendLine("再次提醒：只能使用上方工作记录中已有的信息，不得臆测或添加任何未记录的内容。");
         sb.AppendLine("请严格按照上述格式要求输出周报，不要添加任何 Markdown 标记。");
         return sb.ToString();
     }

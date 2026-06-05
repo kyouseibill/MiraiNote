@@ -4,6 +4,7 @@ using MiraiNote.API.Middleware;
 using MiraiNote.Core;
 using MiraiNote.Core.Services;
 using MiraiNote.Data;
+using Microsoft.Extensions.FileProviders;
 using Serilog;
 using Serilog.Events;
 
@@ -60,6 +61,23 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 app.UseCors(ApiDependencyInjection.CorsPolicyName);
+
+// 服务上传文件（图片等静态资源）；PhysicalPath 配置时指向外部目录，否则使用 wwwroot
+var uploadCfg = app.Configuration.GetSection("Upload").Get<UploadOptions>() ?? new UploadOptions();
+if (!string.IsNullOrEmpty(uploadCfg.PhysicalPath))
+{
+    Directory.CreateDirectory(uploadCfg.PhysicalPath);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(uploadCfg.PhysicalPath),
+        RequestPath = "/" + uploadCfg.BasePath.Trim('/')
+    });
+}
+else
+{
+    app.UseStaticFiles();
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

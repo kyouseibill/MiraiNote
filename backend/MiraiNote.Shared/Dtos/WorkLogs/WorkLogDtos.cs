@@ -11,6 +11,8 @@ public class CreateWorkLogRequest
     public string? Category { get; set; }
     /// <summary>记录日期（仅日期部分，格式 yyyy-MM-dd）。</summary>
     public DateTime LogDate { get; set; }
+    /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
+    public byte Status { get; set; } = 0;
 }
 
 public class UpdateWorkLogRequest
@@ -21,6 +23,8 @@ public class UpdateWorkLogRequest
     public string? Tags { get; set; }
     public string? Category { get; set; }
     public DateTime LogDate { get; set; }
+    /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
+    public byte Status { get; set; } = 0;
 }
 
 /// <summary>列表查询参数。</summary>
@@ -43,6 +47,9 @@ public class WorkLogListQuery
 
     /// <summary>日期范围止（含），格式 yyyy-MM-dd。</summary>
     public DateTime? DateTo { get; set; }
+
+    /// <summary>按状态筛选：null=全部，1=进行中，2=已完成，3=已延期。</summary>
+    public byte? Status { get; set; }
 }
 
 // ===== 响应 DTO =====
@@ -56,6 +63,8 @@ public class WorkLogDto
     public string? Tags { get; set; }
     public string? Category { get; set; }
     public DateTime LogDate { get; set; }
+    /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
+    public byte Status { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

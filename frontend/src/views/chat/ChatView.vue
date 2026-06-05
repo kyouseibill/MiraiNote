@@ -8,6 +8,27 @@ const store = useChatStore()
 const toast = useToast()
 
 const inputContent = ref('')
+
+// 格式化会话发起日期（本地时间）
+function fmtSessionDate(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// 格式化消息时间：当天只显示时分，否则显示日期+时分
+function fmtMsgTime(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const isToday =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (isToday) return time
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`
+}
 const messagesContainer = ref<HTMLElement | null>(null)
 const renamingId = ref<number | null>(null)
 const renameTitle = ref('')
@@ -125,7 +146,10 @@ onMounted(async () => {
                 />
                 <button class="text-xs text-indigo-600" @click.stop="submitRename(s.id)">✓</button>
               </div>
-              <span v-else class="text-sm text-gray-700 truncate flex-1">{{ s.title }}</span>
+              <div v-else class="flex-1 min-w-0">
+                <div class="text-sm text-gray-700 truncate">{{ s.title }}</div>
+                <div class="text-xs text-gray-400 mt-0.5">{{ fmtSessionDate(s.createdAt) }}</div>
+              </div>
               <div class="hidden group-hover:flex items-center gap-0.5 shrink-0">
                 <button
                   class="text-xs text-gray-400 hover:text-indigo-500 px-1"
@@ -170,9 +194,10 @@ onMounted(async () => {
         <div
           v-for="msg in store.currentSession?.messages"
           :key="msg.id"
-          class="flex"
-          :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+          class="flex flex-col"
+          :class="msg.role === 'user' ? 'items-end' : 'items-start'"
         >
+          <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(msg.createdAt) }}</span>
           <div
             class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed"
             :class="msg.role === 'user'

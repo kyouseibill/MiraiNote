@@ -206,6 +206,13 @@ async function saveEdit(item: Memo) {
 
 onMounted(load)
 watch([includeDone, includeArchived], load)
+
+// 实时搜索：keyword 变化后 300ms 防抖触发
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(keyword, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => load(), 300)
+})
 </script>
 
 <template>
@@ -297,14 +304,25 @@ watch([includeDone, includeArchived], load)
         还没有备忘，先记一条吧～
       </div>
       <ul v-else class="divide-y divide-gray-100">
-        <li v-for="item in items" :key="item.id" class="p-4 group">
+        <li
+          v-for="item in items" :key="item.id"
+          class="p-4 group transition-colors"
+          :class="item.isDone ? 'bg-green-50' : 'hover:bg-gray-50/40'"
+        >
           <div class="flex items-start gap-3">
-            <input
-              type="checkbox"
-              :checked="item.isDone"
-              class="mt-1 cursor-pointer"
-              @change="toggleDone(item)"
-            />
+            <!-- 完成切换按钮 -->
+            <button
+              class="mt-0.5 w-5 h-5 shrink-0 rounded-full border-2 flex items-center justify-center transition-all"
+              :class="item.isDone
+                ? 'bg-green-500 border-green-500 text-white'
+                : 'border-gray-300 hover:border-green-400 hover:bg-green-50'"
+              :title="item.isDone ? '取消完成' : '标记为完成'"
+              @click="toggleDone(item)"
+            >
+              <svg v-if="item.isDone" class="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 6l3 3 5-5"/>
+              </svg>
+            </button>
             <div class="flex-1 min-w-0">
               <!-- 编辑态 -->
               <div v-if="editingId === item.id" class="space-y-2">
@@ -355,6 +373,7 @@ watch([includeDone, includeArchived], load)
               <!-- 显示态 -->
               <div v-else>
                 <div class="flex items-center gap-2 flex-wrap">
+                  <span v-if="item.isDone" class="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">✓ 已完成</span>
                   <span v-if="item.isPinned" class="text-xs" :class="accentClasses.pin">📌</span>
                   <span class="text-xs px-1.5 py-0.5 rounded" :class="priorityColor(item.priority)">{{ priorityLabel(item.priority) }}</span>
                   <span
@@ -375,13 +394,24 @@ watch([includeDone, includeArchived], load)
                 </p>
               </div>
             </div>
-            <div v-if="editingId !== item.id" class="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-              <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="togglePin(item)">
-                {{ item.isPinned ? '取消置顶' : '置顶' }}
+            <div v-if="editingId !== item.id" class="shrink-0 flex items-center gap-1">
+              <button
+                class="text-xs px-2 py-1 rounded font-medium transition-colors"
+                :class="item.isDone
+                  ? 'text-green-700 bg-green-100 hover:bg-green-200'
+                  : 'text-gray-500 hover:text-green-700 hover:bg-green-50'"
+                @click="toggleDone(item)"
+              >
+                {{ item.isDone ? '取消完成' : '完成' }}
               </button>
-              <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="startEdit(item)">编辑</button>
-              <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="archive(item)">归档</button>
-              <button class="text-xs text-red-500 hover:text-red-700 px-1.5 py-1" @click="remove(item)">删除</button>
+              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="togglePin(item)">
+                  {{ item.isPinned ? '取消置顶' : '置顶' }}
+                </button>
+                <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="startEdit(item)">编辑</button>
+                <button class="text-xs text-gray-500 hover:text-gray-800 px-1.5 py-1" @click="archive(item)">归档</button>
+                <button class="text-xs text-red-500 hover:text-red-700 px-1.5 py-1" @click="remove(item)">删除</button>
+              </div>
             </div>
           </div>
         </li>

@@ -335,7 +335,11 @@ onMounted(() => {
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="mt-6 flex items-center justify-center gap-2">
+    <div v-if="totalPages > 1" class="mt-6 flex flex-col items-center gap-2">
+      <p class="text-xs text-gray-400">
+        第 {{ (store.page - 1) * store.pageSize + 1 }}–{{ Math.min(store.page * store.pageSize, store.total) }} 条 / 共 {{ store.total }} 条
+      </p>
+      <div class="flex items-center gap-2">
       <button
         :disabled="store.page <= 1"
         class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -363,6 +367,7 @@ onMounted(() => {
       >
         下一页
       </button>
+      </div>
     </div>
   </div>
 
@@ -371,7 +376,6 @@ onMounted(() => {
     <div
       v-if="drawerOpen"
       class="fixed inset-0 z-50 bg-black/30 flex justify-end"
-      @click.self="drawerOpen = false"
     >
       <div class="w-full max-w-md h-full bg-white shadow-xl flex flex-col">
         <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">

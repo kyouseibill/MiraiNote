@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using MiraiNote.API.Services;
 using MiraiNote.Core.Services;
 using MiraiNote.Shared.Common;
 
@@ -13,11 +14,13 @@ public class UploadController : ControllerBase
 {
     private readonly UploadOptions _options;
     private readonly IWebHostEnvironment _env;
+    private readonly ICurrentUserService _currentUser;
 
-    public UploadController(IOptions<UploadOptions> options, IWebHostEnvironment env)
+    public UploadController(IOptions<UploadOptions> options, IWebHostEnvironment env, ICurrentUserService currentUser)
     {
         _options = options.Value;
         _env = env;
+        _currentUser = currentUser;
     }
 
     /// <summary>上传图片，返回可访问的相对路径（用于 LifeLog.ImagePath）。</summary>
@@ -36,7 +39,14 @@ public class UploadController : ControllerBase
         if (!allowed.Contains(ext))
             return BadRequest(ApiResponse.Fail("只支持 jpg/png/gif/webp 格式"));
 
-        var dir = Path.Combine(_env.WebRootPath ?? "wwwroot", _options.BasePath, "images");
+        var userId = _currentUser.UserId;
+
+        // 物理存储目录：优先使用 PhysicalPath（生产），否则回退到 wwwroot/{BasePath}
+        // 目录结构：{storageRoot}/{userId}/images/
+        var storageRoot = !string.IsNullOrEmpty(_options.PhysicalPath)
+            ? _options.PhysicalPath
+            : Path.Combine(_env.WebRootPath ?? "wwwroot", _options.BasePath);
+        var dir = Path.Combine(storageRoot, userId.ToString(), "images");
         Directory.CreateDirectory(dir);
 
         var savedName = $"{Guid.NewGuid()}{ext}";
@@ -45,8 +55,8 @@ public class UploadController : ControllerBase
         await using var stream = System.IO.File.Create(filePath);
         await file.CopyToAsync(stream, ct);
 
-        // 返回相对 URL 路径
-        var relativePath = $"/{_options.BasePath}/images/{savedName}";
+        // 返回相对 URL 路径：/{BasePath}/{userId}/images/{fileName}
+        var relativePath = $"/{_options.BasePath}/{userId}/images/{savedName}";
         return Ok(ApiResponse<string>.Ok(relativePath, "上传成功"));
     }
 }

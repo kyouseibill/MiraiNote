@@ -40,4 +40,7 @@ public class WorkLog : BaseEntity
 
     /// <summary>记录日期（工作发生日期，与 CreatedAt 创建时间不同）。</summary>
     public DateTime LogDate { get; set; }
+
+    /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
+    public byte Status { get; set; } = 0;
 }

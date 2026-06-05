@@ -1,3 +1,6 @@
+/** 工作状态：0=未标记，1=进行中，2=已完成，3=已延期 */
+export type WorkLogStatus = 0 | 1 | 2 | 3
+
 export interface WorkLog {
   id: number
   title: string
@@ -6,6 +9,7 @@ export interface WorkLog {
   tags: string | null
   category: string | null
   logDate: string
+  status: WorkLogStatus
   createdAt: string
   updatedAt: string
 }
@@ -17,6 +21,7 @@ export interface CreateWorkLogPayload {
   tags?: string | null
   category?: string | null
   logDate: string
+  status?: WorkLogStatus
 }
 
 export type UpdateWorkLogPayload = CreateWorkLogPayload
@@ -29,4 +34,5 @@ export interface WorkLogListQuery {
   tag?: string
   dateFrom?: string
   dateTo?: string
+  status?: WorkLogStatus | null
 }

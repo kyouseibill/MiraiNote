@@ -34,6 +34,21 @@ public class DeepSeekOptions
 public class UploadOptions
 {
     public const string SectionName = "Upload";
-    /// <summary>上传文件存储根目录（相对于 wwwroot）。</summary>
+    /// <summary>图片/文件 URL 路径前缀（相对路径，如 uploads）。始终保持为短名称，不得设为绝对路径。</summary>
     public string BasePath { get; set; } = "uploads";
+    /// <summary>文件物理存储根目录（绝对路径）。为空时使用 {WebRootPath}/{BasePath}。生产环境建议配置此项。</summary>
+    public string? PhysicalPath { get; set; }
+}
+
+/// <summary>
+/// Tavily 互联网搜索 API 配置。
+/// </summary>
+public class TavilyOptions
+{
+    public const string SectionName = "Tavily";
+    /// <summary>Tavily API Key，为空时禁用互联网搜索工具。</summary>
+    public string ApiKey { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = "https://api.tavily.com";
+    /// <summary>单次搜索返回最大结果数。</summary>
+    public int MaxResults { get; set; } = 5;
 }

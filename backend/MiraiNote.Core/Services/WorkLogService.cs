@@ -66,6 +66,10 @@ public class WorkLogService : IWorkLogService
             var to = query.DateTo.Value.Date;
             q = q.Where(w => w.LogDate <= to);
         }
+        if (query.Status.HasValue)
+        {
+            q = q.Where(w => w.Status == query.Status.Value);
+        }
 
         var total = await q.CountAsync(ct);
         var items = await q
@@ -105,7 +109,8 @@ public class WorkLogService : IWorkLogService
             Content = NullIfBlank(request.Content),
             Tags = NormalizeTags(request.Tags),
             Category = NullIfBlank(request.Category),
-            LogDate = request.LogDate.Date
+            LogDate = request.LogDate.Date,
+            Status = request.Status,
         };
         _db.WorkLogs.Add(entity);
         await _db.SaveChangesAsync(ct);
@@ -125,6 +130,7 @@ public class WorkLogService : IWorkLogService
         entity.Tags = NormalizeTags(request.Tags);
         entity.Category = NullIfBlank(request.Category);
         entity.LogDate = request.LogDate.Date;
+        entity.Status = request.Status;
 
         await _db.SaveChangesAsync(ct);
         return Map(entity);
@@ -190,6 +196,7 @@ public class WorkLogService : IWorkLogService
         Tags = w.Tags,
         Category = w.Category,
         LogDate = w.LogDate,
+        Status = w.Status,
         CreatedAt = w.CreatedAt,
         UpdatedAt = w.UpdatedAt
     };

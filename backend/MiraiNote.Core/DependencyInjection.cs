@@ -21,6 +21,7 @@ public static class DependencyInjection
         services.AddSingleton<Services.IEmailService, Services.SmtpEmailService>();
         services.AddHostedService<Services.MemoReminderBackgroundService>();
         services.AddHttpClient("DeepSeek");
+        services.AddHttpClient("Tavily");
         return services;
     }
 }

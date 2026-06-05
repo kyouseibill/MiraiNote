@@ -101,8 +101,9 @@ public class MemoReminderBackgroundService : BackgroundService
 
             try
             {
-                // 转换为 UTC+8 用于邮件展示
-                var remindLocal = memo.RemindAt!.Value.AddHours(8);
+                // 转换为本地时区（Asia/Shanghai，UTC+8）用于邮件展示
+                var cstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+                var remindLocal = TimeZoneInfo.ConvertTimeFromUtc(memo.RemindAt!.Value, cstZone);
                 await emailService.SendMemoReminderAsync(
                     item.Email!, item.Username, memo.Content, remindLocal, memo.Section, ct);
 

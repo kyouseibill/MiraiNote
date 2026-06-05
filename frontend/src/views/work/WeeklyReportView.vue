@@ -2,7 +2,6 @@
 import { ref, onMounted, computed } from 'vue'
 import { useWeeklyReportStore } from '@/stores/weeklyReport'
 import { useToast } from '@/composables/useToast'
-import { renderMarkdown } from '@/composables/useMarkdown'
 import type { WeeklyReport } from '@/types/weeklyReport'
 
 const store = useWeeklyReportStore()
@@ -28,6 +27,11 @@ const selectedReport = computed(() =>
   store.reports.find((r) => r.id === selectedReportId.value) ?? null
 )
 
+// 将 Date 对象格式化为本地日期字符串（不转 UTC），避免跨日偏移
+function fmtLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function getWeekRange(): { start: string; end: string } {
   const now = new Date()
   const day = now.getDay() || 7
@@ -36,8 +40,8 @@ function getWeekRange(): { start: string; end: string } {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
   return {
-    start: fmtDate(monday.toISOString()),
-    end: fmtDate(sunday.toISOString()),
+    start: fmtLocalDate(monday),
+    end: fmtLocalDate(sunday),
   }
 }
 
@@ -253,12 +257,11 @@ onMounted(async () => {
               v-model="editingContent"
               class="w-full h-full min-h-[400px] text-sm font-mono border border-gray-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200"
             />
-            <!-- 阅读模式：渲染 Markdown -->
-            <div
+            <!-- 阅读模式：纯文本显示 -->
+            <pre
               v-else
-              class="prose prose-sm max-w-none text-gray-700 leading-relaxed"
-              v-html="renderMarkdown(selectedReport.content)"
-            />
+              class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans"
+            >{{ selectedReport.content }}</pre>
           </div>
         </div>
       </div>
