@@ -2,12 +2,22 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatSession, ChatSessionDetail, ChatMessage } from '@/types/chat'
 import { chatApi } from '@/api/chat'
+import type { SseEventType } from '@/api/chat'
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<ChatSession[]>([])
   const currentSession = ref<ChatSessionDetail | null>(null)
   const loading = ref(false)
   const sending = ref(false)
+
+  /**
+   * 当前 AI 回复中用于流式显示的临时消息对象。
+   * 当流式开始时创建，结束后替换为服务器返回的正式消息。
+   */
+  const streamMessage = ref<ChatMessage | null>(null)
+
+  // 当前正在进行的工具调用描述
+  const currentToolCall = ref<string>('')
 
   async function fetchSessions() {
     loading.value = true
@@ -44,7 +54,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!currentSession.value) return
     const sessionId = currentSession.value.id
 
-    // 乐观更新：先追加用户消息
+    // 乐观更新：先追加用户消息（临时 ID）
     const tempUserMsg: ChatMessage = {
       id: -Date.now(),
       role: 'user',
@@ -56,15 +66,109 @@ export const useChatStore = defineStore('chat', () => {
     sending.value = true
     try {
       const assistantMsg = await chatApi.sendMessage(sessionId, { content })
-      // 替换临时用户消息（服务器会自动创建），追加 AI 回复
-      // 实际上用户消息已在后端持久化，这里仅追加 AI 回复
+      // 非流式模式：追加 AI 回复
       currentSession.value.messages.push(assistantMsg)
-
-      // 更新 session 标题（AI 可能修改了标题）
       await fetchSessions()
     } finally {
       sending.value = false
     }
+  }
+
+  /**
+   * 流式发送消息。
+   * 通过 SSE 接收逐 token 推送，实时更新界面。
+   */
+  async function sendMessageStream(content: string) {
+    if (!currentSession.value) return
+    const sessionId = currentSession.value.id
+
+    sending.value = true
+    currentToolCall.value = ''
+
+    // 1. 添加临时用户消息
+    const tempUserMsg: ChatMessage = {
+      id: -Date.now(),
+      role: 'user',
+      content,
+      createdAt: new Date().toISOString(),
+    }
+    currentSession.value.messages.push(tempUserMsg)
+
+    // 2. 创建流式 AI 回复占位
+    streamMessage.value = {
+      id: -Date.now() - 1,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+    }
+    currentSession.value.messages.push(streamMessage.value)
+
+    // 3. 用 SSE 向服务器发送请求
+    await chatApi.sendMessageStream(sessionId, { content }, (event) => {
+      if (!currentSession.value) return
+
+      switch (event.type) {
+        case 'user_msg':
+          // 用户消息已持久化，替换临时 ID
+          const userIdx = currentSession.value.messages.findIndex(
+            (m) => m.id === tempUserMsg.id,
+          )
+          if (userIdx >= 0) {
+            currentSession.value.messages[userIdx].id = event.data.id
+          }
+          break
+
+        case 'token':
+          // 追加文本 token
+          if (streamMessage.value) {
+            streamMessage.value.content += event.data.content
+          }
+          break
+
+        case 'tool_call':
+          // 显示工具调用提示
+          currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
+          break
+
+        case 'tool_result':
+          // 工具执行完成，清除提示
+          currentToolCall.value = ''
+          break
+
+        case 'done':
+          // AI 回复完成，替换为服务器返回的消息 ID
+          if (streamMessage.value) {
+            streamMessage.value.id = event.data.messageId
+            streamMessage.value = null
+          }
+          // 更新会话列表（标题可能已更改）
+          const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
+          if (sessionIdx >= 0) {
+            sessions.value[sessionIdx].title = event.data.title
+          }
+          if (currentSession.value) {
+            currentSession.value.title = event.data.title
+          }
+          break
+
+        case 'error':
+          // 出错时移除临时的 AI 消息占位
+          if (streamMessage.value) {
+            const errIdx = currentSession.value.messages.findIndex(
+              (m) => m.id === streamMessage.value.id,
+            )
+            if (errIdx >= 0) {
+              currentSession.value.messages.splice(errIdx, 1)
+            }
+            streamMessage.value = null
+          }
+          break
+      }
+    })
+
+    sending.value = false
+    currentToolCall.value = ''
+    streamMessage.value = null
   }
 
   async function updateTitle(sessionId: number, title: string) {
@@ -75,16 +179,41 @@ export const useChatStore = defineStore('chat', () => {
     return updated
   }
 
+  /** 工具名称 → 中文描述 */
+  function getToolLabel(name: string): string {
+    const labels: Record<string, string> = {
+      search_work_logs: '查询工作记录',
+      search_memos: '查询备忘',
+      search_life_logs: '查询生活记录',
+      get_weekly_reports: '获取周报',
+      search_internet: '搜索互联网',
+      create_work_log: '创建工作记录',
+      update_work_log: '更新工作记录',
+      delete_work_log: '删除工作记录',
+      create_memo: '创建备忘',
+      update_memo: '更新备忘',
+      patch_memo_status: '更新备忘状态',
+      delete_memo: '删除备忘',
+      create_life_log: '创建生活记录',
+      update_life_log: '更新生活记录',
+      delete_life_log: '删除生活记录',
+    }
+    return labels[name] || name
+  }
+
   return {
     sessions,
     currentSession,
     loading,
     sending,
+    streamMessage,
+    currentToolCall,
     fetchSessions,
     openSession,
     createSession,
     deleteSession,
     sendMessage,
+    sendMessageStream,
     updateTitle,
   }
 })

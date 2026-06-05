@@ -14,6 +14,13 @@ using MiraiNote.Shared.Dtos.WorkLogs;
 
 namespace MiraiNote.Core.Services;
 
+/// <summary>
+/// AI 对话回调：用于 SSE 流式推送。
+/// </summary>
+public delegate Task ChatStreamCallback(
+    string eventType,   // "user_msg", "token", "tool_call", "tool_result", "done", "error"
+    string data);       // JSON 序列化的数据
+
 public interface IChatService
 {
     Task<List<ChatSessionDto>> GetSessionsAsync(int userId, CancellationToken ct = default);
@@ -22,6 +29,17 @@ public interface IChatService
     Task<ChatSessionDto> UpdateSessionTitleAsync(int userId, int sessionId, UpdateSessionTitleRequest request, CancellationToken ct = default);
     Task DeleteSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// 流式发送消息（SSE）。通过 callback 逐事件推送到前端。
+    /// 包含 Function Calling 循环 + 流式 token 输出。
+    /// </summary>
+    Task SendMessageStreamAsync(
+        int userId,
+        int sessionId,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -132,6 +150,303 @@ public class ChatService : IChatService
 
         session.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
+    }
+
+    // ===== 流式发送消息（SSE） =====
+
+    public async Task SendMessageStreamAsync(
+        int userId,
+        int sessionId,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            await callback("error", "{\"message\":\"消息内容不能为空\"}");
+            return;
+        }
+
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+        if (session == null)
+        {
+            await callback("error", "{\"message\":\"对话不存在\"}");
+            return;
+        }
+
+        // 1. 存储用户消息
+        var userMsg = new ChatMessage
+        {
+            SessionId = sessionId,
+            Role = "user",
+            Content = request.Content.Trim()
+        };
+        _db.ChatMessages.Add(userMsg);
+        await _db.SaveChangesAsync(ct);
+
+        // 通知前端用户消息已持久化
+        await callback("user_msg", JsonSerializer.Serialize(new
+        {
+            id = userMsg.Id,
+            content = userMsg.Content,
+            createdAt = userMsg.CreatedAt
+        }));
+
+        // 2. 获取历史消息
+        var history = await _db.ChatMessages
+            .AsNoTracking()
+            .Where(m => m.SessionId == sessionId)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(ct);
+
+        // 3. 流式调用 DeepSeek（含 Function Calling 循环）
+        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
+            userId, history, callback, ct);
+
+        // 4. 存储 AI 回复
+        var assistantMsg = new ChatMessage
+        {
+            SessionId = sessionId,
+            Role = "assistant",
+            Content = assistantContent
+        };
+        _db.ChatMessages.Add(assistantMsg);
+
+        // 5. 首次对话自动更新标题
+        if (history.Count == 1 && session.Title == "新对话")
+        {
+            session.Title = request.Content.Length > 30
+                ? request.Content[..30] + "..."
+                : request.Content;
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        // 6. 通知前端完成
+        await callback("done", JsonSerializer.Serialize(new
+        {
+            messageId = assistantMsg.Id,
+            content = assistantContent,
+            title = session.Title,
+            createdAt = assistantMsg.CreatedAt
+        }));
+    }
+
+    // ===== DeepSeek 流式 Function Calling 循环 =====
+
+    private async Task<string> CallDeepSeekStreamWithToolsAsync(
+        int userId,
+        List<ChatMessage> history,
+        ChatStreamCallback callback,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
+        {
+            await callback("error", "{\"message\":\"DeepSeek API Key 未配置\"}");
+            throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
+        }
+
+        var client = _httpClientFactory.CreateClient("DeepSeek");
+        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
+
+        var messages = new List<object>
+        {
+            new { role = "system", content = BuildSystemPrompt() }
+        };
+        messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
+
+        var tools = BuildTools();
+        var fullContent = new StringBuilder();
+
+        for (int round = 0; round < 8; round++)
+        {
+            var body = new
+            {
+                model = _deepSeekOptions.Model,
+                messages,
+                tools,
+                tool_choice = "auto",
+                stream = true  // 开启流式
+            };
+
+            var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
+            var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+            };
+
+            using var httpResp = await client.SendAsync(
+                httpRequest,
+                HttpCompletionOption.ResponseHeadersRead,  // 关键：边收边读
+                ct);
+
+            if (!httpResp.IsSuccessStatusCode)
+            {
+                var err = await httpResp.Content.ReadAsStringAsync(ct);
+                await callback("error", JsonSerializer.Serialize(new
+                {
+                    message = $"AI 服务错误 {(int)httpResp.StatusCode}"
+                }));
+                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+            }
+
+            // 解析 SSE 流
+            var (assistantContent, toolCalls, finishReason) =
+                await ParseDeepSeekStreamAsync(
+                    await httpResp.Content.ReadAsStreamAsync(ct),
+                    callback,
+                    ct);
+
+            // 追加文本内容到全量字符串
+            if (!string.IsNullOrEmpty(assistantContent))
+            {
+                fullContent.Append(assistantContent);
+            }
+
+            if (finishReason == "stop" || finishReason == "length")
+            {
+                return fullContent.ToString();
+            }
+
+            if (finishReason == "tool_calls" && toolCalls.Count > 0)
+            {
+                // 将 assistant 消息（含 tool_calls）加入 messages
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = string.IsNullOrEmpty(assistantContent) ? null : assistantContent,
+                    tool_calls = toolCalls.Select(tc => new
+                    {
+                        id = tc.Id,
+                        type = "function",
+                        function = new { name = tc.FunctionName, arguments = tc.Arguments }
+                    }).ToArray()
+                });
+
+                // 执行每个工具调用
+                foreach (var tc in toolCalls)
+                {
+                    await callback("tool_call", JsonSerializer.Serialize(new
+                    {
+                        name = tc.FunctionName,
+                        arguments = tc.Arguments,
+                        id = tc.Id
+                    }));
+
+                    var result = await ExecuteToolAsync(userId, tc.FunctionName, tc.Arguments, ct);
+
+                    await callback("tool_result", JsonSerializer.Serialize(new
+                    {
+                        toolCallId = tc.Id,
+                        name = tc.FunctionName,
+                        result = result.Length > 500 ? result[..500] + "..." : result
+                    }));
+
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return fullContent.ToString();
+    }
+
+    /// <summary>
+    /// 解析 DeepSeek 流式 SSE 响应。
+    /// 返回：累计文本、工具调用列表、结束原因。
+    /// </summary>
+    private async Task<(string assistantContent, List<ToolCallInfo> toolCalls, string finishReason)>
+        ParseDeepSeekStreamAsync(
+        Stream responseStream,
+        ChatStreamCallback callback,
+        CancellationToken ct)
+    {
+                var assistantContent = new StringBuilder();
+        var toolCalls = new Dictionary<int, ToolCallInfo>(); // index → ToolCallInfo
+        var finishReason = "";
+
+        using var reader = new StreamReader(responseStream);
+
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (string.IsNullOrEmpty(line)) continue;
+
+            // SSE 格式：data: {...}
+            if (!line.StartsWith("data: ")) continue;
+
+            var json = line[6..]; // 去掉 "data: "
+            if (json == "[DONE]") break;
+
+            using var doc = JsonDocument.Parse(json);
+            var choices = doc.RootElement.GetProperty("choices")[0];
+
+            // 检查 finish_reason
+            if (choices.TryGetProperty("finish_reason", out var frEl) &&
+                frEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(frEl.GetString()))
+            {
+                finishReason = frEl.GetString()!;
+                // 继续读取剩余流，因为 tool_calls 可能在 finish_reason 之前就已发送完毕
+                if (finishReason == "stop" || finishReason == "length")
+                {
+                    // 停止后不再有新的内容
+                    break;
+                }
+            }
+
+            var delta = choices.GetProperty("delta");
+
+            // 常规文本 token
+            if (delta.TryGetProperty("content", out var contentEl) &&
+                contentEl.ValueKind == JsonValueKind.String)
+            {
+                var token = contentEl.GetString();
+                if (!string.IsNullOrEmpty(token))
+                {
+                    assistantContent.Append(token);
+                    await callback("token", JsonSerializer.Serialize(new { content = token }));
+                }
+            }
+
+            // 流式工具调用（tool_calls delta）
+            if (delta.TryGetProperty("tool_calls", out var tcDeltaEl) &&
+                tcDeltaEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var tcEl in tcDeltaEl.EnumerateArray())
+                {
+                    var index = tcEl.GetProperty("index").GetInt32();
+
+                    if (!toolCalls.ContainsKey(index))
+                        toolCalls[index] = new ToolCallInfo();
+
+                    var tc = toolCalls[index];
+
+                    if (tcEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+                        tc.Id = idEl.GetString()!;
+
+                    if (tcEl.TryGetProperty("function", out var funcEl))
+                    {
+                        if (funcEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+                            tc.FunctionName = nameEl.GetString()!;
+
+                        if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
+                            tc.Arguments += argsEl.GetString(); // 流式参数是增量拼凑的
+                    }
+                }
+            }
+        }
+
+        return (
+            assistantContent.ToString(),
+            toolCalls.Values.Where(t => !string.IsNullOrEmpty(t.Id)).ToList(),
+            finishReason
+        );
     }
 
     // ===== 发送消息（含 Function Calling 循环） =====
@@ -1087,11 +1402,21 @@ public class ChatService : IChatService
         UpdatedAt = s.UpdatedAt
     };
 
-    private static ChatMessageDto MapMessage(ChatMessage m) => new()
+        private static ChatMessageDto MapMessage(ChatMessage m) => new()
     {
         Id = m.Id,
         Role = m.Role,
         Content = m.Content,
         CreatedAt = m.CreatedAt
     };
+}
+
+/// <summary>
+/// 流式工具调用信息（用于解析 SSE delta）。
+/// </summary>
+internal class ToolCallInfo
+{
+    public string Id { get; set; } = string.Empty;
+    public string FunctionName { get; set; } = string.Empty;
+    public string Arguments { get; set; } = string.Empty;
 }

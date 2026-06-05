@@ -65,7 +65,8 @@ async function send() {
   }
   inputContent.value = ''
   try {
-    await store.sendMessage(text)
+    // 使用流式发送
+    await store.sendMessageStream(text)
     scrollToBottom()
   } catch {
     // ignore
@@ -206,9 +207,20 @@ onMounted(async () => {
             v-html="msg.role === 'user' ? msg.content.replace(/\n/g, '<br>') : renderMarkdown(msg.content)"
           />
         </div>
-        <div v-if="store.sending" class="flex justify-start">
-          <div class="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-bl-sm px-4 py-3 text-sm text-gray-400">
-            AI 思考中…
+                <!-- 流式输出中的 AI 回复（通过 streamMessage 实时渲染） -->
+        <div v-if="store.streamMessage" class="flex flex-col items-start">
+          <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(store.streamMessage.createdAt) }}</span>
+          <div
+            class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none"
+            v-html="store.streamMessage.content ? renderMarkdown(store.streamMessage.content) : ''"
+          />
+          <!-- 工具调用指示器 -->
+          <div
+            v-if="store.currentToolCall && !store.streamMessage.content"
+            class="mt-1 flex items-center gap-2 text-xs text-gray-400 animate-pulse"
+          >
+            <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+            {{ store.currentToolCall }}
           </div>
         </div>
       </div>

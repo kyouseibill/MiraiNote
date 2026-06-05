@@ -17,6 +17,11 @@ let accessTokenGetter: () => string | null = () => null
 let onUnauthorized: () => void = () => {}
 let onRefreshed: (resp: AuthResponse) => void = () => {}
 
+/** 获取当前 accessToken，供 SSE fetch 使用 */
+export function getAccessToken(): string | null {
+  return accessTokenGetter()
+}
+
 export function bindAuthHooks(opts: {
   getAccessToken: () => string | null
   onUnauthorized: () => void
