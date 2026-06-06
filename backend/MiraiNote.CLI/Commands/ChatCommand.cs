@@ -144,7 +144,10 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         return 0;
     }
 
-    /// <summary>非交互单次模式：建立（或复用）会话，发送一条消息，输出回复后退出。</summary>
+    /// <summary>
+    /// 非交互单次模式：复用上次会话（续聊）或新建会话，
+    /// 发送一条消息，保存 sessionId 供下次复用，输出回复后退出。
+    /// </summary>
     private async Task<int> RunSingleMessageAsync(ChatSettings s)
     {
         int sessionId;
@@ -152,25 +155,51 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         {
             if (s.SessionId.HasValue)
             {
+                // 用户显式指定了会话 ID
                 var detail = await _api.GetChatSessionAsync(s.SessionId.Value);
                 sessionId = detail.Id;
             }
+            else if (_store.LastChatSessionId.HasValue)
+            {
+                // 复用上次的会话（续聊，除非用户要求新开）
+                sessionId = _store.LastChatSessionId.Value;
+            }
             else
             {
+                // 首次对话，创建新会话
                 var session = await _api.CreateChatSessionAsync();
                 sessionId = session.Id;
             }
         }
         catch (ApiException ex)
         {
-            return CommandHelpers.HandleError($"初始化对话失败：{ex.Message}", s.Json);
+            // 上次的会话可能已被删除，回退到创建新会话
+            if (!s.SessionId.HasValue && _store.LastChatSessionId.HasValue)
+            {
+                try
+                {
+                    var session = await _api.CreateChatSessionAsync();
+                    sessionId = session.Id;
+                }
+                catch (ApiException ex2)
+                {
+                    return CommandHelpers.HandleError($"初始化对话失败：{ex2.Message}", s.Json);
+                }
+            }
+            else
+            {
+                return CommandHelpers.HandleError($"初始化对话失败：{ex.Message}", s.Json);
+            }
         }
 
         try
         {
             var reply = await _api.SendChatMessageAsync(sessionId, s.Message!);
 
-                        if (s.Json)
+            // 保存会话 ID 到本地配置，下次非交互模式自动复用
+            _store.SaveChatSessionId(sessionId);
+
+            if (s.Json)
             {
                 CommandHelpers.WriteJson(new
                 {
@@ -194,7 +223,7 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         }
     }
 
-        private static void PrintMessage(string role, string content)
+    private static void PrintMessage(string role, string content)
     {
         if (role == "assistant")
         {
@@ -212,4 +241,3 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         }
     }
 }
-

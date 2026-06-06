@@ -15,6 +15,7 @@ public class TokenStore
     public string? Token    => _data.Token;
     public string  ApiBase  => _data.ApiBase ?? "http://localhost:5273";
     public string? Username => _data.Username;
+    public int?    LastChatSessionId => _data.LastChatSessionId;
 
     public void Load()
     {
@@ -47,6 +48,12 @@ public class TokenStore
         Persist();
     }
 
+    public void SaveChatSessionId(int sessionId)
+    {
+        _data.LastChatSessionId = sessionId;
+        Persist();
+    }
+
     public bool HasToken => !string.IsNullOrWhiteSpace(_data.Token);
 
     private void Persist()
@@ -60,5 +67,7 @@ public class TokenStore
         public string? Token    { get; set; }
         public string? ApiBase  { get; set; }
         public string? Username { get; set; }
+        public int?    LastChatSessionId { get; set; }
     }
 }
+
