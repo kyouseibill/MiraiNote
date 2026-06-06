@@ -1,4 +1,4 @@
-import { http, unwrap, getAccessToken } from './auth'
+import { http, unwrap, getAccessToken, API_BASE_URL } from './auth'
 import type {
   ChatSession,
   ChatSessionDetail,
@@ -51,16 +51,17 @@ export const chatApi = {
     signal?: AbortSignal,
   ): Promise<void> => {
         const token = getAccessToken()
-    const response = await fetch(`/api/v1/chat/sessions/${sessionId}/messages/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-      credentials: 'include',  // 携带 HttpOnly Cookie（RefreshToken）
-      signal,
-    })
+        const url = `${API_BASE_URL}/chat/sessions/${sessionId}/messages/stream`
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(payload),
+          credentials: 'include',  // 携带 HttpOnly Cookie（RefreshToken）
+          signal,
+        })
 
     if (!response.ok) {
       onEvent({ type: 'error', data: { message: `HTTP ${response.status}: ${response.statusText}` } })

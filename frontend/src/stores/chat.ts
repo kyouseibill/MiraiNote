@@ -3,8 +3,10 @@ import { ref } from 'vue'
 import type { ChatSession, ChatSessionDetail, ChatMessage } from '@/types/chat'
 import { chatApi } from '@/api/chat'
 import type { SseEventType } from '@/api/chat'
+import { useToast } from '@/composables/useToast'
 
 export const useChatStore = defineStore('chat', () => {
+  const toast = useToast()
   const sessions = ref<ChatSession[]>([])
   const currentSession = ref<ChatSessionDetail | null>(null)
   const loading = ref(false)
@@ -158,15 +160,17 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'error':
-            // 出错时清除 streamMessage 占位（它不在 messages 中，无需移除）
+            // 出错时清除 streamMessage 占位，给用户提示
             streamMessage.value = null
+            toast.error(event.data?.message || '对话出错，请重试')
             break
         }
       })
         } catch (e) {
-      // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
-      streamMessage.value = null
-    } finally {
+          // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
+          streamMessage.value = null
+          toast.error('网络连接失败，请检查后端服务是否正常运行')
+        } finally {
       sending.value = false
       currentToolCall.value = ''
       streamMessage.value = null
