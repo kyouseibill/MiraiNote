@@ -1,8 +1,12 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using MiraiNote.CLI;
 using MiraiNote.CLI.Commands;
 using MiraiNote.CLI.Services;
 using Spectre.Console.Cli;
+
+// 统一控制台编码为 UTF-8（解决 PTY 和管道输出乱码）
+Console.OutputEncoding = Encoding.UTF8;
 
 // ===== 注册服务 =====
 var services = new ServiceCollection();

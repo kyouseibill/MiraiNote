@@ -1,3 +1,4 @@
+using System.Text;
 using MiraiNote.CLI.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -169,7 +170,7 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         {
             var reply = await _api.SendChatMessageAsync(sessionId, s.Message!);
 
-            if (s.Json)
+                        if (s.Json)
             {
                 CommandHelpers.WriteJson(new
                 {
@@ -181,7 +182,9 @@ public class ChatCommand : AsyncCommand<ChatSettings>
             }
             else
             {
+                Console.OutputEncoding = Encoding.UTF8;
                 Console.WriteLine(reply.Content);
+                Console.Out.Flush();
             }
             return 0;
         }
@@ -191,12 +194,16 @@ public class ChatCommand : AsyncCommand<ChatSettings>
         }
     }
 
-    private static void PrintMessage(string role, string content)
+        private static void PrintMessage(string role, string content)
     {
         if (role == "assistant")
         {
             AnsiConsole.MarkupLine("[bold blue]AI：[/]");
-            AnsiConsole.WriteLine(content);
+            // 使用 Console.Out.Write 而非 AnsiConsole.WriteLine 避免 Spectre markup 解析
+            // 并且确保 UTF-8 编码输出（PTY 和管道都能正确处理中文）
+            Console.OutputEncoding = Encoding.UTF8;
+            Console.WriteLine(content);
+            Console.Out.Flush();
             AnsiConsole.Write(new Rule("[grey]─[/]"));
         }
         else if (role == "user")
