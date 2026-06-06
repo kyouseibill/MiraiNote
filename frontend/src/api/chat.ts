@@ -50,7 +50,7 @@ export const chatApi = {
     onEvent: SseCallback,
     signal?: AbortSignal,
   ): Promise<void> => {
-    const token = getAccessToken()
+        const token = getAccessToken()
     const response = await fetch(`/api/v1/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',
       headers: {
@@ -58,6 +58,7 @@ export const chatApi = {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(payload),
+      credentials: 'include',  // 携带 HttpOnly Cookie（RefreshToken）
       signal,
     })
 

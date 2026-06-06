@@ -94,81 +94,83 @@ export const useChatStore = defineStore('chat', () => {
     }
     currentSession.value.messages.push(tempUserMsg)
 
-    // 2. 创建流式 AI 回复占位
+        // 2. 创建流式 AI 回复占位（不 push 到 messages 中，由独立模板区块渲染）
     streamMessage.value = {
       id: -Date.now() - 1,
       role: 'assistant',
       content: '',
       createdAt: new Date().toISOString(),
     }
-    currentSession.value.messages.push(streamMessage.value)
 
-    // 3. 用 SSE 向服务器发送请求
-    await chatApi.sendMessageStream(sessionId, { content }, (event) => {
-      if (!currentSession.value) return
+        // 3. 用 SSE 向服务器发送请求
+    try {
+      await chatApi.sendMessageStream(sessionId, { content }, (event) => {
+        if (!currentSession.value) return
 
-      switch (event.type) {
-        case 'user_msg':
-          // 用户消息已持久化，替换临时 ID
-          const userIdx = currentSession.value.messages.findIndex(
-            (m) => m.id === tempUserMsg.id,
-          )
-          if (userIdx >= 0) {
-            currentSession.value.messages[userIdx].id = event.data.id
-          }
-          break
-
-        case 'token':
-          // 追加文本 token
-          if (streamMessage.value) {
-            streamMessage.value.content += event.data.content
-          }
-          break
-
-        case 'tool_call':
-          // 显示工具调用提示
-          currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
-          break
-
-        case 'tool_result':
-          // 工具执行完成，清除提示
-          currentToolCall.value = ''
-          break
-
-        case 'done':
-          // AI 回复完成，替换为服务器返回的消息 ID
-          if (streamMessage.value) {
-            streamMessage.value.id = event.data.messageId
-            streamMessage.value = null
-          }
-          // 更新会话列表（标题可能已更改）
-          const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
-          if (sessionIdx >= 0) {
-            sessions.value[sessionIdx].title = event.data.title
-          }
-          if (currentSession.value) {
-            currentSession.value.title = event.data.title
-          }
-          break
-
-        case 'error':
-          // 出错时移除临时的 AI 消息占位
-          if (streamMessage.value) {
-            const errIdx = currentSession.value.messages.findIndex(
-              (m) => m.id === streamMessage.value.id,
+        switch (event.type) {
+          case 'user_msg':
+            // 用户消息已持久化，替换临时 ID
+            const userIdx = currentSession.value.messages.findIndex(
+              (m) => m.id === tempUserMsg.id,
             )
-            if (errIdx >= 0) {
-              currentSession.value.messages.splice(errIdx, 1)
+            if (userIdx >= 0) {
+              currentSession.value.messages[userIdx].id = event.data.id
             }
-            streamMessage.value = null
-          }
-          break
-      }
-    })
+            break
 
-    sending.value = false
-    currentToolCall.value = ''
-    streamMessage.value = null
+          case 'token':
+            // 追加文本 token
+            if (streamMessage.value) {
+              streamMessage.value.content += event.data.content
+            }
+            break
+
+          case 'tool_call':
+            // 显示工具调用提示
+            currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
+            break
+
+          case 'tool_result':
+            // 工具执行完成，清除提示
+            currentToolCall.value = ''
+            break
+
+          case 'done':
+            // AI 回复完成：将 streamMessage 转为正式消息加入列表
+            if (streamMessage.value && currentSession.value) {
+              const finalMsg: ChatMessage = {
+                id: event.data.messageId,
+                role: 'assistant',
+                content: streamMessage.value.content,
+                createdAt: event.data.createdAt || streamMessage.value.createdAt,
+              }
+              currentSession.value.messages.push(finalMsg)
+              streamMessage.value = null
+            }
+            // 更新会话列表（标题可能已更改）
+            const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
+            if (sessionIdx >= 0) {
+              sessions.value[sessionIdx].title = event.data.title
+            }
+            if (currentSession.value) {
+              currentSession.value.title = event.data.title
+            }
+            break
+
+          case 'error':
+            // 出错时清除 streamMessage 占位（它不在 messages 中，无需移除）
+            streamMessage.value = null
+            break
+        }
+      })
+        } catch (e) {
+      // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
+      streamMessage.value = null
+    } finally {
+      sending.value = false
+      currentToolCall.value = ''
+      streamMessage.value = null
+    }
   }
 
   async function updateTitle(sessionId: number, title: string) {
