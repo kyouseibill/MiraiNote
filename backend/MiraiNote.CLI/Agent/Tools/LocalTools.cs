@@ -18,6 +18,7 @@ public class InternetSearchTool : IAgentTool
     }
 
     public string Name => "search_internet";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Safe;
     public string Description =>
         "搜索互联网公开信息。适用于：天气预报、新闻、知识问答、技术资料、政策法规等。" +
         "用户个人数据（工作记录/备忘/日记）不通过此工具查询。";
@@ -79,6 +80,7 @@ public class InternetSearchTool : IAgentTool
 public class FileReadTool : IAgentTool
 {
     public string Name => "read_file";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Safe;
     public string Description =>
         "读取本地文件内容。支持文本文件（.txt .md .json .cs .csproj .sln .py .js .ts .html .css .yaml .yml .env .gitignore 等）。" +
         "当用户要求查看文件内容、阅读代码、检查配置时调用。";
@@ -139,6 +141,7 @@ public class FileReadTool : IAgentTool
 public class FileWriteTool : IAgentTool
 {
     public string Name => "write_file";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public string Description =>
         "将内容写入本地文件（覆盖写入）。用于保存代码、配置、文档等。" +
         "仅在用户明确要求写入文件时调用，操作前应告知用户目标路径。";
@@ -191,6 +194,7 @@ public class FileWriteTool : IAgentTool
 public class FileListTool : IAgentTool
 {
     public string Name => "list_files";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Safe;
     public string Description =>
         "列出目录中的文件和子目录。当用户要求查看目录内容、浏览项目结构时调用。";
 
@@ -268,6 +272,7 @@ public class ShellTool : IAgentTool
     };
 
     public string Name => "run_shell";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Dangerous;
     public string Description =>
         "执行 Shell 命令并返回输出。支持常用的开发命令：dotnet、git、npm、dir/ls、type/cat 等。" +
         "禁止执行破坏性命令（rm -rf、format 等）。超时 30 秒。";
@@ -344,6 +349,7 @@ public class ShellTool : IAgentTool
 public class SystemInfoTool : IAgentTool
 {
     public string Name => "system_info";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Safe;
     public string Description =>
         "获取当前系统信息：操作系统、当前目录、环境变量等。" +
         "当用户询问系统状态、当前环境时调用。";

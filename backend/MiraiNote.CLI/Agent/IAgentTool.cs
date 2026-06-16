@@ -3,6 +3,19 @@ using System.Text.Json;
 namespace MiraiNote.CLI.Agent;
 
 /// <summary>
+/// 工具风险等级。
+/// </summary>
+public enum ToolRiskLevel
+{
+    /// <summary>只读操作，无需用户确认</summary>
+    Safe,
+    /// <summary>写入操作，显示提示但不阻塞</summary>
+    Write,
+    /// <summary>破坏性操作，必须用户确认后才执行</summary>
+    Dangerous
+}
+
+/// <summary>
 /// 工具定义接口。每个工具实现此接口即可被 AgentLoop 自动发现。
 /// </summary>
 public interface IAgentTool
@@ -12,6 +25,9 @@ public interface IAgentTool
 
     /// <summary>工具描述（给 LLM 看的）</summary>
     string Description { get; }
+
+    /// <summary>工具风险等级</summary>
+    ToolRiskLevel RiskLevel { get; }
 
     /// <summary>
     /// 参数 JSON Schema（properties + required）。

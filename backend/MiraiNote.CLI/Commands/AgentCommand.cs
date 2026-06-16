@@ -23,6 +23,18 @@ public class AgentSettings : CommandSettings
     [Description("显示 Agent 思考过程和工具调用详情")]
     public bool Verbose { get; set; } = false;
 
+    [CommandOption("--plan")]
+    [Description("先展示执行计划，用户确认后再执行（交互模式默认启用）")]
+    public bool? ShowPlan { get; set; }
+
+    [CommandOption("--no-reflect")]
+    [Description("禁用任务完成后的自我反思")]
+    public bool NoReflect { get; set; } = false;
+
+    [CommandOption("--auto")]
+    [Description("跳过规划和确认，直接执行（全自动模式）")]
+    public bool Auto { get; set; } = false;
+
     [CommandOption("--model")]
     [Description("指定 DeepSeek 模型（默认 deepseek-chat）")]
     public string? Model { get; set; }
@@ -45,10 +57,11 @@ public class AgentSettings : CommandSettings
 }
 
 /// <summary>
-/// MiraiNote Agent 命令 —— 功能强大的 AI Agent。
-/// 支持多步骤任务规划、工具调用、自我校验。
+/// MiraiNote Agent 命令 v2 —— 功能强大的 AI Agent。
+/// 集成 Planner、Reflector、Guard 确认、上下文管理。
 ///
-/// 交互模式（默认）：多轮对话，/exit 退出，/new 新任务，/verbose 切换详细输出。
+/// 交互模式（默认）：多轮对话，/exit 退出，/new 新任务，/verbose 切换详细输出，
+///                  /plan 查看计划, /auto 全自动模式, /context 查看上下文用量。
 /// 非交互模式（--message）：执行单次任务后退出。
 /// </summary>
 public class AgentCommand : AsyncCommand<AgentSettings>
@@ -70,14 +83,18 @@ public class AgentCommand : AsyncCommand<AgentSettings>
 
         // ── 交互模式 ──────────────────────────────────
         var config = BuildConfig(s);
-        var display = new AgentDisplay(verbose: false); // 默认简洁模式
+        var display = new AgentDisplay(verbose: false);
         var loop = BuildLoop(config, display);
 
         display.ShowWelcome();
+        AnsiConsole.MarkupLine("[grey]  /plan 查看计划  /auto 全自动  /verbose 详情  /context 用量  /exit 退出[/]");
         Console.WriteLine();
 
         var history = new List<AgentMessage>();
         bool verbose = s.Verbose;
+        bool enablePlan = true;
+        bool enableReflect = true;
+        bool skipConfirm = false;
 
         while (true)
         {
@@ -103,8 +120,37 @@ public class AgentCommand : AsyncCommand<AgentSettings>
             {
                 verbose = !verbose;
                 display = new AgentDisplay(verbose);
-                AnsiConsole.MarkupLine($"[grey]详细输出：{(verbose ? "开启" : "关闭")}[/]");
                 loop = BuildLoop(config, display);
+                AnsiConsole.MarkupLine($"[grey]详细输出：{(verbose ? "开启" : "关闭")}[/]");
+                continue;
+            }
+
+            if (input == "/plan")
+            {
+                enablePlan = !enablePlan;
+                AnsiConsole.MarkupLine($"[grey]执行计划：{(enablePlan ? "开启" : "关闭")}[/]");
+                continue;
+            }
+
+            if (input == "/reflect")
+            {
+                enableReflect = !enableReflect;
+                AnsiConsole.MarkupLine($"[grey]自我反思：{(enableReflect ? "开启" : "关闭")}[/]");
+                continue;
+            }
+
+            if (input == "/auto")
+            {
+                skipConfirm = !skipConfirm;
+                AnsiConsole.MarkupLine($"[grey]全自动模式：{(skipConfirm ? "开启（跳过确认）" : "关闭（需确认）")}[/]");
+                continue;
+            }
+
+            if (input == "/context")
+            {
+                var ctxMgr = new AgentContextManager();
+                var usage = ctxMgr.GetUsage(history, 15);
+                AnsiConsole.MarkupLine($"[grey]{usage}[/]");
                 continue;
             }
 
@@ -114,23 +160,21 @@ public class AgentCommand : AsyncCommand<AgentSettings>
                 continue;
             }
 
-            // 添加用户消息
-            history.Add(new AgentMessage("user", input));
-
             try
             {
-                if (!verbose)
+                var options = new AgentRunOptions
                 {
-                    // 简洁模式：只显示 spinner
-                    using var status = AnsiConsole.Status()
-                        .Spinner(Spinner.Known.Dots)
-                        .Start("[grey]Agent 思考中...[/]", _ => Task.CompletedTask);
-                }
+                    EnablePlanner = enablePlan,
+                    EnableReflector = enableReflect,
+                    SkipConfirmation = skipConfirm,
+                    ConfirmCallback = (risk, toolName, args) =>
+                        Task.FromResult(display.RequestConfirmation(risk, toolName, args))
+                };
 
-                var response = await loop.RunAsync(history, onToken: null, CancellationToken.None);
+                var result = await loop.RunWithPlanAsync(
+                    input, history, options, onToken: null, CancellationToken.None);
 
-                history.Add(new AgentMessage("assistant", response));
-                display.ShowResponse(response);
+                display.ShowResponse(result.Content);
             }
             catch (Exception ex)
             {
@@ -150,14 +194,20 @@ public class AgentCommand : AsyncCommand<AgentSettings>
         var display = new AgentDisplay(s.Verbose);
         var loop = BuildLoop(config, display);
 
-        var history = new List<AgentMessage>
+        var history = new List<AgentMessage>();
+        var options = new AgentRunOptions
         {
-            new("user", s.Message!)
+            EnablePlanner = s.ShowPlan ?? !s.Auto,
+            EnableReflector = !s.NoReflect,
+            SkipConfirmation = s.Auto || s.Json,
+            ConfirmCallback = s.Json ? null : (risk, toolName, args) =>
+                Task.FromResult(display.RequestConfirmation(risk, toolName, args))
         };
 
         try
         {
-            var response = await loop.RunAsync(history,
+            var result = await loop.RunWithPlanAsync(
+                s.Message!, history, options,
                 onToken: s.Json ? null : async token =>
                 {
                     Console.OutputEncoding = Encoding.UTF8;
@@ -168,13 +218,25 @@ public class AgentCommand : AsyncCommand<AgentSettings>
 
             if (s.Json)
             {
-                CommandHelpers.WriteJson(new { success = true, content = response });
+                CommandHelpers.WriteJson(new
+                {
+                    success = true,
+                    content = result.Content,
+                    toolCalls = result.ToolCallsCount,
+                    plan = result.Plan?.Goal,
+                    reflection = result.Reflection != null ? new
+                    {
+                        score = result.Reflection.Score,
+                        isComplete = result.Reflection.IsComplete,
+                        issues = result.Reflection.Issues,
+                        suggestions = result.Reflection.Suggestions
+                    } : null
+                });
             }
             else if (!s.Verbose)
             {
-                // 非 verbose 模式下没有实时流式输出，这里输出最终结果
                 Console.OutputEncoding = Encoding.UTF8;
-                Console.WriteLine(response);
+                Console.WriteLine(result.Content);
                 Console.Out.Flush();
             }
 

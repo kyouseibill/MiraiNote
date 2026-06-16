@@ -14,6 +14,7 @@ public abstract class ApiBackedTool : IAgentTool
     public abstract string Name { get; }
     public abstract string Description { get; }
     public abstract ToolParameterSchema Parameters { get; }
+    public virtual ToolRiskLevel RiskLevel => ToolRiskLevel.Safe;
     public abstract Task<string> ExecuteAsync(string argumentsJson, CancellationToken ct = default);
 }
 
@@ -185,6 +186,7 @@ public class GenerateWeeklyReportTool : ApiBackedTool
 {
     public GenerateWeeklyReportTool(ApiClient api) : base(api) { }
     public override string Name => "generate_weekly_report";
+    public override ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public override string Description =>
         "生成指定周的工作周报。AI 会自动汇总本周工作记录生成周报。";
 
@@ -222,6 +224,7 @@ public class CreateWorkLogTool : ApiBackedTool
 {
     public CreateWorkLogTool(ApiClient api) : base(api) { }
     public override string Name => "create_work_log";
+    public override ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public override string Description =>
         "创建一条工作记录。当用户明确要求记录工作内容、添加工作日志时调用。";
 
@@ -272,6 +275,7 @@ public class CreateMemoTool : ApiBackedTool
 {
     public CreateMemoTool(ApiClient api) : base(api) { }
     public override string Name => "create_memo";
+    public override ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public override string Description => "创建备忘/待办事项。用户要求记录提醒、待办时调用。";
 
     public override ToolParameterSchema Parameters => new()
@@ -321,6 +325,7 @@ public class PatchMemoStatusTool : ApiBackedTool
 {
     public PatchMemoStatusTool(ApiClient api) : base(api) { }
     public override string Name => "patch_memo_status";
+    public override ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public override string Description => "切换备忘的完成/置顶状态。标记完成、取消完成时调用。";
 
     public override ToolParameterSchema Parameters => new()

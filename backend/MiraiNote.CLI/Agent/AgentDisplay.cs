@@ -91,4 +91,79 @@ public class AgentDisplay
         if (_verbose)
             AnsiConsole.MarkupLine($"[grey]⏳ {Markup.Escape(message)}[/]");
     }
+
+    /// <summary>显示执行计划</summary>
+    public void ShowPlan(ExecutionPlan plan)
+    {
+        AnsiConsole.WriteLine();
+        var panel = new Panel(
+            string.Join("\n", plan.Steps.Select((s, i) =>
+                $"  [bold]{i + 1}.[/] {Markup.Escape(s.Action)}  [grey]({string.Join(", ", s.Tools)})[/]")))
+        {
+            Header = new PanelHeader($"[bold cyan]📋 执行计划：{Markup.Escape(plan.Goal)}[/]"),
+            Border = BoxBorder.Rounded,
+            BorderStyle = new Style(Color.Cyan1)
+        };
+        AnsiConsole.Write(panel);
+
+        if (plan.Risks.Count > 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]⚠ 风险提示：[/]");
+            foreach (var r in plan.Risks)
+                AnsiConsole.MarkupLine($"  [yellow]• {Markup.Escape(r)}[/]");
+        }
+
+        AnsiConsole.WriteLine();
+    }
+
+    /// <summary>显示反思结果</summary>
+    public void ShowReflection(ReflectionResult reflection)
+    {
+        var icon = reflection.IsComplete ? "[green]✓[/]" : "[red]✗[/]";
+        var scoreColor = reflection.Score >= 8 ? "green" : reflection.Score >= 5 ? "yellow" : "red";
+
+        var lines = new List<string>
+        {
+            $"{icon} 目标达成：{(reflection.IsComplete ? "是" : "否")}  自评：[{scoreColor}]{reflection.Score}/10[/]"
+        };
+
+        if (reflection.Strengths.Length > 0)
+            lines.Add($"[green]✓[/] 优点：{Markup.Escape(string.Join("、", reflection.Strengths))}");
+
+        if (reflection.Issues.Length > 0)
+            lines.Add($"[yellow]⚠[/] 问题：{Markup.Escape(string.Join("、", reflection.Issues))}");
+
+        if (reflection.Suggestions.Length > 0)
+            lines.Add($"[blue]💡[/] 建议：{Markup.Escape(string.Join("、", reflection.Suggestions))}");
+
+        if (reflection.NeedsFollowUp && !string.IsNullOrWhiteSpace(reflection.FollowUpAction))
+            lines.Add($"[cyan]→[/] 自动补充：{Markup.Escape(reflection.FollowUpAction)}");
+
+        var panel = new Panel(string.Join("\n", lines))
+        {
+            Header = new PanelHeader("[bold magenta]🔍 自我反思[/]"),
+            Border = BoxBorder.Rounded,
+            BorderStyle = new Style(Color.Magenta1)
+        };
+        AnsiConsole.Write(panel);
+        AnsiConsole.WriteLine();
+    }
+
+    /// <summary>请求用户确认危险操作</summary>
+    public bool RequestConfirmation(ToolRiskLevel riskLevel, string toolName, string arguments)
+    {
+        if (riskLevel == ToolRiskLevel.Safe) return true;
+
+        var color = riskLevel == ToolRiskLevel.Dangerous ? "red" : "yellow";
+        var label = riskLevel == ToolRiskLevel.Dangerous ? "⚠ 危险操作" : "📝 写入操作";
+
+        AnsiConsole.MarkupLine($"[{color}]{label}：{Markup.Escape(toolName)}[/]");
+        if (_verbose)
+        {
+            var compact = arguments.Length > 200 ? arguments[..200] + "..." : arguments;
+            AnsiConsole.MarkupLine($"[grey]   参数: {Markup.Escape(compact)}[/]");
+        }
+
+        return AnsiConsole.Confirm($"[{color}]确认执行此操作？[/]", false);
+    }
 }
