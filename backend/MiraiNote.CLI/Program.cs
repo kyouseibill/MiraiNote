@@ -102,6 +102,14 @@ app.Configure(config =>
         .WithExample(["chat"])
         .WithExample(["chat", "--session", "5"]);
 
+    // ── Agent ──────────────────────────────────────
+    config.AddCommand<AgentCommand>("agent")
+        .WithDescription("MiraiNote AI Agent —— 自主规划、多步骤执行、工具调用")
+        .WithExample(["agent"])
+        .WithExample(["agent", "--message", "帮我总结本周工作并生成周报", "--json"])
+        .WithExample(["agent", "--verbose", "--message", "检查项目结构"])
+        .WithExample(["agent", "--deepseek-key", "sk-xxx"]);
+
     // ── 周报 ──────────────────────────────────────
     config.AddBranch("weekly", w =>
     {
