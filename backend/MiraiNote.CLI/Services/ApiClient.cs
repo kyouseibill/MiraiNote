@@ -219,7 +219,7 @@ public class ApiClient
         return result?.Data ?? throw new ApiException("响应数据为空");
     }
 
-    public new async Task DeleteAsync(string path)
+    public async Task DeleteAsync(string path)
     {
         var req = new HttpRequestMessage(HttpMethod.Delete, Url(path));
         SetAuthHeader(req);
