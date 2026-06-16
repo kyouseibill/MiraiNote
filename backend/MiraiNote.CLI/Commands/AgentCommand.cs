@@ -272,6 +272,14 @@ public class AgentCommand : AsyncCommand<AgentSettings>
             registry.Register(new PatchMemoStatusTool(_api));
         }
 
+        // ── 记忆工具（需登录）──
+        if (_store.HasToken)
+        {
+            registry.Register(new RememberTool(_api));
+            registry.Register(new RecallTool(_api));
+            registry.Register(new ForgetTool(_api));
+        }
+
         // ── 本地工具 ──
         registry.Register(new InternetSearchTool(config.TavilyApiKey));
         registry.Register(new FileReadTool());

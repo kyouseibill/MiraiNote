@@ -95,7 +95,36 @@ public class ChatController : ControllerBase
             request,
             async (eventType, data) =>
             {
-                // 每个事件格式：event: xxx\ndata: {...}\n\n
+                await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// Agent 模式流式发送消息（SSE）。
+    /// 在普通 stream 基础上增加 Plan → Reflect 流程。
+    /// 新增事件类型：plan、reflection。
+    /// </summary>
+    [HttpPost("sessions/{sessionId:int}/messages/agent/stream")]
+    public async Task SendMessageAgentStream(
+        int sessionId,
+        [FromBody] SendMessageRequest request,
+        CancellationToken ct)
+    {
+        Response.Headers["Content-Type"] = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["Connection"] = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var userId = _currentUser.UserId;
+
+        await _service.SendMessageAgentStreamAsync(
+            userId,
+            sessionId,
+            request,
+            async (eventType, data) =>
+            {
                 await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
                 await Response.Body.FlushAsync(ct);
             },

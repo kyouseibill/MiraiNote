@@ -194,9 +194,9 @@ public class ApiClient
         => await PostAsync<WeeklyReportDto>("/api/v1/reports/generate",
             new { weekStart = weekStart.ToString("yyyy-MM-dd"), weekEnd = weekStart.AddDays(6).ToString("yyyy-MM-dd") });
 
-    // ===== 内部辅助 =====
+    // ===== 通用 HTTP 方法（供 MemoryTools 等自定义工具使用）=====
 
-    private async Task<T> GetAsync<T>(string path) where T : class
+    public async Task<T> GetAsync<T>(string path) where T : class
     {
         var req = new HttpRequestMessage(HttpMethod.Get, Url(path));
         SetAuthHeader(req);
@@ -207,12 +207,10 @@ public class ApiClient
         return result?.Data ?? throw new ApiException("响应数据为空");
     }
 
-    private async Task<T> PostAsync<T>(string path, object payload) where T : class
+    public async Task<T> PostAsync<T>(string path, object payload) where T : class
     {
         var req = new HttpRequestMessage(HttpMethod.Post, Url(path))
-        {
-            Content = JsonContent.Create(payload, options: _json)
-        };
+        { Content = JsonContent.Create(payload, options: _json) };
         SetAuthHeader(req);
         var resp = await _http.SendAsync(req);
         var body = await resp.Content.ReadAsStringAsync();
@@ -220,6 +218,20 @@ public class ApiClient
         var result = Deserialize<ApiResp<T>>(body);
         return result?.Data ?? throw new ApiException("响应数据为空");
     }
+
+    public new async Task DeleteAsync(string path)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Delete, Url(path));
+        SetAuthHeader(req);
+        var resp = await _http.SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            throw new ApiException(ExtractMessage(body, (int)resp.StatusCode));
+        }
+    }
+
+    // ===== 内部辅助 =====
 
     private async Task<T> PutAsync<T>(string path, object payload) where T : class
     {
@@ -247,9 +259,6 @@ public class ApiClient
             throw new ApiException(ExtractMessage(body, (int)resp.StatusCode));
         }
     }
-
-    private async Task DeleteAsync(string path)
-        => await SendAsync(HttpMethod.Delete, path);
 
     private void SetAuthHeader(HttpRequestMessage req)
     {

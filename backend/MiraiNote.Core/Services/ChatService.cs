@@ -40,6 +40,18 @@ public interface IChatService
         SendMessageRequest request,
         ChatStreamCallback callback,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Agent 模式流式发送消息（SSE）。
+    /// 包含 Plan → Execute → Reflect → FollowUp 完整 Agent 流程。
+    /// 新增 SSE 事件：plan、reflection、confirm。
+    /// </summary>
+    Task SendMessageAgentStreamAsync(
+        int userId,
+        int sessionId,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -57,6 +69,9 @@ public class ChatService : IChatService
     private readonly IWorkLogService _workLogService;
     private readonly IMemoService _memoService;
     private readonly ILifeLogService _lifeLogService;
+    private readonly IAgentPlannerService _plannerService;
+    private readonly IAgentReflectorService _reflectorService;
+    private readonly IAgentMemoryService _memoryService;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
     {
@@ -71,7 +86,10 @@ public class ChatService : IChatService
         IHttpClientFactory httpClientFactory,
         IWorkLogService workLogService,
         IMemoService memoService,
-        ILifeLogService lifeLogService)
+        ILifeLogService lifeLogService,
+        IAgentPlannerService plannerService,
+        IAgentReflectorService reflectorService,
+        IAgentMemoryService memoryService)
     {
         _db = db;
         _deepSeekOptions = deepSeekOptions.Value;
@@ -81,6 +99,9 @@ public class ChatService : IChatService
         _workLogService = workLogService;
         _memoService = memoService;
         _lifeLogService = lifeLogService;
+        _plannerService = plannerService;
+        _reflectorService = reflectorService;
+        _memoryService = memoryService;
     }
 
     // ===== 会话 CRUD =====
@@ -231,6 +252,234 @@ public class ChatService : IChatService
             title = session.Title,
             createdAt = assistantMsg.CreatedAt
         }));
+    }
+
+    // ===== Agent 模式流式发送消息 =====
+
+    public async Task SendMessageAgentStreamAsync(
+        int userId,
+        int sessionId,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            await callback("error", "{\"message\":\"消息内容不能为空\"}");
+            return;
+        }
+
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+        if (session == null)
+        {
+            await callback("error", "{\"message\":\"对话不存在\"}");
+            return;
+        }
+
+        // 存储用户消息
+        var userMsg = new ChatMessage { SessionId = sessionId, Role = "user", Content = request.Content.Trim() };
+        _db.ChatMessages.Add(userMsg);
+        await _db.SaveChangesAsync(ct);
+
+        await callback("user_msg", JsonSerializer.Serialize(new
+        {
+            id = userMsg.Id, content = userMsg.Content, createdAt = userMsg.CreatedAt
+        }));
+
+        // 获取历史消息
+        var history = await _db.ChatMessages
+            .AsNoTracking()
+            .Where(m => m.SessionId == sessionId)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(ct);
+
+        // ── 阶段 1：Plan ──
+        var toolNames = new List<string> {
+            "search_work_logs","search_memos","search_life_logs","get_weekly_reports",
+            "create_work_log","create_memo","create_life_log",
+            "update_work_log","update_memo","update_life_log",
+            "patch_memo_status","delete_work_log","delete_memo","delete_life_log",
+            "search_internet"
+        };
+        var plan = await _plannerService.GeneratePlanAsync(request.Content, toolNames, ct);
+        if (plan != null)
+        {
+            await callback("plan", JsonSerializer.Serialize(new
+            {
+                goal = plan.Goal,
+                steps = plan.Steps,
+                risks = plan.Risks
+            }));
+        }
+
+        // ── 阶段 2：Execute（复用现有 FC 循环） ──
+        int toolCallCount = 0;
+
+        // 包装 callback 以计数工具调用
+        async Task CountingCallback(string eventType, string data)
+        {
+            if (eventType == "tool_call") toolCallCount++;
+            await callback(eventType, data);
+        }
+
+        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+            userId, history, CountingCallback, ct);
+
+        // 存储 AI 回复
+        var assistantMsg = new ChatMessage { SessionId = sessionId, Role = "assistant", Content = assistantContent };
+        _db.ChatMessages.Add(assistantMsg);
+
+        if (history.Count == 1 && session.Title == "新对话")
+        {
+            session.Title = request.Content.Length > 30 ? request.Content[..30] + "..." : request.Content;
+        }
+        await _db.SaveChangesAsync(ct);
+
+        // ── 阶段 3：Reflect ──
+        if (assistantContent.Length > 100)
+        {
+            var reflection = await _reflectorService.ReflectAsync(
+                request.Content, assistantContent, toolCallCount, ct);
+
+            if (reflection != null)
+            {
+                await callback("reflection", JsonSerializer.Serialize(new
+                {
+                    isComplete = reflection.IsComplete,
+                    score = reflection.Score,
+                    strengths = reflection.Strengths,
+                    issues = reflection.Issues,
+                    suggestions = reflection.Suggestions
+                }));
+
+                // ── 阶段 4：FollowUp ──
+                if (reflection.NeedsFollowUp && !string.IsNullOrWhiteSpace(reflection.FollowUpAction))
+                {
+                    await callback("token", JsonSerializer.Serialize(new { content = "\n\n---\n*自动补充中...*" }));
+                    var followUpReq = new SendMessageRequest { Content = $"请改进：{reflection.FollowUpAction}" };
+                    var followUpContent = await CallDeepSeekStreamWithToolsAgentAsync(
+                        userId, history, callback, ct);
+
+                    assistantMsg.Content += "\n\n---\n" + followUpContent;
+                }
+            }
+        }
+
+        // ── 阶段 5：Auto Memory ──
+        await _memoryService.AutoExtractAsync(userId, request.Content, assistantContent, ct);
+
+        // 通知前端完成
+        await callback("done", JsonSerializer.Serialize(new
+        {
+            messageId = assistantMsg.Id,
+            content = assistantContent,
+            title = session.Title,
+            createdAt = assistantMsg.CreatedAt
+        }));
+    }
+
+    /// <summary>
+    /// Agent 模式的 FC 循环。与 CallDeepSeekStreamWithToolsAsync 类似，
+    /// 但使用注入记忆上下文的 system prompt。
+    /// </summary>
+    private async Task<string> CallDeepSeekStreamWithToolsAgentAsync(
+        int userId,
+        List<ChatMessage> history,
+        ChatStreamCallback callback,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
+            throw new BusinessException("DeepSeek API Key 未配置", 500);
+
+        var client = _httpClientFactory.CreateClient("DeepSeek");
+
+        // 构建带记忆的 system prompt
+        var memories = await _memoryService.GetMemoriesAsync(userId, ct: ct);
+        var memoryContext = "";
+        if (memories.Count > 0)
+        {
+            var topMemories = memories.Where(m => m.Importance >= 3).Take(5).ToList();
+            if (topMemories.Count > 0)
+            {
+                memoryContext = "\n\n【用户偏好与上下文记忆】\n" +
+                    string.Join("\n", topMemories.Select(m => $"- [{m.Category}] {m.Key}: {m.Value}"));
+            }
+        }
+
+        var messages = new List<object> { new { role = "system", content = BuildSystemPrompt() + memoryContext } };
+        messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
+
+        var tools = BuildTools();
+        var fullContent = new StringBuilder();
+
+        for (int round = 0; round < 8; round++)
+        {
+            var body = new
+            {
+                model = _deepSeekOptions.Model,
+                messages,
+                tools,
+                tool_choice = "auto",
+                stream = true
+            };
+
+            var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
+            using var httpReq = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+            };
+
+            using var httpResp = await client.SendAsync(httpReq, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!httpResp.IsSuccessStatusCode)
+            {
+                var err = await httpResp.Content.ReadAsStringAsync(ct);
+                await callback("error", JsonSerializer.Serialize(new { message = $"AI 服务错误 {(int)httpResp.StatusCode}" }));
+                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}", 500);
+            }
+
+            var (content, toolCalls, finishReason) = await ParseDeepSeekStreamAsync(
+                await httpResp.Content.ReadAsStreamAsync(ct), callback, ct);
+
+            if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
+
+            if (finishReason == "stop" || finishReason == "length") return fullContent.ToString();
+
+            if (finishReason == "tool_calls" && toolCalls.Count > 0)
+            {
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = string.IsNullOrEmpty(content) ? null : content,
+                    tool_calls = toolCalls.Select(tc => new
+                    {
+                        id = tc.Id, type = "function",
+                        function = new { name = tc.FunctionName, arguments = tc.Arguments }
+                    }).ToArray()
+                });
+
+                foreach (var tc in toolCalls)
+                {
+                    await callback("tool_call", JsonSerializer.Serialize(new
+                    {
+                        name = tc.FunctionName, arguments = tc.Arguments, id = tc.Id
+                    }));
+
+                    var result = await ExecuteToolAsync(userId, tc.FunctionName, tc.Arguments, ct);
+
+                    await callback("tool_result", JsonSerializer.Serialize(new
+                    {
+                        toolCallId = tc.Id, name = tc.FunctionName,
+                        result = result.Length > 500 ? result[..500] + "..." : result
+                    }));
+
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
+                }
+            }
+            else break;
+        }
+
+        return fullContent.ToString();
     }
 
     // ===== DeepSeek 流式 Function Calling 循环 =====

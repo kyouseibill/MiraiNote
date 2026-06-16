@@ -20,6 +20,9 @@ public static class DependencyInjection
         services.AddScoped<Services.IChatService, Services.ChatService>();
         services.AddSingleton<Services.IEmailService, Services.SmtpEmailService>();
         services.AddHostedService<Services.MemoReminderBackgroundService>();
+        services.AddScoped<Services.IAgentMemoryService, Services.AgentMemoryService>();
+        services.AddScoped<Services.IAgentPlannerService, Services.AgentPlannerService>();
+        services.AddScoped<Services.IAgentReflectorService, Services.AgentReflectorService>();
         services.AddHttpClient("DeepSeek");
         services.AddHttpClient("Tavily");
         return services;

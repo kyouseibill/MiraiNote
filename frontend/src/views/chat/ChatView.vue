@@ -65,8 +65,11 @@ async function send() {
   }
   inputContent.value = ''
   try {
-    // 使用流式发送
-    await store.sendMessageStream(text)
+    if (store.useAgentMode) {
+      await store.sendAgentMessageStream(text)
+    } else {
+      await store.sendMessageStream(text)
+    }
     scrollToBottom()
   } catch {
     // ignore
@@ -174,10 +177,17 @@ onMounted(async () => {
     <!-- 右侧对话区 -->
     <div class="flex-1 flex flex-col min-w-0">
       <!-- 顶部标题 -->
-      <div class="px-6 py-3 border-b border-gray-200 bg-white">
+      <div class="px-6 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
         <span class="font-medium text-gray-800">
           {{ store.currentSession?.title ?? 'AI 对话' }}
         </span>
+        <button
+          class="text-xs px-2 py-1 rounded border"
+          :class="store.useAgentMode ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-500'"
+          @click="store.useAgentMode = !store.useAgentMode"
+        >
+          {{ store.useAgentMode ? '🧠 Agent' : '💬 Chat' }}
+        </button>
       </div>
 
       <!-- 消息列表 -->
@@ -186,6 +196,23 @@ onMounted(async () => {
         class="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-gray-50"
       >
         <div v-if="store.loading" class="text-center text-gray-400 text-sm">加载中…</div>
+
+        <!-- Agent 执行计划 -->
+        <div
+          v-if="store.agentPlan"
+          class="max-w-[70%] rounded-2xl px-4 py-3 bg-indigo-50 border border-indigo-200 text-sm"
+        >
+          <p class="font-medium text-indigo-800 mb-2">📋 执行计划：{{ store.agentPlan.goal }}</p>
+          <ol class="list-decimal list-inside space-y-1 text-indigo-700">
+            <li v-for="(step, i) in store.agentPlan.steps" :key="i">
+              {{ step.action }}
+              <span class="text-xs text-gray-400">({{ step.tools.join(', ') }})</span>
+            </li>
+          </ol>
+          <div v-if="store.agentPlan.risks.length" class="mt-2 pt-2 border-t border-indigo-200">
+            <p class="text-xs text-yellow-600">⚠ {{ store.agentPlan.risks.join('；') }}</p>
+          </div>
+        </div>
         <div
           v-else-if="!store.currentSession || store.currentSession.messages.length === 0"
           class="text-center text-gray-400 text-sm mt-20"
@@ -221,6 +248,32 @@ onMounted(async () => {
           >
             <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
             {{ store.currentToolCall }}
+          </div>
+        </div>
+
+        <!-- Agent 反思结果 -->
+        <div
+          v-if="store.agentReflection"
+          class="max-w-[70%] rounded-2xl px-4 py-3 bg-fuchsia-50 border border-fuchsia-200 text-sm"
+        >
+          <p class="font-medium text-fuchsia-800 mb-2">🔍 自我反思</p>
+          <div class="space-y-1 text-xs">
+            <p>
+              <span :class="store.agentReflection.isComplete ? 'text-green-600' : 'text-red-600'">
+                {{ store.agentReflection.isComplete ? '✓' : '✗' }}
+              </span>
+              目标达成：{{ store.agentReflection.isComplete ? '是' : '否' }}
+              <span class="ml-2">自评：<b :class="store.agentReflection.score >= 8 ? 'text-green-600' : store.agentReflection.score >= 5 ? 'text-yellow-600' : 'text-red-600'">{{ store.agentReflection.score }}/10</b></span>
+            </p>
+            <p v-if="store.agentReflection.strengths.length" class="text-green-600">
+              ✓ {{ store.agentReflection.strengths.join('；') }}
+            </p>
+            <p v-if="store.agentReflection.issues.length" class="text-yellow-600">
+              ⚠ {{ store.agentReflection.issues.join('；') }}
+            </p>
+            <p v-if="store.agentReflection.suggestions.length" class="text-blue-600">
+              💡 {{ store.agentReflection.suggestions.join('；') }}
+            </p>
           </div>
         </div>
       </div>

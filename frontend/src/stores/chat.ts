@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatSession, ChatSessionDetail, ChatMessage } from '@/types/chat'
 import { chatApi } from '@/api/chat'
+import { agentApi, type AgentPlanData, type AgentReflectionData } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
 
 export const useChatStore = defineStore('chat', () => {
@@ -19,6 +20,11 @@ export const useChatStore = defineStore('chat', () => {
 
   // 当前正在进行的工具调用描述
   const currentToolCall = ref<string>('')
+
+  // Agent 特有状态
+  const agentPlan = ref<AgentPlanData | null>(null)
+  const agentReflection = ref<AgentReflectionData | null>(null)
+  const useAgentMode = ref(true) // 默认使用 Agent 模式
 
   async function fetchSessions() {
     loading.value = true
@@ -184,6 +190,106 @@ export const useChatStore = defineStore('chat', () => {
     return updated
   }
 
+  /**
+   * Agent 模式流式发送消息。
+   * 包含 Plan → Execute → Reflect 完整流程。
+   */
+  async function sendAgentMessageStream(content: string) {
+    if (!currentSession.value) return
+    const sessionId = currentSession.value.id
+
+    sending.value = true
+    currentToolCall.value = ''
+    agentPlan.value = null
+    agentReflection.value = null
+
+    const tempUserMsg: ChatMessage = {
+      id: -Date.now(),
+      role: 'user',
+      content,
+      createdAt: new Date().toISOString(),
+    }
+    currentSession.value.messages.push(tempUserMsg)
+
+    streamMessage.value = {
+      id: -Date.now() - 1,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+    }
+
+    try {
+      await agentApi.sendAgentMessageStream(sessionId, { content }, (event) => {
+        if (!currentSession.value) return
+
+        switch (event.type) {
+          case 'user_msg':
+            const userIdx = currentSession.value.messages.findIndex(
+              (m) => m.id === tempUserMsg.id,
+            )
+            if (userIdx >= 0) {
+              currentSession.value.messages[userIdx].id = event.data.id
+            }
+            break
+
+          case 'plan':
+            agentPlan.value = event.data as AgentPlanData
+            break
+
+          case 'token':
+            if (streamMessage.value) {
+              streamMessage.value.content += event.data.content
+            }
+            break
+
+          case 'tool_call':
+            currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
+            break
+
+          case 'tool_result':
+            currentToolCall.value = ''
+            break
+
+          case 'reflection':
+            agentReflection.value = event.data as AgentReflectionData
+            break
+
+          case 'done':
+            if (streamMessage.value && currentSession.value) {
+              const finalMsg: ChatMessage = {
+                id: event.data.messageId,
+                role: 'assistant',
+                content: streamMessage.value.content,
+                createdAt: event.data.createdAt || streamMessage.value.createdAt,
+              }
+              currentSession.value.messages.push(finalMsg)
+              streamMessage.value = null
+            }
+            const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
+            if (sessionIdx >= 0) {
+              sessions.value[sessionIdx].title = event.data.title
+            }
+            if (currentSession.value) {
+              currentSession.value.title = event.data.title
+            }
+            break
+
+          case 'error':
+            streamMessage.value = null
+            toast.error(event.data?.message || '对话出错，请重试')
+            break
+        }
+      })
+    } catch (e) {
+      streamMessage.value = null
+      toast.error('网络连接失败')
+    } finally {
+      sending.value = false
+      currentToolCall.value = ''
+      streamMessage.value = null
+    }
+  }
+
   /** 工具名称 → 中文描述 */
   function getToolLabel(name: string): string {
     const labels: Record<string, string> = {
@@ -202,6 +308,9 @@ export const useChatStore = defineStore('chat', () => {
       create_life_log: '创建生活记录',
       update_life_log: '更新生活记录',
       delete_life_log: '删除生活记录',
+      remember: '存储记忆',
+      recall: '检索记忆',
+      forget: '删除记忆',
     }
     return labels[name] || name
   }
@@ -213,12 +322,16 @@ export const useChatStore = defineStore('chat', () => {
     sending,
     streamMessage,
     currentToolCall,
+    agentPlan,
+    agentReflection,
+    useAgentMode,
     fetchSessions,
     openSession,
     createSession,
     deleteSession,
     sendMessage,
     sendMessageStream,
+    sendAgentMessageStream,
     updateTitle,
   }
 })

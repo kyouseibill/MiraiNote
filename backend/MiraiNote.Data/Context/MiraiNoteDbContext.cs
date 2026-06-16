@@ -23,6 +23,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<WeeklyReportReference> WeeklyReportReferences => Set<WeeklyReportReference>();
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<AgentMemory> AgentMemories => Set<AgentMemory>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
@@ -140,6 +141,21 @@ public class MiraiNoteDbContext : DbContext
             .WithMany(s => s.Messages)
             .HasForeignKey(m => m.SessionId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // ===== AgentMemory：UserId + Key 唯一索引 =====
+        modelBuilder.Entity<AgentMemory>()
+            .HasIndex(m => new { m.UserId, m.Key })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        modelBuilder.Entity<AgentMemory>()
+            .HasIndex(m => m.UserId);
+
+        modelBuilder.Entity<AgentMemory>()
+            .HasOne(m => m.User)
+            .WithMany()
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
