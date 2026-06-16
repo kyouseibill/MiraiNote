@@ -227,7 +227,7 @@ public class WeeklyReportService : IWeeklyReportService
         sb.AppendLine("    1.（步骤一）");
         sb.AppendLine("    2.（步骤二）");
         sb.AppendLine("    …");
-        sb.AppendLine("    结果：（完成情况；如只是完成了某件事，直接写 \"已完成\" ）");
+        sb.AppendLine("    结果：（完成情况；如只是完成了某件事，直接写 \"已完成\"；若记录中有状态备注，格式为 \"[状态]，[备注]\"，例如 \"进行中，计划下周完成\" ）");
         sb.AppendLine("- 每项工作结束后输出一行 60 个短横线作为分隔线：");
         sb.AppendLine("    ------------------------------------------------------------");
         sb.AppendLine("- 不需要总体概述，不需要下周计划，直接逐项列出工作内容");
@@ -268,6 +268,11 @@ public class WeeklyReportService : IWeeklyReportService
                              .Where(t => !string.IsNullOrWhiteSpace(t))
                              .Distinct(StringComparer.OrdinalIgnoreCase)
                              .ToList(),
+                    // 取最后一条有值的状态（最新的为准）
+                    Status = g.OrderByDescending(w => w.LogDate).Select(w => w.Status).FirstOrDefault(),
+                    StatusRemark = g.OrderByDescending(w => w.LogDate)
+                                    .Select(w => w.StatusRemark)
+                                    .FirstOrDefault(r => !string.IsNullOrWhiteSpace(r)),
                 });
 
             foreach (var group in groups)
@@ -286,6 +291,24 @@ public class WeeklyReportService : IWeeklyReportService
                 }
                 if (group.Tags.Any())
                     sb.AppendLine($"标签：{string.Join(", ", group.Tags)}");
+                // 状态（非"未标记"时才输出）
+                if (group.Status != 0)
+                {
+                    var statusLabel = group.Status switch
+                    {
+                        1 => "进行中",
+                        2 => "已完成",
+                        3 => "已延期",
+                        _ => null
+                    };
+                    if (statusLabel != null)
+                    {
+                        var statusLine = string.IsNullOrWhiteSpace(group.StatusRemark)
+                            ? statusLabel
+                            : $"{statusLabel}，{group.StatusRemark.Trim()}";
+                        sb.AppendLine($"状态：{statusLine}");
+                    }
+                }
                 sb.AppendLine();
             }
         }

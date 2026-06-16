@@ -640,14 +640,16 @@ public class ChatService : IChatService
             q = q.Where(w => w.Category == cat);
 
         var raw = await q.OrderByDescending(w => w.LogDate).Take(20)
-            .Select(w => new { w.Id, w.Title, w.Purpose, w.Content, w.Tags, w.Category, w.LogDate })
+            .Select(w => new { w.Id, w.Title, w.Purpose, w.Content, w.Tags, w.Category, w.LogDate, w.Status, w.StatusRemark })
             .ToListAsync(ct);
         if (raw.Count == 0) return "没有找到符合条件的工作记录。";
 
         return JsonSerializer.Serialize(raw.Select(w => new
         {
             id = w.Id, title = w.Title, purpose = w.Purpose, content = w.Content,
-            tags = w.Tags, category = w.Category, logDate = w.LogDate.ToString("yyyy-MM-dd")
+            tags = w.Tags, category = w.Category, logDate = w.LogDate.ToString("yyyy-MM-dd"),
+            status = w.Status == 1 ? "进行中" : w.Status == 2 ? "已完成" : w.Status == 3 ? "已延期" : "未标记",
+            statusRemark = w.StatusRemark
         }), _sendOpts);
     }
 
@@ -726,23 +728,25 @@ public class ChatService : IChatService
         if (!TryGetStr(args, "log_date", out var dateStr)) return "创建失败：log_date 为必填项，格式 yyyy-MM-dd。";
         if (!DateTime.TryParse(dateStr, out var logDate)) return "创建失败：log_date 格式无效。";
 
-        TryGetStr(args, "purpose",  out var purpose);
-        TryGetStr(args, "content",  out var content);
-        TryGetStr(args, "tags",     out var tags);
-        TryGetStr(args, "category", out var category);
+        TryGetStr(args, "purpose",       out var purpose);
+        TryGetStr(args, "content",       out var content);
+        TryGetStr(args, "tags",          out var tags);
+        TryGetStr(args, "category",      out var category);
+        TryGetStr(args, "status_remark", out var statusRemark);
         byte status = 0;
         if (args.TryGetProperty("status", out var stEl) && stEl.ValueKind == JsonValueKind.Number)
             status = (byte)stEl.GetInt32();
 
         var dto = await _workLogService.CreateAsync(userId, new CreateWorkLogRequest
         {
-            Title    = title,
-            Purpose  = string.IsNullOrWhiteSpace(purpose)  ? null : purpose,
-            Content  = string.IsNullOrWhiteSpace(content)  ? null : content,
-            Tags     = string.IsNullOrWhiteSpace(tags)     ? null : tags,
-            Category = string.IsNullOrWhiteSpace(category) ? null : category,
-            LogDate  = logDate,
-            Status   = status
+            Title        = title,
+            Purpose      = string.IsNullOrWhiteSpace(purpose)      ? null : purpose,
+            Content      = string.IsNullOrWhiteSpace(content)      ? null : content,
+            Tags         = string.IsNullOrWhiteSpace(tags)         ? null : tags,
+            Category     = string.IsNullOrWhiteSpace(category)     ? null : category,
+            LogDate      = logDate,
+            Status       = status,
+            StatusRemark = string.IsNullOrWhiteSpace(statusRemark) ? null : statusRemark,
         }, ct);
         return $"已成功创建工作记录（ID={dto.Id}）：《{dto.Title}》，日期：{dto.LogDate:yyyy-MM-dd}。";
     }
@@ -756,23 +760,25 @@ public class ChatService : IChatService
         if (!TryGetStr(args, "log_date", out var dateStr)) return "更新失败：log_date 为必填项。";
         if (!DateTime.TryParse(dateStr, out var logDate)) return "更新失败：log_date 格式无效。";
 
-        TryGetStr(args, "purpose",  out var purpose);
-        TryGetStr(args, "content",  out var content);
-        TryGetStr(args, "tags",     out var tags);
-        TryGetStr(args, "category", out var category);
+        TryGetStr(args, "purpose",       out var purpose);
+        TryGetStr(args, "content",       out var content);
+        TryGetStr(args, "tags",          out var tags);
+        TryGetStr(args, "category",      out var category);
+        TryGetStr(args, "status_remark", out var statusRemark);
         byte status = 0;
         if (args.TryGetProperty("status", out var stEl) && stEl.ValueKind == JsonValueKind.Number)
             status = (byte)stEl.GetInt32();
 
         var dto = await _workLogService.UpdateAsync(userId, id, new UpdateWorkLogRequest
         {
-            Title    = title,
-            Purpose  = string.IsNullOrWhiteSpace(purpose)  ? null : purpose,
-            Content  = string.IsNullOrWhiteSpace(content)  ? null : content,
-            Tags     = string.IsNullOrWhiteSpace(tags)     ? null : tags,
-            Category = string.IsNullOrWhiteSpace(category) ? null : category,
-            LogDate  = logDate,
-            Status   = status
+            Title        = title,
+            Purpose      = string.IsNullOrWhiteSpace(purpose)      ? null : purpose,
+            Content      = string.IsNullOrWhiteSpace(content)      ? null : content,
+            Tags         = string.IsNullOrWhiteSpace(tags)         ? null : tags,
+            Category     = string.IsNullOrWhiteSpace(category)     ? null : category,
+            LogDate      = logDate,
+            Status       = status,
+            StatusRemark = string.IsNullOrWhiteSpace(statusRemark) ? null : statusRemark,
         }, ct);
         return $"已成功更新工作记录（ID={dto.Id}）：《{dto.Title}》。";
     }
@@ -1189,7 +1195,8 @@ public class ChatService : IChatService
                         content  = new { type = "string", description = "工作内容详情" },
                         tags     = new { type = "string", description = "标签，多个用逗号分隔" },
                         category = new { type = "string", description = "项目分类" },
-                        status   = new { type = "integer", description = "状态：0=未标记，1=进行中，2=已完成，3=已延期，默认0" }
+                        status   = new { type = "integer", description = "状态：0=未标记，1=进行中，2=已完成，3=已延期，默认0" },
+                        status_remark = new { type = "string", description = "状态备注，例如：计划下周完成、还差排水条线数据未统计，与 status 配合使用" }
                     }
                 }
             }
@@ -1214,7 +1221,8 @@ public class ChatService : IChatService
                         content  = new { type = "string",  description = "工作内容" },
                         tags     = new { type = "string",  description = "标签" },
                         category = new { type = "string",  description = "项目分类" },
-                        status   = new { type = "integer", description = "状态：0-3" }
+                        status   = new { type = "integer", description = "状态：0-3" },
+                        status_remark = new { type = "string", description = "状态备注，例如：计划下周完成" }
                     }
                 }
             }

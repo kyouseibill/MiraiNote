@@ -10,6 +10,7 @@ export interface WorkLog {
   category: string | null
   logDate: string
   status: WorkLogStatus
+  statusRemark: string | null
   createdAt: string
   updatedAt: string
 }
@@ -22,6 +23,7 @@ export interface CreateWorkLogPayload {
   category?: string | null
   logDate: string
   status?: WorkLogStatus
+  statusRemark?: string | null
 }
 
 export type UpdateWorkLogPayload = CreateWorkLogPayload

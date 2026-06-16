@@ -43,4 +43,8 @@ public class WorkLog : BaseEntity
 
     /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
     public byte Status { get; set; } = 0;
+
+    /// <summary>状态备注，例如"计划下周完成"、"还差排水条线数据未统计"。</summary>
+    [MaxLength(500)]
+    public string? StatusRemark { get; set; }
 }

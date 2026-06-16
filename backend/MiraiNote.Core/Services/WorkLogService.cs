@@ -111,6 +111,7 @@ public class WorkLogService : IWorkLogService
             Category = NullIfBlank(request.Category),
             LogDate = request.LogDate.Date,
             Status = request.Status,
+            StatusRemark = NullIfBlank(request.StatusRemark),
         };
         _db.WorkLogs.Add(entity);
         await _db.SaveChangesAsync(ct);
@@ -131,6 +132,7 @@ public class WorkLogService : IWorkLogService
         entity.Category = NullIfBlank(request.Category);
         entity.LogDate = request.LogDate.Date;
         entity.Status = request.Status;
+        entity.StatusRemark = NullIfBlank(request.StatusRemark);
 
         await _db.SaveChangesAsync(ct);
         return Map(entity);
@@ -197,6 +199,7 @@ public class WorkLogService : IWorkLogService
         Category = w.Category,
         LogDate = w.LogDate,
         Status = w.Status,
+        StatusRemark = w.StatusRemark,
         CreatedAt = w.CreatedAt,
         UpdatedAt = w.UpdatedAt
     };

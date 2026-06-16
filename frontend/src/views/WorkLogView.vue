@@ -28,6 +28,7 @@ const form = reactive<CreateWorkLogPayload>({
   category: '',
   logDate: todayStr(),
   status: 0,
+  statusRemark: '',
 })
 
 const isEdit = computed(() => editingId.value !== null)
@@ -107,6 +108,7 @@ function resetForm() {
   form.category = ''
   form.logDate = todayStr()
   form.status = 0
+  form.statusRemark = ''
 }
 
 function openCreate() {
@@ -124,6 +126,7 @@ function openEdit(item: WorkLog) {
   form.category = item.category ?? ''
   form.logDate = fmtDate(item.logDate)
   form.status = item.status ?? 0
+  form.statusRemark = item.statusRemark ?? ''
   drawerOpen.value = true
 }
 
@@ -162,6 +165,7 @@ async function submit() {
       category: form.category?.trim() || null,
       logDate: form.logDate,
       status: form.status ?? 0,
+      statusRemark: form.statusRemark?.trim() || null,
     }
     if (editingId.value !== null) {
       await store.update(editingId.value, payload)
@@ -298,6 +302,12 @@ onMounted(() => {
                   :class="STATUS_COLORS[item.status]"
                 >
                   {{ STATUS_LABELS[item.status] }}
+                </span>
+                <span
+                  v-if="item.statusRemark"
+                  class="text-xs text-gray-500 shrink-0"
+                >
+                  {{ item.statusRemark }}
                 </span>
                 <h3 class="font-medium text-gray-900 truncate">{{ item.title }}</h3>
               </div>
@@ -438,6 +448,19 @@ onMounted(() => {
                 {{ label }}
               </button>
             </div>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-700 mb-1">
+              状态备注
+              <span class="text-xs text-gray-400 font-normal ml-1">（可选，如：计划下周完成）</span>
+            </label>
+            <input
+              v-model="form.statusRemark"
+              type="text"
+              maxlength="500"
+              placeholder="例如：进行中，还差排水、环卫等条线数据未统计"
+              class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            />
           </div>
           <div>
             <label class="block text-sm text-gray-700 mb-1">目的</label>
