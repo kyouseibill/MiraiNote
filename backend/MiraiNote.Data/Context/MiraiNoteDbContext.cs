@@ -24,6 +24,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<AgentMemory> AgentMemories => Set<AgentMemory>();
+    public DbSet<ScheduledTask> ScheduledTasks => Set<ScheduledTask>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
@@ -155,6 +156,19 @@ public class MiraiNoteDbContext : DbContext
             .HasOne(m => m.User)
             .WithMany()
             .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // ===== ScheduledTask 索引：UserId + Status（用于按用户 + 状态查询）=====
+        modelBuilder.Entity<ScheduledTask>()
+            .HasIndex(t => new { t.UserId, t.Status });
+
+        modelBuilder.Entity<ScheduledTask>()
+            .HasIndex(t => t.ExecuteAt);
+
+        modelBuilder.Entity<ScheduledTask>()
+            .HasOne(t => t.User)
+            .WithMany()
+            .HasForeignKey(t => t.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器

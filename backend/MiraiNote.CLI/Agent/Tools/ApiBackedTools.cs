@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared.Agent;
 
 namespace MiraiNote.CLI.Agent.Tools;
 

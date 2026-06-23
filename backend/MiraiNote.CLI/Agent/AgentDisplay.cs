@@ -1,5 +1,7 @@
 using System.Text;
 using Spectre.Console;
+using MiraiNote.Shared.Agent;
+using MiraiNote.Shared.Dtos.Agent;
 
 namespace MiraiNote.CLI.Agent;
 
@@ -35,14 +37,45 @@ public class AgentDisplay
     public void ShowToolCall(string toolName, string arguments, int attempt = 1)
     {
         _toolCallSeq++;
+        var label = GetToolLabel(toolName);
         var attemptSuffix = attempt > 1 ? $" [grey](重试 {attempt})[/]" : "";
-        AnsiConsole.MarkupLine($"[cyan]│[/] [bold yellow]⚙ {toolName}[/]{attemptSuffix}");
+        AnsiConsole.MarkupLine($"[cyan]│[/] [bold yellow]⚙ {label}[/]{attemptSuffix}");
         if (_verbose)
         {
             var compactArgs = arguments.Length > 300 ? arguments[..300] + "..." : arguments;
             AnsiConsole.MarkupLine($"[grey]│   入参: {Markup.Escape(compactArgs)}[/]");
         }
     }
+
+    private static string GetToolLabel(string name) => name switch
+    {
+        "search_work_logs" => "查询工作记录",
+        "search_memos" => "查询备忘",
+        "search_life_logs" => "查询生活记录",
+        "get_weekly_reports" => "获取周报",
+        "generate_weekly_report" => "生成周报",
+        "search_internet" => "搜索互联网",
+        "create_work_log" => "创建工作记录",
+        "update_work_log" => "更新工作记录",
+        "delete_work_log" => "删除工作记录",
+        "create_memo" => "创建备忘",
+        "update_memo" => "更新备忘",
+        "patch_memo_status" => "更新备忘状态",
+        "delete_memo" => "删除备忘",
+        "create_life_log" => "创建生活记录",
+        "update_life_log" => "更新生活记录",
+        "delete_life_log" => "删除生活记录",
+        "remember" => "存储记忆",
+        "recall" => "检索记忆",
+        "forget" => "删除记忆",
+        "read_file" => "读取文件",
+        "write_file" => "写入文件",
+        "list_files" => "浏览目录",
+        "run_shell" => "执行命令",
+        "system_info" => "系统信息",
+        "send_email" => "发送邮件",
+        _ => name,
+    };
 
     /// <summary>显示工具返回结果</summary>
     public void ShowToolResult(string result)

@@ -185,6 +185,16 @@ public class ApiClient
     public async Task<ChatMessageDto> SendChatMessageAsync(int sessionId, string content)
         => await PostAsync<ChatMessageDto>($"/api/v1/chat/sessions/{sessionId}/messages", new { content });
 
+    public record ScheduledTaskDto(int Id, string Description, DateTime ExecuteAt, string Status, string? Result);
+
+    // ===== 定时任务 =====
+
+    public async Task<List<ScheduledTaskDto>> GetScheduledTasksAsync()
+        => await GetAsync<List<ScheduledTaskDto>>("/api/v1/scheduledtasks");
+
+    public async Task CancelScheduledTaskAsync(int id)
+        => await DeleteAsync($"/api/v1/scheduledtasks/{id}");
+
     // ===== 周报 =====
 
     public async Task<List<WeeklyReportDto>> GetWeeklyReportsAsync()
@@ -283,13 +293,25 @@ public class ApiClient
     {
         try
         {
-            var doc  = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
-                return m.GetString() ?? $"HTTP {statusCode}";
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+                    return m.GetString() ?? GetDefaultMessage(statusCode);
+            }
         }
         catch { /* ignore */ }
-        return $"HTTP {statusCode}: {body[..Math.Min(200, body.Length)]}";
+        return GetDefaultMessage(statusCode);
     }
+
+    private static string GetDefaultMessage(int statusCode) => statusCode switch
+    {
+        401 => "未授权，请重新登录（mirainote login）",
+        403 => "无权限访问",
+        404 => "资源不存在",
+        500 => "服务器内部错误",
+        _   => $"HTTP {statusCode}"
+    };
 }
 
 public class ApiException(string message) : Exception(message) { }

@@ -1,52 +1,35 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MiraiNote.Shared.Dtos.Agent;
 
-namespace MiraiNote.CLI.Agent;
+namespace MiraiNote.Shared.Agent;
 
 /// <summary>
-/// 执行计划。
+/// DeepSeek Plan 请求的连接参数。
 /// </summary>
-public class ExecutionPlan
+public class DeepSeekConnection
 {
-    public string Goal { get; set; } = "";
-    public List<PlanStep> Steps { get; set; } = new();
-    public List<string> Risks { get; set; } = new();
-    public bool IsTrivial { get; set; }  // 简单任务不需要展示计划
+    public string ApiKey { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = "https://api.deepseek.com";
+    public string Model { get; set; } = "deepseek-chat";
 
-    public override string ToString()
+    public void Deconstruct(out string apiKey, out string baseUrl, out string model)
     {
-        if (Steps.Count == 0) return "（无计划）";
-        var sb = new StringBuilder();
-        sb.AppendLine($"目标：{Goal}");
-        for (int i = 0; i < Steps.Count; i++)
-            sb.AppendLine($"  {i + 1}. {Steps[i].Action}");
-        if (Risks.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("风险：");
-            foreach (var r in Risks) sb.AppendLine($"  ⚠ {r}");
-        }
-        return sb.ToString();
+        apiKey = ApiKey;
+        baseUrl = BaseUrl;
+        model = Model;
     }
 }
 
-public class PlanStep
-{
-    public int Order { get; set; }
-    public string Action { get; set; } = "";
-    public string[] Tools { get; set; } = Array.Empty<string>();
-    public string ExpectedOutput { get; set; } = "";
-}
-
 /// <summary>
-/// 任务规划器。
-/// 在 Agent 执行任务前，先用一个轻量级 LLM 调用生成执行计划。
+/// DeepSeek 实现的 Agent 规划器。
+/// 在 Agent 执行任务前，用非流式 LLM 调用生成执行计划。
 /// 简单任务（如打招呼、单一查询）自动跳过规划阶段。
 /// </summary>
-public class AgentPlanner
+public class DeepSeekPlanner : IAgentPlanner
 {
-    private readonly AgentConfig _config;
+    private readonly DeepSeekConnection _conn;
     private readonly HttpClient _http;
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
@@ -54,22 +37,24 @@ public class AgentPlanner
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public AgentPlanner(AgentConfig config)
+    /// <summary>
+    /// 创建规划器。
+    /// </summary>
+    /// <param name="conn">DeepSeek API 连接参数</param>
+    /// <param name="httpClient">可选的 HttpClient（默认创建新的，Timeout=30s）</param>
+    public DeepSeekPlanner(DeepSeekConnection conn, HttpClient? httpClient = null)
     {
-        _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        _http.BaseAddress = new Uri(_config.DeepSeekBaseUrl);
-        _http.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _config.DeepSeekApiKey);
+        _conn = conn;
+        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        if (_http.BaseAddress == null)
+            _http.BaseAddress = new Uri(_conn.BaseUrl);
+        if (_http.DefaultRequestHeaders.Authorization == null)
+            _http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _conn.ApiKey);
     }
 
-    /// <summary>
-    /// 判断用户消息是否需要规划。
-    /// 简单对话、单一工具查询等直接返回 null。
-    /// </summary>
     public bool NeedsPlanning(string userMessage)
     {
-        // 简单判断：消息中有多个动作词或复杂意图时触发规划
         var complexityHints = new[]
         {
             "然后", "接着", "之后", "再", "同时", "并且",
@@ -78,23 +63,18 @@ public class AgentPlanner
             "所有", "全部", "整个", "每个"
         };
 
-        // 检查是否为简单对话
         var msg = userMessage.Trim();
-        if (msg.Length < 20) return false; // 太短的通常是打招呼
+        if (msg.Length < 20) return false;
         if (msg.StartsWith("你好") || msg.StartsWith("谢谢") || msg == "再见") return false;
 
         var hintCount = complexityHints.Count(h => msg.Contains(h, StringComparison.Ordinal));
         return hintCount >= 2 || msg.Length > 100;
     }
 
-    /// <summary>
-    /// 调用 LLM 生成执行计划。
-    /// 使用非流式调用获取结构化计划。
-    /// </summary>
     public async Task<ExecutionPlan?> GeneratePlanAsync(
         string userMessage,
         List<string> availableTools,
-        List<AgentMessage>? history = null,
+        List<(string Role, string Content)>? history = null,
         CancellationToken ct = default)
     {
         if (!NeedsPlanning(userMessage))
@@ -122,7 +102,6 @@ public class AgentPlanner
 
         if (history != null && history.Count > 0)
         {
-            // 只带最近 3 轮对话做上下文
             foreach (var m in history.TakeLast(6))
                 messages.Add(new { role = m.Role, content = m.Content });
         }
@@ -133,9 +112,9 @@ public class AgentPlanner
         {
             var body = JsonSerializer.Serialize(new
             {
-                model = _config.DeepSeekModel,
+                model = _conn.Model,
                 messages,
-                temperature = 0.3,  // 低温度，稳定输出
+                temperature = 0.3,
                 max_tokens = 2000,
                 stream = false
             }, _jsonOpts);
@@ -158,7 +137,6 @@ public class AgentPlanner
 
             if (string.IsNullOrWhiteSpace(content)) return null;
 
-            // 提取 JSON（可能包裹在 ```json ... ``` 中）
             var json = content.Trim();
             if (json.StartsWith("```"))
             {
@@ -177,7 +155,6 @@ public class AgentPlanner
         }
         catch
         {
-            // 规划失败不影响执行，直接回退到无规划模式
             return null;
         }
     }

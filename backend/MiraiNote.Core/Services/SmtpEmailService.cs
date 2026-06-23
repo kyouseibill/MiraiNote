@@ -112,6 +112,36 @@ public class SmtpEmailService : IEmailService
         return line.Length <= 30 ? line : line.Substring(0, 30) + "…";
     }
 
+    // ===== 自定义邮件（Agent 工具用） =====
+
+    public Task SendCustomEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
+    {
+        return SendAsync(toEmail, subject, htmlBody, ct);
+    }
+
+    public Task SendScheduledTaskResultAsync(string toEmail, string username, string description, string result, CancellationToken ct = default)
+    {
+        var subject = $"MiraiNote 定时任务完成：{description[..Math.Min(50, description.Length)]}{(description.Length > 50 ? "…" : "")}";
+        var body = $"""
+            <!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'/></head>
+            <body style='font-family:sans-serif;padding:20px;color:#333;'>
+            <h2>✅ 定时任务执行完成</h2>
+            <p>Hi {System.Net.WebUtility.HtmlEncode(username)}，你预设的定时任务已执行完毕。</p>
+            <h3>📋 任务描述</h3>
+            <blockquote style='background:#f9fafb;padding:12px;border-left:3px solid #6366f1;'>
+              {System.Net.WebUtility.HtmlEncode(description)}
+            </blockquote>
+            <h3>📊 执行结果</h3>
+            <div style='background:#f0fdf4;padding:12px;border-left:3px solid #22c55e;white-space:pre-wrap;'>
+              {System.Net.WebUtility.HtmlEncode(result)}
+            </div>
+            <hr style='margin-top:24px;border:none;border-top:1px solid #e5e7eb;'/>
+            <p style='font-size:12px;color:#9ca3af;'>此邮件由 MiraiNote 定时任务系统自动发送。</p>
+            </body></html>
+            """;
+        return SendAsync(toEmail, subject, body, ct);
+    }
+
     // ===== 内部方法 =====
 
     private async Task SendAsync(string toEmail, string subject, string htmlBody, CancellationToken ct)

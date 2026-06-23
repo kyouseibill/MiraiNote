@@ -1,8 +1,9 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MiraiNote.Shared.Dtos.Agent;
 
-namespace MiraiNote.CLI.Agent;
+namespace MiraiNote.Shared.Agent;
 
 /// <summary>
 /// 上下文管理器。
@@ -138,17 +139,3 @@ public class AgentContextManager
     }
 }
 
-/// <summary>
-/// 上下文用量信息。
-/// </summary>
-public class ContextUsage
-{
-    public int EstimatedTokens { get; set; }
-    public int MaxTokens { get; set; }
-    public double PercentUsed { get; set; }
-    public int MessageCount { get; set; }
-    public bool NeedsCompaction { get; set; }
-
-    public override string ToString()
-        => $"📊 上下文用量：{EstimatedTokens:N0}/{MaxTokens:N0} tokens ({PercentUsed}%)，{MessageCount} 条消息{(NeedsCompaction ? " ⚠ 需要压缩" : "")}";
-}

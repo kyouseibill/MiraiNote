@@ -127,6 +127,20 @@ app.Configure(config =>
             .WithDescription("查看周报详情")
             .WithExample(["weekly", "view", "3"]);
     });
+
+    // ── 定时任务 ───────────────────────────────────
+    config.AddBranch("task", t =>
+    {
+        t.SetDescription("定时任务管理");
+
+        t.AddCommand<TaskListCommand>("list")
+            .WithDescription("列出定时任务")
+            .WithExample(["task", "list"]);
+
+        t.AddCommand<TaskDeleteCommand>("delete")
+            .WithDescription("取消定时任务")
+            .WithExample(["task", "delete", "42"]);
+    });
 });
 
 return app.Run(args);

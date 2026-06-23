@@ -41,6 +41,30 @@ public class UploadOptions
 }
 
 /// <summary>
+/// Agent 文件系统访问配置。
+/// </summary>
+public class FileSystemOptions
+{
+    public const string SectionName = "FileSystem";
+    /// <summary>Agent 工作区根目录（绝对路径）。为空时使用 {ContentRootPath}/workspace。</summary>
+    public string? WorkspaceRoot { get; set; }
+    /// <summary>是否允许文件写入操作（默认 true）。</summary>
+    public bool AllowWrite { get; set; } = true;
+    /// <summary>是否允许 Shell 命令执行（默认 false，需显式开启）。</summary>
+    public bool AllowShell { get; set; } = false;
+}
+
+/// <summary>
+/// 天气查询配置（Open-Meteo 免费 API，无需 Key；保留扩展性）。
+/// </summary>
+public class WeatherOptions
+{
+    public const string SectionName = "Weather";
+    /// <summary>天气提供商，默认 OpenMeteo</summary>
+    public string Provider { get; set; } = "OpenMeteo";
+}
+
+/// <summary>
 /// Tavily 互联网搜索 API 配置。
 /// </summary>
 public class TavilyOptions

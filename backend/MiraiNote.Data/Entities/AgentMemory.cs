@@ -25,6 +25,12 @@ public class AgentMemory : BaseEntity
     /// <summary>重要性 1-5，默认 3。访问时自动 +1（上限 5），定期衰减</summary>
     public byte Importance { get; set; } = 3;
 
+    /// <summary>累计访问次数，用于衰减计算</summary>
+    public int AccessedCount { get; set; } = 0;
+
+    /// <summary>记忆来源：auto_extract（自动提取）/ manual（工具调用）/ api（REST API），null 为旧数据</summary>
+    public string? Source { get; set; }
+
     /// <summary>最后访问时间</summary>
     public DateTime LastAccessedAt { get; set; }
 

@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared.Agent;
+using MiraiNote.Shared.Dtos.Agent;
 
 namespace MiraiNote.CLI.Agent;
 
@@ -15,6 +17,12 @@ public class AgentConfig
     public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com";
     public string DeepSeekModel { get; set; } = "deepseek-chat";
     public string? TavilyApiKey { get; set; }
+    public string? SmtpHost { get; set; }
+    public int SmtpPort { get; set; } = 587;
+    public string? SmtpUser { get; set; }
+    public string? SmtpPassword { get; set; }
+    public string? SmtpFromAddress { get; set; }
+    public string? SmtpFromName { get; set; } = "MiraiNote Agent";
     public int MaxToolRounds { get; set; } = 12;
     public int MaxRetriesPerTool { get; set; } = 2;
 }
@@ -56,12 +64,12 @@ public class AgentRunResult
 public class AgentLoop
 {
     private readonly AgentConfig _config;
-    private readonly AgentToolRegistry _registry;
+    private readonly MiraiNote.Shared.Agent.AgentToolRegistry _registry;
     private readonly AgentDisplay _display;
     private readonly HttpClient _http;
     private readonly TokenStore _tokenStore;
-    private readonly AgentPlanner _planner;
-    private readonly AgentReflector _reflector;
+    private readonly IAgentPlanner _planner;
+    private readonly IAgentReflector _reflector;
     private readonly AgentContextManager _contextManager;
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
@@ -72,21 +80,35 @@ public class AgentLoop
 
     public AgentLoop(
         AgentConfig config,
-        AgentToolRegistry registry,
+        MiraiNote.Shared.Agent.AgentToolRegistry registry,
         AgentDisplay display,
         TokenStore tokenStore,
-        AgentPlanner? planner = null,
-        AgentReflector? reflector = null,
+        IAgentPlanner? planner = null,
+        IAgentReflector? reflector = null,
         AgentContextManager? contextManager = null)
     {
         _config = config;
         _registry = registry;
         _display = display;
         _tokenStore = tokenStore;
-        _planner = planner ?? new AgentPlanner(config);
-        _reflector = reflector ?? new AgentReflector(config);
+        _planner = planner ?? new DeepSeekPlanner(new DeepSeekConnection
+        {
+            ApiKey = config.DeepSeekApiKey,
+            BaseUrl = config.DeepSeekBaseUrl,
+            Model = config.DeepSeekModel
+        });
+        _reflector = reflector ?? new DeepSeekReflector(new DeepSeekConnection
+        {
+            ApiKey = config.DeepSeekApiKey,
+            BaseUrl = config.DeepSeekBaseUrl,
+            Model = config.DeepSeekModel
+        });
         _contextManager = contextManager ?? new AgentContextManager();
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        _http.BaseAddress = new Uri(_config.DeepSeekBaseUrl);
+        if (!string.IsNullOrWhiteSpace(_config.DeepSeekApiKey))
+            _http.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", _config.DeepSeekApiKey);
     }
 
     /// <summary>
@@ -116,7 +138,8 @@ public class AgentLoop
         if (options.EnablePlanner)
         {
             var toolNames = _registry.Tools.Select(t => t.Name).ToList();
-            result.Plan = await _planner.GeneratePlanAsync(userMessage, toolNames, history, ct);
+            var historyTuples = history.Select(m => (m.Role, m.Content)).ToList();
+            result.Plan = await _planner.GeneratePlanAsync(userMessage, toolNames, historyTuples, ct);
 
             if (result.Plan != null)
             {
@@ -187,10 +210,6 @@ public class AgentLoop
         if (string.IsNullOrWhiteSpace(_config.DeepSeekApiKey))
             throw new InvalidOperationException("DeepSeek API Key 未配置。请设置环境变量 DEEPSEEK_API_KEY。");
 
-        _http.BaseAddress = new Uri(_config.DeepSeekBaseUrl);
-        _http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", _config.DeepSeekApiKey);
-
         var toolDefs = _registry.BuildToolDefinitions();
         var fullMessages = new List<object> { new { role = "system", content = BuildSystemPrompt() } };
         fullMessages.AddRange(messages.Select(m => (object)new { role = m.Role, content = m.Content }));
@@ -213,7 +232,16 @@ public class AgentLoop
                 Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
             };
 
-            using var httpResp = await _http.SendAsync(httpReq, HttpCompletionOption.ResponseHeadersRead, ct);
+            HttpResponseMessage httpResp;
+            try
+            {
+                httpResp = await _http.SendAsync(httpReq, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == null)
+            {
+                throw new HttpRequestException(
+                    $"无法连接到 DeepSeek API ({_config.DeepSeekBaseUrl})，请检查网络或 --deepseek-url 配置: {ex.Message}", ex);
+            }
 
             if (!httpResp.IsSuccessStatusCode)
             {
@@ -474,25 +502,3 @@ public class AgentLoop
     }
 }
 
-/// <summary>
-/// Agent 消息模型。
-/// </summary>
-public class AgentMessage
-{
-    public string Role { get; init; } = "user";
-    public string Content { get; init; } = "";
-
-    public AgentMessage() { }
-    public AgentMessage(string role, string content) { Role = role; Content = content; }
-}
-
-/// <summary>
-/// 流式解析中的 tool_call delta 信息。
-/// </summary>
-public class ToolCallDelta
-{
-    public string Id { get; set; } = string.Empty;
-    public string Type { get; set; } = "function";
-    public string FunctionName { get; set; } = string.Empty;
-    public string Arguments { get; set; } = string.Empty;
-}

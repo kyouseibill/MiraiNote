@@ -14,4 +14,10 @@ public interface IEmailService
     /// <param name="remindAtLocal">提醒时间（已转换为本地展示时区，如 UTC+8）。</param>
     /// <param name="section">work 或 life，用于邮件标题。</param>
     Task SendMemoReminderAsync(string toEmail, string username, string content, DateTime remindAtLocal, string section, CancellationToken ct = default);
+
+    /// <summary>发送自定义邮件（供 Agent 工具调用）。</summary>
+    Task SendCustomEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default);
+
+    /// <summary>发送定时任务执行结果邮件。</summary>
+    Task SendScheduledTaskResultAsync(string toEmail, string username, string description, string result, CancellationToken ct = default);
 }

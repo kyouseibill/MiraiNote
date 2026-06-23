@@ -22,6 +22,41 @@ public class UpdateSessionTitleRequest
 public class SendMessageRequest
 {
     public string Content { get; set; } = string.Empty;
+
+    // ── Agent 模式控制参数 ──
+    /// <summary>是否启用 Planner（默认 true）</summary>
+    public bool EnablePlanner { get; set; } = true;
+    /// <summary>是否启用 Reflector（默认 true）</summary>
+    public bool EnableReflector { get; set; } = true;
+    /// <summary>是否跳过危险操作确认（默认 false）</summary>
+    public bool SkipConfirmation { get; set; } = false;
+
+    /// <summary>附件内容列表（已提取的文本，由前端先上传再附加）</summary>
+    public List<ChatAttachmentContent>? Attachments { get; set; }
+}
+
+/// <summary>
+/// 聊天附件内容（前端上传文件后由后端解析，再随消息发送给 AI）。
+/// </summary>
+public class ChatAttachmentContent
+{
+    /// <summary>文件名（含扩展名）</summary>
+    public string FileName { get; set; } = string.Empty;
+    /// <summary>文件类型描述（如 PDF、Word、Excel、文本、图片）</summary>
+    public string FileType { get; set; } = string.Empty;
+    /// <summary>提取的文本内容（图片时为占位描述）</summary>
+    public string TextContent { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 文件上传响应 DTO。
+/// </summary>
+public class ChatAttachmentResponseDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string FileType { get; set; } = string.Empty;
+    public string TextContent { get; set; } = string.Empty;
+    public long FileSizeBytes { get; set; }
 }
 
 /// <summary>

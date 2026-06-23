@@ -24,6 +24,20 @@ export interface CreateSessionPayload {
   title?: string
 }
 
+export interface ChatAttachmentContent {
+  fileName: string
+  fileType: string
+  textContent: string
+}
+
 export interface SendMessagePayload {
   content: string
+  attachments?: ChatAttachmentContent[]
+}
+
+export interface ChatAttachmentResponse {
+  fileName: string
+  fileType: string
+  textContent: string
+  fileSizeBytes: number
 }

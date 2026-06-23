@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ChatSession, ChatSessionDetail, ChatMessage } from '@/types/chat'
+import type { ChatSession, ChatSessionDetail, ChatMessage, ChatAttachmentContent } from '@/types/chat'
 import { chatApi } from '@/api/chat'
 import { agentApi, type AgentPlanData, type AgentReflectionData } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
@@ -25,6 +25,25 @@ export const useChatStore = defineStore('chat', () => {
   const agentPlan = ref<AgentPlanData | null>(null)
   const agentReflection = ref<AgentReflectionData | null>(null)
   const useAgentMode = ref(true) // 默认使用 Agent 模式
+
+  // Agent 控制开关
+  const enablePlanner = ref(true)
+  const enableReflector = ref(true)
+  const autoMode = ref(true)
+  const verbose = ref(false)
+
+  // 并行工具调用列表
+  const toolCalls = ref<{ id: string; name: string; label: string }[]>([])
+
+  // 上下文用量
+  const contextUsage = ref<{ estimatedTokens: number; maxTokens: number; percentUsed: number; messageCount: number } | null>(null)
+
+  // 危险操作确认
+  const pendingConfirm = ref<{ toolName: string; riskLevel: string; arguments: string } | null>(null)
+  let pendingConfirmSessionId: number | null = null
+
+  // 待发送的附件列表（用户选择文件后上传解析，随下次发送一起提交给 AI）
+  const pendingAttachments = ref<ChatAttachmentContent[]>([])
 
   async function fetchSessions() {
     loading.value = true
@@ -93,10 +112,15 @@ export const useChatStore = defineStore('chat', () => {
     currentToolCall.value = ''
 
     // 1. 添加临时用户消息
+    const attachmentsToSend = [...pendingAttachments.value]
+    pendingAttachments.value = []
+    const attachmentNote = attachmentsToSend.length > 0
+      ? '\n' + attachmentsToSend.map(a => `📎${a.fileName}`).join(' ')
+      : ''
     const tempUserMsg: ChatMessage = {
       id: -Date.now(),
       role: 'user',
-      content,
+      content: content + attachmentNote,
       createdAt: new Date().toISOString(),
     }
     currentSession.value.messages.push(tempUserMsg)
@@ -111,7 +135,10 @@ export const useChatStore = defineStore('chat', () => {
 
         // 3. 用 SSE 向服务器发送请求
     try {
-      await chatApi.sendMessageStream(sessionId, { content }, (event) => {
+      await chatApi.sendMessageStream(
+        sessionId,
+        { content, attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined },
+        (event) => {
         if (!currentSession.value) return
 
         switch (event.type) {
@@ -200,13 +227,22 @@ export const useChatStore = defineStore('chat', () => {
 
     sending.value = true
     currentToolCall.value = ''
+    toolCalls.value = []
     agentPlan.value = null
     agentReflection.value = null
+    contextUsage.value = null
+    pendingConfirm.value = null
+
+    const attachmentsToSend = [...pendingAttachments.value]
+    pendingAttachments.value = []
+    const agentAttachmentNote = attachmentsToSend.length > 0
+      ? '\n' + attachmentsToSend.map(a => `📎${a.fileName}`).join(' ')
+      : ''
 
     const tempUserMsg: ChatMessage = {
       id: -Date.now(),
       role: 'user',
-      content,
+      content: content + agentAttachmentNote,
       createdAt: new Date().toISOString(),
     }
     currentSession.value.messages.push(tempUserMsg)
@@ -219,7 +255,16 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     try {
-      await agentApi.sendAgentMessageStream(sessionId, { content }, (event) => {
+      await agentApi.sendAgentMessageStream(
+        sessionId,
+        {
+          content,
+          enablePlanner: enablePlanner.value,
+          enableReflector: enableReflector.value,
+          skipConfirmation: autoMode.value,
+          attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+        },
+        (event) => {
         if (!currentSession.value) return
 
         switch (event.type) {
@@ -242,16 +287,44 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
-          case 'tool_call':
-            currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
+          case 'tool_call': {
+            const label = getToolLabel(event.data.name)
+            currentToolCall.value = `🔧 正在${label}…`
+            toolCalls.value.push({
+              id: event.data.id || event.data.name,
+              name: event.data.name,
+              label,
+            })
             break
+          }
 
           case 'tool_result':
             currentToolCall.value = ''
+            // 移除对应的 tool call 指示器
+            if (event.data.toolCallId || event.data.name) {
+              const id = event.data.toolCallId || event.data.name
+              toolCalls.value = toolCalls.value.filter(t => t.id !== id && t.name !== id)
+            } else {
+              toolCalls.value = []
+            }
+            break
+
+          case 'confirm':
+            // 暂停流，等待用户确认
+            pendingConfirmSessionId = sessionId
+            pendingConfirm.value = {
+              toolName: event.data.toolName,
+              riskLevel: event.data.riskLevel,
+              arguments: event.data.arguments,
+            }
             break
 
           case 'reflection':
             agentReflection.value = event.data as AgentReflectionData
+            break
+
+          case 'context':
+            contextUsage.value = event.data
             break
 
           case 'done':
@@ -286,7 +359,22 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       sending.value = false
       currentToolCall.value = ''
+      toolCalls.value = []
       streamMessage.value = null
+    }
+  }
+
+  /** 用户确认/取消危险操作 */
+  async function confirmToolCall(confirmed: boolean) {
+    const sid = pendingConfirmSessionId
+    pendingConfirm.value = null
+    pendingConfirmSessionId = null
+    if (sid != null) {
+      try {
+        await agentApi.confirmToolCall(sid, confirmed)
+      } catch {
+        // 忽略网络错误
+      }
     }
   }
 
@@ -311,6 +399,14 @@ export const useChatStore = defineStore('chat', () => {
       remember: '存储记忆',
       recall: '检索记忆',
       forget: '删除记忆',
+      get_weather: '查询天气',
+      send_email: '发送邮件',
+      export_file: '导出文件',
+      query_calendar: '日期计算',
+      read_file: '读取文件',
+      write_file: '写入文件',
+      list_files: '浏览目录',
+      run_shell: '执行命令',
     }
     return labels[name] || name
   }
@@ -322,9 +418,17 @@ export const useChatStore = defineStore('chat', () => {
     sending,
     streamMessage,
     currentToolCall,
+    toolCalls,
     agentPlan,
     agentReflection,
     useAgentMode,
+    enablePlanner,
+    enableReflector,
+    autoMode,
+    verbose,
+    contextUsage,
+    pendingConfirm,
+    pendingAttachments,
     fetchSessions,
     openSession,
     createSession,
@@ -332,6 +436,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     sendMessageStream,
     sendAgentMessageStream,
+    confirmToolCall,
     updateTitle,
   }
 })

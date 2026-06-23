@@ -16,6 +16,16 @@ public class TokenStore
     public string  ApiBase  => _data.ApiBase ?? "http://localhost:5273";
     public string? Username => _data.Username;
     public int?    LastChatSessionId => _data.LastChatSessionId;
+    public string  DeepSeekApiKey    => _data.DeepSeekApiKey ?? string.Empty;
+    public string  DeepSeekBaseUrl   => _data.DeepSeekBaseUrl ?? "https://api.deepseek.com";
+    public string  DeepSeekModel     => _data.DeepSeekModel ?? "deepseek-chat";
+    public string? TavilyApiKey      => _data.TavilyApiKey;
+    public string? SmtpHost          => _data.SmtpHost;
+    public int     SmtpPort          => _data.SmtpPort > 0 ? _data.SmtpPort : 587;
+    public string? SmtpUser          => _data.SmtpUser;
+    public string? SmtpPassword      => _data.SmtpPassword;
+    public string? SmtpFromAddress   => _data.SmtpFromAddress;
+    public string? SmtpFromName      => _data.SmtpFromName;
 
     public void Load()
     {
@@ -41,6 +51,18 @@ public class TokenStore
         Persist();
     }
 
+    public void SaveDeepSeekConfig(string? apiKey = null, string? baseUrl = null, string? model = null)
+    {
+        // null = 未提供（不修改）；非null = 提供（设置或清空）
+        if (apiKey != null)
+            _data.DeepSeekApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        if (baseUrl != null)
+            _data.DeepSeekBaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.TrimEnd('/');
+        if (model != null)
+            _data.DeepSeekModel = string.IsNullOrWhiteSpace(model) ? null : model;
+        Persist();
+    }
+
     public void ClearToken()
     {
         _data.Token    = null;
@@ -51,6 +73,24 @@ public class TokenStore
     public void SaveChatSessionId(int sessionId)
     {
         _data.LastChatSessionId = sessionId;
+        Persist();
+    }
+
+    public void SaveTavilyConfig(string? apiKey)
+    {
+        _data.TavilyApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        Persist();
+    }
+
+    public void SaveSmtpConfig(string? host = null, int? port = null, string? user = null,
+        string? password = null, string? fromAddress = null, string? fromName = null)
+    {
+        if (host != null)        _data.SmtpHost = string.IsNullOrWhiteSpace(host) ? null : host;
+        if (port != null)        _data.SmtpPort = port.Value;
+        if (user != null)        _data.SmtpUser = string.IsNullOrWhiteSpace(user) ? null : user;
+        if (password != null)    _data.SmtpPassword = string.IsNullOrWhiteSpace(password) ? null : password;
+        if (fromAddress != null) _data.SmtpFromAddress = string.IsNullOrWhiteSpace(fromAddress) ? null : fromAddress;
+        if (fromName != null)    _data.SmtpFromName = string.IsNullOrWhiteSpace(fromName) ? null : fromName;
         Persist();
     }
 
@@ -68,6 +108,16 @@ public class TokenStore
         public string? ApiBase  { get; set; }
         public string? Username { get; set; }
         public int?    LastChatSessionId { get; set; }
+        public string? DeepSeekApiKey  { get; set; }
+        public string? DeepSeekBaseUrl { get; set; }
+        public string? DeepSeekModel   { get; set; }
+        public string? TavilyApiKey    { get; set; }
+        public string? SmtpHost        { get; set; }
+        public int     SmtpPort        { get; set; }
+        public string? SmtpUser        { get; set; }
+        public string? SmtpPassword    { get; set; }
+        public string? SmtpFromAddress { get; set; }
+        public string? SmtpFromName    { get; set; }
     }
 }
 

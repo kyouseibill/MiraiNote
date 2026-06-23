@@ -107,6 +107,8 @@ public class AgentMemoryDto
     public string Category { get; set; } = "context";
     public string? Tags { get; set; }
     public byte Importance { get; set; } = 3;
+    public int AccessedCount { get; set; }
+    public string? Source { get; set; }
     public DateTime LastAccessedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -119,6 +121,7 @@ public class CreateMemoryRequest
     public string Category { get; set; } = "context";
     public string? Tags { get; set; }
     public byte Importance { get; set; } = 3;
+    public string? Source { get; set; }
 }
 
 public class UpdateMemoryRequest
@@ -127,6 +130,15 @@ public class UpdateMemoryRequest
     public string? Category { get; set; }
     public string? Tags { get; set; }
     public byte? Importance { get; set; }
+}
+
+/// <summary>
+/// 带相关性说明的记忆 DTO。用于语义匹配返回结果。
+/// </summary>
+public class RelevantMemoryDto : AgentMemoryDto
+{
+    /// <summary>为什么这条记忆与当前查询相关</summary>
+    public string? Relevance { get; set; }
 }
 
 // ===== Agent SSE Event Models =====
@@ -169,4 +181,41 @@ public class AgentConfirmEvent
 public class AgentConfirmResponse
 {
     public bool Confirmed { get; set; }
+}
+
+// ===== Tool Call Models =====
+
+/// <summary>
+/// 流式解析中的 tool_call delta 信息。
+/// </summary>
+public class ToolCallDelta
+{
+    public string Id { get; set; } = string.Empty;
+    public string Type { get; set; } = "function";
+    public string FunctionName { get; set; } = string.Empty;
+    public string Arguments { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 工具调用信息（SSE 解析用）。
+/// </summary>
+public class ToolCallInfo
+{
+    public string Id { get; set; } = string.Empty;
+    public string FunctionName { get; set; } = string.Empty;
+    public string Arguments { get; set; } = string.Empty;
+}
+
+// ===== Message Models =====
+
+/// <summary>
+/// Agent 通用消息模型。
+/// </summary>
+public class AgentMessage
+{
+    public string Role { get; init; } = "user";
+    public string Content { get; init; } = "";
+
+    public AgentMessage() { }
+    public AgentMessage(string role, string content) { Role = role; Content = content; }
 }

@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
+using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Chat;
 
@@ -13,11 +15,16 @@ public class ChatController : ControllerBase
 {
     private readonly IChatService _service;
     private readonly ICurrentUserService _currentUser;
+    private readonly ChatFileParserService _fileParser;
 
-    public ChatController(IChatService service, ICurrentUserService currentUser)
+    // 确认状态：key = sessionId，value = TaskCompletionSource
+    private static readonly ConcurrentDictionary<int, TaskCompletionSource<bool>> _pendingConfirms = new();
+
+    public ChatController(IChatService service, ICurrentUserService currentUser, ChatFileParserService fileParser)
     {
         _service = service;
         _currentUser = currentUser;
+        _fileParser = fileParser;
     }
 
     [HttpGet("sessions")]
@@ -103,8 +110,8 @@ public class ChatController : ControllerBase
 
     /// <summary>
     /// Agent 模式流式发送消息（SSE）。
-    /// 在普通 stream 基础上增加 Plan → Reflect 流程。
-    /// 新增事件类型：plan、reflection。
+    /// 包含 Plan → Execute → Reflect → Confirm 完整流程。
+    /// 事件类型：user_msg、token、tool_call、tool_result、plan、reflection、confirm、context、done、error。
     /// </summary>
     [HttpPost("sessions/{sessionId:int}/messages/agent/stream")]
     public async Task SendMessageAgentStream(
@@ -119,15 +126,118 @@ public class ChatController : ControllerBase
 
         var userId = _currentUser.UserId;
 
-        await _service.SendMessageAgentStreamAsync(
-            userId,
-            sessionId,
-            request,
-            async (eventType, data) =>
-            {
-                await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
-                await Response.Body.FlushAsync(ct);
-            },
-            ct);
+        // 为本次 Agent 会话创建确认信号
+        var confirmTcs = new TaskCompletionSource<bool>();
+        _pendingConfirms[sessionId] = confirmTcs;
+
+        try
+        {
+            await _service.SendMessageAgentStreamAsync(
+                userId,
+                sessionId,
+                request,
+                async (eventType, data) =>
+                {
+                    await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                },
+                async () =>
+                {
+                    // 等待前端确认（带超时 120s）
+                    var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(120_000));
+                    return completed == confirmTcs.Task && await confirmTcs.Task;
+                },
+                ct);
+        }
+        finally
+        {
+            _pendingConfirms.TryRemove(sessionId, out _);
+        }
+    }
+
+    /// <summary>
+    /// 确认/取消 Agent 危险操作。
+    /// POST Body: { "confirmed": true/false }
+    /// </summary>
+    [HttpPost("sessions/{sessionId:int}/confirm")]
+    public ActionResult ConfirmToolCall(
+        int sessionId,
+        [FromBody] AgentConfirmRequest request)
+    {
+        if (_pendingConfirms.TryGetValue(sessionId, out var tcs))
+        {
+            tcs.TrySetResult(request.Confirmed);
+            return Ok(ApiResponse.Ok(request.Confirmed ? "已确认" : "已取消"));
+        }
+        return NotFound(ApiResponse.Fail("没有待确认的操作"));
+    }
+
+    /// <summary>
+    /// Agent 确认请求 DTO。
+    /// </summary>
+    public class AgentConfirmRequest
+    {
+        public bool Confirmed { get; set; }
+    }
+
+    /// <summary>
+    /// 上传聊天附件并提取文本内容。
+    /// 支持 PDF / Word(.docx) / Excel(.xlsx/.xls) / 纯文本 / 代码 / 图片。
+    /// 返回提取的文本内容供前端随消息一起发给 AI。
+    /// 单文件限 20MB。
+    /// </summary>
+    [HttpPost("attachments")]
+    [RequestSizeLimit(20 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<ChatAttachmentResponseDto>>> UploadAttachment(
+        IFormFile file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse.Fail("请选择文件"));
+
+        if (file.Length > 20 * 1024 * 1024)
+            return BadRequest(ApiResponse.Fail("文件大小不能超过 20MB"));
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // 文档
+            ".pdf", ".docx", ".xlsx", ".xls",
+            // 文本/代码
+            ".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".yaml", ".yml",
+            ".toml", ".ini", ".env", ".log", ".sql", ".ts", ".js", ".jsx", ".tsx",
+            ".py", ".cs", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".php",
+            ".rb", ".sh", ".bat", ".ps1", ".vue", ".css", ".scss", ".less",
+            ".conf", ".config", ".csproj", ".sln",
+            // 图片
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
+            ".tiff", ".tif", ".avif"
+        };
+
+        if (!allowedExtensions.Contains(ext))
+            return BadRequest(ApiResponse.Fail($"不支持的文件类型：{ext}"));
+
+        // 确定文件类型描述
+        var fileType = ext switch
+        {
+            ".pdf" => "PDF",
+            ".docx" => "Word",
+            ".xlsx" or ".xls" => "Excel",
+            ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" or ".bmp"
+                or ".svg" or ".tiff" or ".tif" or ".avif" => "图片",
+            _ => "文本"
+        };
+
+        await using var stream = file.OpenReadStream();
+        var textContent = await _fileParser.ExtractTextAsync(stream, file.FileName, ct);
+
+        var result = new ChatAttachmentResponseDto
+        {
+            FileName = file.FileName,
+            FileType = fileType,
+            TextContent = textContent,
+            FileSizeBytes = file.Length
+        };
+
+        return Ok(ApiResponse<ChatAttachmentResponseDto>.Ok(result, "文件已解析"));
     }
 }

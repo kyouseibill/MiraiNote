@@ -4,6 +4,8 @@ using System.Text.Json;
 using MiraiNote.CLI.Agent;
 using MiraiNote.CLI.Agent.Tools;
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared.Agent;
+using MiraiNote.Shared.Dtos.Agent;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -82,7 +84,7 @@ public class AgentCommand : AsyncCommand<AgentSettings>
             return await RunSingleTaskAsync(s);
 
         // ── 交互模式 ──────────────────────────────────
-        var config = BuildConfig(s);
+        var config = BuildConfig(s, _store);
         var display = new AgentDisplay(verbose: false);
         var loop = BuildLoop(config, display);
 
@@ -190,7 +192,7 @@ public class AgentCommand : AsyncCommand<AgentSettings>
     /// </summary>
     private async Task<int> RunSingleTaskAsync(AgentSettings s)
     {
-        var config = BuildConfig(s);
+        var config = BuildConfig(s, _store);
         var display = new AgentDisplay(s.Verbose);
         var loop = BuildLoop(config, display);
 
@@ -257,7 +259,7 @@ public class AgentCommand : AsyncCommand<AgentSettings>
     /// </summary>
     private AgentLoop BuildLoop(AgentConfig config, AgentDisplay display)
     {
-        var registry = new AgentToolRegistry();
+        var registry = new MiraiNote.Shared.Agent.AgentToolRegistry();
 
         // ── API 代理工具 ──
         if (_store.HasToken)
@@ -287,26 +289,102 @@ public class AgentCommand : AsyncCommand<AgentSettings>
         registry.Register(new FileListTool());
         registry.Register(new ShellTool());
         registry.Register(new SystemInfoTool());
+        registry.Register(new SendEmailTool(
+            config.SmtpHost, config.SmtpPort,
+            config.SmtpUser, config.SmtpPassword,
+            config.SmtpFromAddress, config.SmtpFromName));
 
         return new AgentLoop(config, registry, display, _store);
     }
 
     /// <summary>
-    /// 构建 AgentConfig（优先级：CLI 参数 > 环境变量 > 默认值）。
+    /// 构建 AgentConfig（优先级：CLI 参数 > 环境变量 > TokenStore > appsettings.json > 默认值）。
     /// </summary>
-    private static AgentConfig BuildConfig(AgentSettings s) => new()
+    private static AgentConfig BuildConfig(AgentSettings s, TokenStore? store = null)
     {
-        DeepSeekApiKey = s.DeepSeekKey
-            ?? Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")
-            ?? string.Empty,
-        DeepSeekBaseUrl = s.DeepSeekUrl
-            ?? Environment.GetEnvironmentVariable("DEEPSEEK_BASE_URL")
-            ?? "https://api.deepseek.com",
-        DeepSeekModel = s.Model
-            ?? Environment.GetEnvironmentVariable("DEEPSEEK_MODEL")
-            ?? "deepseek-chat",
-        TavilyApiKey = s.TavilyKey
-            ?? Environment.GetEnvironmentVariable("TAVILY_API_KEY"),
-        MaxToolRounds = s.MaxRounds ?? 12
-    };
+        // 尝试读取 CLI 目录下的 appsettings.json
+        var jsonConfig = ReadAppSettings();
+
+        return new AgentConfig
+        {
+            DeepSeekApiKey = s.DeepSeekKey
+                ?? Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")
+                ?? (store?.DeepSeekApiKey is { Length: > 0 } key ? key : null)
+                ?? jsonConfig?.DeepSeekApiKey
+                ?? string.Empty,
+            DeepSeekBaseUrl = s.DeepSeekUrl
+                ?? Environment.GetEnvironmentVariable("DEEPSEEK_BASE_URL")
+                ?? (store?.DeepSeekBaseUrl is { Length: > 0 } url ? url : null)
+                ?? jsonConfig?.DeepSeekBaseUrl
+                ?? "https://api.deepseek.com",
+            DeepSeekModel = s.Model
+                ?? Environment.GetEnvironmentVariable("DEEPSEEK_MODEL")
+                ?? (store?.DeepSeekModel is { Length: > 0 } model ? model : null)
+                ?? jsonConfig?.DeepSeekModel
+                ?? "deepseek-chat",
+            TavilyApiKey = s.TavilyKey
+                ?? Environment.GetEnvironmentVariable("TAVILY_API_KEY")
+                ?? store?.TavilyApiKey
+                ?? jsonConfig?.TavilyApiKey,
+            SmtpHost = Environment.GetEnvironmentVariable("SMTP_HOST")
+                ?? store?.SmtpHost
+                ?? jsonConfig?.SmtpHost,
+            SmtpPort = int.TryParse(Environment.GetEnvironmentVariable("SMTP_PORT"), out var port) ? port
+                : (store?.SmtpPort > 0 ? store.SmtpPort : (jsonConfig?.SmtpPort ?? 587)),
+            SmtpUser = Environment.GetEnvironmentVariable("SMTP_USER")
+                ?? store?.SmtpUser
+                ?? jsonConfig?.SmtpUser,
+            SmtpPassword = Environment.GetEnvironmentVariable("SMTP_PASSWORD")
+                ?? store?.SmtpPassword
+                ?? jsonConfig?.SmtpPassword,
+            SmtpFromAddress = Environment.GetEnvironmentVariable("SMTP_FROM_ADDRESS")
+                ?? store?.SmtpFromAddress
+                ?? jsonConfig?.SmtpFromAddress,
+            SmtpFromName = Environment.GetEnvironmentVariable("SMTP_FROM_NAME")
+                ?? store?.SmtpFromName
+                ?? jsonConfig?.SmtpFromName
+                ?? "MiraiNote Agent",
+            MaxToolRounds = s.MaxRounds ?? 12
+        };
+    }
+
+    private static AgentConfig? ReadAppSettings()
+    {
+        try
+        {
+            var exeDir = AppContext.BaseDirectory;
+            var jsonPath = Path.Combine(exeDir, "appsettings.json");
+            if (!File.Exists(jsonPath)) return null;
+
+            var json = File.ReadAllText(jsonPath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var config = new AgentConfig();
+
+            if (root.TryGetProperty("DeepSeek", out var ds))
+            {
+                if (ds.TryGetProperty("ApiKey", out var v)) config.DeepSeekApiKey = v.GetString();
+                if (ds.TryGetProperty("BaseUrl", out var bu)) config.DeepSeekBaseUrl = bu.GetString();
+                if (ds.TryGetProperty("Model", out var m)) config.DeepSeekModel = m.GetString();
+            }
+            if (root.TryGetProperty("Tavily", out var tv) && tv.TryGetProperty("ApiKey", out var tk))
+                config.TavilyApiKey = tk.GetString();
+            if (root.TryGetProperty("Email", out var em))
+            {
+                if (em.TryGetProperty("SmtpHost", out var v)) config.SmtpHost = v.GetString();
+                if (em.TryGetProperty("SmtpPort", out var p) && p.TryGetInt32(out var pi)) config.SmtpPort = pi;
+                if (em.TryGetProperty("SmtpUser", out var u)) config.SmtpUser = u.GetString();
+                if (em.TryGetProperty("SmtpPassword", out var pw)) config.SmtpPassword = pw.GetString();
+                if (em.TryGetProperty("FromAddress", out var fa)) config.SmtpFromAddress = fa.GetString();
+                if (em.TryGetProperty("FromName", out var fn)) config.SmtpFromName = fn.GetString();
+            }
+
+            return config;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

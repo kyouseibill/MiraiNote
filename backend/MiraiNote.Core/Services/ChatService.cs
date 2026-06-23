@@ -4,8 +4,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MiraiNote.Core.Services.Tools;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Chat;
 using MiraiNote.Shared.Dtos.LifeLogs;
@@ -51,6 +53,7 @@ public interface IChatService
         int sessionId,
         SendMessageRequest request,
         ChatStreamCallback callback,
+        Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default);
 }
 
@@ -72,6 +75,7 @@ public class ChatService : IChatService
     private readonly IAgentPlannerService _plannerService;
     private readonly IAgentReflectorService _reflectorService;
     private readonly IAgentMemoryService _memoryService;
+    private readonly ServerAgentToolRegistry _toolRegistry;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
     {
@@ -89,7 +93,38 @@ public class ChatService : IChatService
         ILifeLogService lifeLogService,
         IAgentPlannerService plannerService,
         IAgentReflectorService reflectorService,
-        IAgentMemoryService memoryService)
+        IAgentMemoryService memoryService,
+        ServerAgentToolRegistry toolRegistry,
+        Tools.ServerSearchWorkLogsTool searchWorkLogs,
+        Tools.ServerSearchMemosTool searchMemos,
+        Tools.ServerSearchLifeLogsTool searchLifeLogs,
+        Tools.ServerGetWeeklyReportsTool getWeeklyReports,
+        Tools.ServerSearchInternetTool searchInternet,
+        Tools.ServerCreateWorkLogTool createWorkLog,
+        Tools.ServerUpdateWorkLogTool updateWorkLog,
+        Tools.ServerDeleteWorkLogTool deleteWorkLog,
+        Tools.ServerCreateMemoTool createMemo,
+        Tools.ServerUpdateMemoTool updateMemo,
+        Tools.ServerPatchMemoStatusTool patchMemoStatus,
+        Tools.ServerDeleteMemoTool deleteMemo,
+        Tools.ServerCreateLifeLogTool createLifeLog,
+        Tools.ServerUpdateLifeLogTool updateLifeLog,
+        Tools.ServerDeleteLifeLogTool deleteLifeLog,
+        Tools.ServerRememberTool remember,
+        Tools.ServerRecallTool recall,
+        Tools.ServerForgetTool forget,
+        Tools.ServerWeatherTool getWeather,
+        Tools.ServerSendEmailTool sendEmail,
+        Tools.ServerExportFileTool exportFile,
+        Tools.ServerCalendarTool queryCalendar,
+        Tools.ServerFileReadTool readFile,
+        Tools.ServerFileWriteTool writeFile,
+        Tools.ServerFileDeleteTool deleteFile,
+        Tools.ServerFileMoveOrRenameTool moveFile,
+        Tools.ServerFileListTool listFiles,
+        Tools.ServerShellTool runShell,
+        Tools.ServerScheduleTaskTool scheduleTask,
+        Tools.ServerListScheduledTasksTool listScheduledTasks)
     {
         _db = db;
         _deepSeekOptions = deepSeekOptions.Value;
@@ -102,6 +137,19 @@ public class ChatService : IChatService
         _plannerService = plannerService;
         _reflectorService = reflectorService;
         _memoryService = memoryService;
+        _toolRegistry = toolRegistry;
+
+        // 注册所有工具
+        foreach (var t in new IServerAgentTool[] {
+            searchWorkLogs, searchMemos, searchLifeLogs, getWeeklyReports, searchInternet,
+            createWorkLog, updateWorkLog, deleteWorkLog,
+            createMemo, updateMemo, patchMemoStatus, deleteMemo,
+            createLifeLog, updateLifeLog, deleteLifeLog,
+            remember, recall, forget,
+            getWeather, sendEmail, exportFile, queryCalendar,
+            readFile, writeFile, deleteFile, moveFile, listFiles, runShell,
+            scheduleTask, listScheduledTasks
+        }) _toolRegistry.Register(t);
     }
 
     // ===== 会话 CRUD =====
@@ -261,6 +309,7 @@ public class ChatService : IChatService
         int sessionId,
         SendMessageRequest request,
         ChatStreamCallback callback,
+        Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(request.Content))
@@ -277,8 +326,11 @@ public class ChatService : IChatService
             return;
         }
 
-        // 存储用户消息
-        var userMsg = new ChatMessage { SessionId = sessionId, Role = "user", Content = request.Content.Trim() };
+        // 存储用户消息（附件文件名追加到消息末尾供历史展示）
+        var storedContent = request.Content.Trim();
+        if (request.Attachments != null && request.Attachments.Count > 0)
+            storedContent += "\n" + string.Join(" ", request.Attachments.Select(a => $"📎{a.FileName}"));
+        var userMsg = new ChatMessage { SessionId = sessionId, Role = "user", Content = storedContent };
         _db.ChatMessages.Add(userMsg);
         await _db.SaveChangesAsync(ct);
 
@@ -294,14 +346,11 @@ public class ChatService : IChatService
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(ct);
 
+        // 附件文件内容追加到最后一条用户消息（仅用于发给 AI，不存 DB）
+        AppendAttachmentsToHistory(history, request);
+
         // ── 阶段 1：Plan ──
-        var toolNames = new List<string> {
-            "search_work_logs","search_memos","search_life_logs","get_weekly_reports",
-            "create_work_log","create_memo","create_life_log",
-            "update_work_log","update_memo","update_life_log",
-            "patch_memo_status","delete_work_log","delete_memo","delete_life_log",
-            "search_internet"
-        };
+        var toolNames = _toolRegistry.Tools.Select(t => t.Name).ToList();
         var plan = await _plannerService.GeneratePlanAsync(request.Content, toolNames, ct);
         if (plan != null)
         {
@@ -313,18 +362,18 @@ public class ChatService : IChatService
             }));
         }
 
-        // ── 阶段 2：Execute（复用现有 FC 循环） ──
+        // ── 阶段 2：Execute ──
         int toolCallCount = 0;
+        bool skipConfirm = request.SkipConfirmation;
 
-        // 包装 callback 以计数工具调用
-        async Task CountingCallback(string eventType, string data)
+        async Task WrappedCallback(string eventType, string data)
         {
             if (eventType == "tool_call") toolCallCount++;
             await callback(eventType, data);
         }
 
         var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId, history, CountingCallback, ct);
+            userId, history, WrappedCallback, skipConfirm, confirmCallback, ct);
 
         // 存储 AI 回复
         var assistantMsg = new ChatMessage { SessionId = sessionId, Role = "assistant", Content = assistantContent };
@@ -337,7 +386,7 @@ public class ChatService : IChatService
         await _db.SaveChangesAsync(ct);
 
         // ── 阶段 3：Reflect ──
-        if (assistantContent.Length > 100)
+        if (request.EnableReflector && assistantContent.Length > 100)
         {
             var reflection = await _reflectorService.ReflectAsync(
                 request.Content, assistantContent, toolCallCount, ct);
@@ -357,10 +406,8 @@ public class ChatService : IChatService
                 if (reflection.NeedsFollowUp && !string.IsNullOrWhiteSpace(reflection.FollowUpAction))
                 {
                     await callback("token", JsonSerializer.Serialize(new { content = "\n\n---\n*自动补充中...*" }));
-                    var followUpReq = new SendMessageRequest { Content = $"请改进：{reflection.FollowUpAction}" };
                     var followUpContent = await CallDeepSeekStreamWithToolsAgentAsync(
-                        userId, history, callback, ct);
-
+                        userId, history, callback, skipConfirm, confirmCallback, ct);
                     assistantMsg.Content += "\n\n---\n" + followUpContent;
                 }
             }
@@ -380,40 +427,45 @@ public class ChatService : IChatService
     }
 
     /// <summary>
-    /// Agent 模式的 FC 循环。与 CallDeepSeekStreamWithToolsAsync 类似，
-    /// 但使用注入记忆上下文的 system prompt。
+    /// Agent 模式的 FC 循环。使用 _toolRegistry 执行工具，支持危险操作确认。
     /// </summary>
     private async Task<string> CallDeepSeekStreamWithToolsAgentAsync(
         int userId,
         List<ChatMessage> history,
         ChatStreamCallback callback,
+        bool skipConfirm,
+        Func<Task<bool>>? confirmCallback,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
             throw new BusinessException("DeepSeek API Key 未配置", 500);
 
         var client = _httpClientFactory.CreateClient("DeepSeek");
+        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
 
-        // 构建带记忆的 system prompt
-        var memories = await _memoryService.GetMemoriesAsync(userId, ct: ct);
+        // 构建带语义匹配记忆的 system prompt
+        var userQuery = history.LastOrDefault(m => m.Role == "user")?.Content ?? "";
+        var relevantMemories = await _memoryService.GetRelevantMemoriesAsync(userId, userQuery, maxCount: 5, ct: ct);
         var memoryContext = "";
-        if (memories.Count > 0)
+        if (relevantMemories.Count > 0)
         {
-            var topMemories = memories.Where(m => m.Importance >= 3).Take(5).ToList();
-            if (topMemories.Count > 0)
-            {
-                memoryContext = "\n\n【用户偏好与上下文记忆】\n" +
-                    string.Join("\n", topMemories.Select(m => $"- [{m.Category}] {m.Key}: {m.Value}"));
-            }
+            memoryContext = "\n\n【用户偏好与上下文记忆（语义匹配）】\n" +
+                string.Join("\n", relevantMemories.Select(m =>
+                {
+                    var rel = string.IsNullOrWhiteSpace(m.Relevance) ? "" : $"（相关原因：{m.Relevance}）";
+                    return $"- [{m.Category}] {m.Key}: {m.Value}{rel}";
+                }));
         }
 
-        var messages = new List<object> { new { role = "system", content = BuildSystemPrompt() + memoryContext } };
+        var messages = new List<object> { new { role = "system", content = BuildSystemPrompt(skipConfirm) + memoryContext } };
         messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
 
-        var tools = BuildTools();
+        var tools = _toolRegistry.BuildToolDefinitions();
         var fullContent = new StringBuilder();
 
-        for (int round = 0; round < 8; round++)
+        for (int round = 0; round < 20; round++)
         {
             var body = new
             {
@@ -460,12 +512,38 @@ public class ChatService : IChatService
 
                 foreach (var tc in toolCalls)
                 {
+                    var tool = _toolRegistry.Get(tc.FunctionName);
+
                     await callback("tool_call", JsonSerializer.Serialize(new
                     {
                         name = tc.FunctionName, arguments = tc.Arguments, id = tc.Id
                     }));
 
-                    var result = await ExecuteToolAsync(userId, tc.FunctionName, tc.Arguments, ct);
+                    // Auto 模式（skipConfirm=true）：跳过所有确认
+                    // 手动模式：安装命令和危险操作需要确认
+                    if (!skipConfirm)
+                    {
+                        bool isInstall = tc.FunctionName == "run_shell" && IsInstallCommand(tc.Arguments);
+                        bool isDangerous = !isInstall && tool != null && tool.RiskLevel == ToolRiskLevel.Dangerous;
+
+                        if (isInstall || isDangerous)
+                        {
+                            await callback("confirm", JsonSerializer.Serialize(new
+                            {
+                                toolName = tc.FunctionName,
+                                riskLevel = isInstall ? "install" : "dangerous",
+                                arguments = tc.Arguments
+                            }));
+                            bool confirmed = confirmCallback != null && await confirmCallback();
+                            if (!confirmed)
+                            {
+                                messages.Add(new { role = "tool", tool_call_id = tc.Id, content = "用户拒绝了此操作。请告知用户原因或寻找替代方案。" });
+                                continue;
+                            }
+                        }
+                    }
+
+                    var result = await _toolRegistry.ExecuteAsync(userId, tc.FunctionName, tc.Arguments, ct);
 
                     await callback("tool_result", JsonSerializer.Serialize(new
                     {
@@ -480,6 +558,53 @@ public class ChatService : IChatService
         }
 
         return fullContent.ToString();
+    }
+
+    /// <summary>
+    /// 判断 run_shell 命令是否为包安装命令（pip/npm/dotnet add 等）。
+    /// 安装命令无论是否 Auto 模式都需要用户确认。
+    /// </summary>
+    private static bool IsInstallCommand(string argsJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            if (doc.RootElement.TryGetProperty("command", out var cmdEl))
+            {
+                var cmd = (cmdEl.GetString() ?? "").TrimStart().ToLowerInvariant();
+                return cmd.StartsWith("pip install") || cmd.StartsWith("pip3 install")
+                    || cmd.StartsWith("npm install") || cmd.StartsWith("npm i ")
+                    || cmd.StartsWith("yarn add") || cmd.StartsWith("pnpm add")
+                    || cmd.StartsWith("dotnet add package") || cmd.StartsWith("nuget install")
+                    || cmd.StartsWith("apt-get install") || cmd.StartsWith("apt install")
+                    || cmd.StartsWith("brew install") || cmd.StartsWith("choco install")
+                    || cmd.StartsWith("cargo add") || cmd.StartsWith("go get")
+                    || cmd.StartsWith("gem install") || cmd.StartsWith("composer require");
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return false;
+    }
+
+    /// <summary>
+    /// 将附件文件内容追加到历史消息中最后一条用户消息（仅内存操作，不存 DB）。
+    /// </summary>
+    private static void AppendAttachmentsToHistory(List<ChatMessage> history, SendMessageRequest request)
+    {
+        if (request.Attachments == null || request.Attachments.Count == 0) return;
+        var lastUser = history.LastOrDefault(m => m.Role == "user");
+        if (lastUser == null) return;
+
+        var sb = new StringBuilder(lastUser.Content);
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("--- 用户上传的文件内容 ---");
+        foreach (var a in request.Attachments)
+        {
+            sb.AppendLine($"【文件：{a.FileName}（{a.FileType}）】");
+            sb.AppendLine(a.TextContent.Length > 50000 ? a.TextContent[..50000] + "\n... (已截断)" : a.TextContent);
+        }
+        lastUser.Content = sb.ToString();
     }
 
     // ===== DeepSeek 流式 Function Calling 循环 =====
@@ -507,10 +632,10 @@ public class ChatService : IChatService
         };
         messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
 
-        var tools = BuildTools();
+        var tools = _toolRegistry.BuildToolDefinitions();
         var fullContent = new StringBuilder();
 
-        for (int round = 0; round < 8; round++)
+        for (int round = 0; round < 20; round++)
         {
             var body = new
             {
@@ -585,7 +710,7 @@ public class ChatService : IChatService
                         id = tc.Id
                     }));
 
-                    var result = await ExecuteToolAsync(userId, tc.FunctionName, tc.Arguments, ct);
+                    var result = await _toolRegistry.ExecuteAsync(userId, tc.FunctionName, tc.Arguments, ct);
 
                     await callback("tool_result", JsonSerializer.Serialize(new
                     {
@@ -763,8 +888,8 @@ public class ChatService : IChatService
         };
         messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
 
-        var tools = BuildTools();
-        for (int round = 0; round < 8; round++)
+        var tools = _toolRegistry.BuildToolDefinitions();
+        for (int round = 0; round < 20; round++)
         {
             var bodyJson = JsonSerializer.Serialize(new
             {
@@ -824,7 +949,7 @@ public class ChatService : IChatService
                     var toolCallId = tc.GetProperty("id").GetString()!;
                     var funcName = tc.GetProperty("function").GetProperty("name").GetString()!;
                     var argsJson = tc.GetProperty("function").GetProperty("arguments").GetString()!;
-                    var result = await ExecuteToolAsync(userId, funcName, argsJson, ct);
+                    var result = await _toolRegistry.ExecuteAsync(userId, funcName, argsJson, ct);
                     messages.Add(new { role = "tool", tool_call_id = toolCallId, content = result });
                 }
             }
@@ -1236,7 +1361,7 @@ public class ChatService : IChatService
 
     // ===== 系统提示 =====
 
-    private static string BuildSystemPrompt()
+    private static string BuildSystemPrompt(bool autoMode = false)
     {
         var cstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
         var now = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cstZone);
@@ -1263,6 +1388,7 @@ public class ChatService : IChatService
             你不仅能查询数据，还能帮用户创建、修改和删除各类记录。
 
             【当前时间】今天是 {today}（{weekday}），本周范围：{weekMon} 至 {weekSun}。
+            【运行模式】{(autoMode ? "Auto（全自动）：系统会自动处理所有确认，无需在文字中向用户请示操作权限。" : "手动：危险操作会由系统弹出确认框，不需要你在文字中询问用户。")}
 
             ══════════════════════════════════════════════
             【最高优先级规则 — 任何情况下绝对不得违反】
@@ -1276,12 +1402,30 @@ public class ChatService : IChatService
               × 说"已更新/删除" —— 若未调用对应工具，操作未发生
             只有工具成功返回确认消息后，才允许告知用户"操作已完成"。
 
-            ★ 规则 B：严格数据规则
+            ★ 规则 B：严格数据与工具规则
             1. 凡涉及用户个人数据的问题，必须先调用工具查询真实数据，再给出回答。
                禁止在未调用工具的情况下对用户数据做任何描述或推断。
             2. 工具返回"没有找到"时，如实告知，不得用"可能""也许""通常"等词语进行猜测补充。
             3. 只能陈述工具返回的内容，不得添加任何推测、假设或举例。
             4. 不允许说"根据您的习惯""通常情况下""一般来说"等无依据的表述。
+            5. 严禁推测工具的能力或限制。工具的实际行为以调用结果为准，不得根据工具名称、描述
+               或过往经验推断"某工具支持/不支持某操作""某命令会被拦截"等结论。
+               如需验证工具是否支持某操作，直接调用工具，以返回结果为准。
+            6. 严禁在未执行工具的情况下说"我来帮您执行...""接下来我将..."，直接调用工具。
+
+            ★ 规则 C：任务必须一次性做完（持续工作规则）
+            这是 Agent 模式，每次对话你可以最多执行多轮工具调用。
+            规则如下：
+            1. 若任务包含多个步骤，必须在一次对话中依次调用所有必要工具，直到任务完全完成，才输出最终回复。
+            2. 严禁在中途返回文字回复（stop）。在任务未完成时，你的响应必须是 tool_calls，不能是文字。
+            3. 每一轮可以同时发起多个工具调用（parallel tool calls），不需要等一个工具返回后再调用下一个。
+            4. 只有在所有操作都已执行完毕、结果都已确认后，才输出总结性的最终回复。
+            5. 如果某步骤的工具返回了错误，继续完成其他可以完成的步骤，在最终回复中统一说明哪些成功、哪些失败。
+
+            ★ 规则 D：Shell 命令与安装权限
+            1. {(autoMode ? "当前为 Auto 模式：直接执行 Shell 命令，系统不会弹出任何确认框。" : "当前为手动模式：执行 Shell 命令或安装操作时，系统会弹出确认框，你无需在文字中再次请示。")}
+            2. 安装依赖包时（pip install、npm install 等），告知用户需要安装什么及原因，手动模式下系统会弹确认框；Auto 模式下直接安装。
+            3. 不得在文字中说"我需要确认才能执行"或"请允许我执行"——系统已处理权限，直接调用工具。
 
             【查询策略】
             - 问题涉及"今天/本周/某日期"时，所有数据源均需查询：工作记录、备忘（work + life 两个板块）、生活记录。
@@ -1314,6 +1458,19 @@ public class ChatService : IChatService
             - "昨天"       → date_from = date_to = {now.AddDays(-1):yyyy-MM-dd}
             - "最近 N 天"  → date_from = N 天前，date_to = {today}
             - "本月"       → date_from = {now:yyyy-MM}-01，date_to = {today}
+
+            【本地文件系统操作 & 自动化】
+            - 读取文件：使用 read_file 工具读取文本文件内容。
+            - 写入文件：使用 write_file 工具创建或覆盖文件。
+            - 删除文件：使用 delete_file 工具删除文件或目录。
+            - 移动/重命名：使用 move_file 工具。
+            - 浏览目录：使用 list_files 工具列出文件和子目录。
+            - 执行命令：使用 run_shell 工具在用户私有工作区执行任意 cmd 命令。
+              可用于：运行 Python 脚本（python/python3）、Node.js（node）、curl/wget 发起 HTTP 请求、
+              git 操作、pip/npm 包管理，以及通过 Python requests、playwright、selenium 等库
+              实现网页登录、页面抓取、自动化操作等任务。
+              用户提供 URL、用户名、密码时，可用 requests 或 playwright 脚本完成登录和页面操作。
+            所有文件操作限定在工作区目录内，无法访问系统敏感路径。
             """;
     }
 

@@ -22,6 +22,70 @@ namespace MiraiNote.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("MiraiNote.Data.Entities.AgentMemory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AccessedCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CreatedBy")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Importance")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime>("LastAccessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Source")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Tags")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("UpdatedBy")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "Key")
+                        .IsUnique()
+                        .HasFilter("[IsDeleted] = 0");
+
+                    b.ToTable("AgentMemories");
+                });
+
             modelBuilder.Entity("MiraiNote.Data.Entities.ChatMessage", b =>
                 {
                     b.Property<int>("Id")
@@ -317,6 +381,68 @@ namespace MiraiNote.Data.Migrations
                     b.ToTable("RefreshToken");
                 });
 
+            modelBuilder.Entity("MiraiNote.Data.Entities.ScheduledTask", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CreatedBy")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("ExecuteAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ExecutedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("NotifyEmail")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Result")
+                        .HasMaxLength(5000)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("UpdatedBy")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecuteAt");
+
+                    b.HasIndex("UserId", "Status");
+
+                    b.ToTable("ScheduledTask");
+                });
+
             modelBuilder.Entity("MiraiNote.Data.Entities.User", b =>
                 {
                     b.Property<int>("Id")
@@ -549,6 +675,17 @@ namespace MiraiNote.Data.Migrations
                     b.ToTable("WorkLog");
                 });
 
+            modelBuilder.Entity("MiraiNote.Data.Entities.AgentMemory", b =>
+                {
+                    b.HasOne("MiraiNote.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("MiraiNote.Data.Entities.ChatMessage", b =>
                 {
                     b.HasOne("MiraiNote.Data.Entities.ChatSession", "Session")
@@ -605,6 +742,17 @@ namespace MiraiNote.Data.Migrations
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("MiraiNote.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MiraiNote.Data.Entities.ScheduledTask", b =>
                 {
                     b.HasOne("MiraiNote.Data.Entities.User", "User")
                         .WithMany()

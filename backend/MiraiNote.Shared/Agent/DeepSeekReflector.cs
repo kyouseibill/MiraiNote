@@ -1,103 +1,51 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MiraiNote.Shared.Dtos.Agent;
 
-namespace MiraiNote.CLI.Agent;
-
-/// <summary>
-/// 反思结果。
-/// </summary>
-public class ReflectionResult
-{
-    public bool IsComplete { get; set; }        // 任务目标是否达成
-    public int Score { get; set; }              // 0-10 自评分
-    public string[] Strengths { get; set; } = Array.Empty<string>();
-    public string[] Issues { get; set; } = Array.Empty<string>();
-    public string[] Suggestions { get; set; } = Array.Empty<string>();
-    public bool NeedsFollowUp { get; set; }     // 是否需要补充操作
-    public string? FollowUpAction { get; set; } // 补充操作描述
-
-    public override string ToString()
-    {
-        var sb = new StringBuilder();
-        var icon = IsComplete ? "✓" : "✗";
-        sb.AppendLine($"{icon} 目标达成：{(IsComplete ? "是" : "否")}  自评：{Score}/10");
-
-        if (Strengths.Length > 0)
-        {
-            sb.Append("  优点：");
-            sb.AppendLine(string.Join("、", Strengths));
-        }
-
-        if (Issues.Length > 0)
-        {
-            sb.Append("  ⚠ 问题：");
-            sb.AppendLine(string.Join("、", Issues));
-        }
-
-        if (Suggestions.Length > 0)
-        {
-            sb.Append("  💡 建议：");
-            sb.AppendLine(string.Join("、", Suggestions));
-        }
-
-        if (NeedsFollowUp && !string.IsNullOrWhiteSpace(FollowUpAction))
-            sb.AppendLine($"  → 将自动补充：{FollowUpAction}");
-
-        return sb.ToString();
-    }
-}
+namespace MiraiNote.Shared.Agent;
 
 /// <summary>
-/// 自我反思器。
+/// DeepSeek 实现的 Agent 反思器。
 /// 任务执行完成后，调用 LLM 对自己的输出做质量检查。
 /// 如果发现遗漏或问题，自动触发补充执行。
 /// </summary>
-public class AgentReflector
+public class DeepSeekReflector : IAgentReflector
 {
-    private readonly AgentConfig _config;
+    private readonly DeepSeekConnection _conn;
     private readonly HttpClient _http;
-    private readonly bool _enabled;
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    /// <summary>超过此长度的消息才触发反思（短回复不需要）</summary>
+    /// <summary>超过此长度的消息才触发反思</summary>
     private const int MinReflectionLength = 100;
 
-    public AgentReflector(AgentConfig config, bool enabled = true)
+    /// <summary>
+    /// 创建反思器。
+    /// </summary>
+    /// <param name="conn">DeepSeek API 连接参数</param>
+    /// <param name="httpClient">可选的 HttpClient（默认创建新的，Timeout=30s）</param>
+    public DeepSeekReflector(DeepSeekConnection conn, HttpClient? httpClient = null)
     {
-        _config = config;
-        _enabled = enabled;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        _http.BaseAddress = new Uri(_config.DeepSeekBaseUrl);
-        _http.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _config.DeepSeekApiKey);
+        _conn = conn;
+        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        if (_http.BaseAddress == null)
+            _http.BaseAddress = new Uri(_conn.BaseUrl);
+        if (_http.DefaultRequestHeaders.Authorization == null)
+            _http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _conn.ApiKey);
     }
 
-    /// <summary>
-    /// 对 Agent 的最终回复做质量反思。
-    /// </summary>
-    /// <param name="userMessage">原始用户需求</param>
-    /// <param name="assistantResponse">Agent 的最终回复</param>
-    /// <param name="toolCallsCount">工具调用次数</param>
-    /// <param name="ct"></param>
-    /// <returns>反思结果，null 表示不需要反思</returns>
     public async Task<ReflectionResult?> ReflectAsync(
         string userMessage,
         string assistantResponse,
         int toolCallsCount,
         CancellationToken ct = default)
     {
-        if (!_enabled) return null;
-
-        // 太短的回复不反思
         if (assistantResponse.Length < MinReflectionLength) return null;
-
-        // 工具调用超过 3 次的一般是复杂任务，值得反思
-        bool isComplex = toolCallsCount > 3;
 
         var systemPrompt = """
             你是一个质量审查助手。请对以下 AI 回复进行质量评估。
@@ -137,7 +85,7 @@ public class AgentReflector
 
             var body = JsonSerializer.Serialize(new
             {
-                model = _config.DeepSeekModel,
+                model = _conn.Model,
                 messages,
                 temperature = 0.2,
                 max_tokens = 1000,
@@ -162,7 +110,6 @@ public class AgentReflector
 
             if (string.IsNullOrWhiteSpace(content)) return null;
 
-            // 提取 JSON
             var json = content.Trim();
             if (json.StartsWith("```"))
             {

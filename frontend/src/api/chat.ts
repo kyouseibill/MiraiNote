@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   CreateSessionPayload,
   SendMessagePayload,
+  ChatAttachmentResponse,
 } from '@/types/chat'
 
 export type SseEventType =
@@ -39,6 +40,20 @@ export const chatApi = {
 
   sendMessage: (sessionId: number, payload: SendMessagePayload) =>
     unwrap<ChatMessage>(http.post(`/chat/sessions/${sessionId}/messages`, payload)),
+
+  /**
+   * 上传聊天附件，返回提取的文本内容。
+   * 支持 PDF / Word / Excel / 文本 / 图片。
+   */
+  uploadAttachment: async (file: File): Promise<ChatAttachmentResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return unwrap<ChatAttachmentResponse>(
+      http.post('/chat/attachments', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }),
+    )
+  },
 
   /**
    * 流式发送消息，通过 onEvent 回调接收 SSE 事件。
