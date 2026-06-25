@@ -70,11 +70,14 @@ public static class ApiDependencyInjection
             {
                 if (allowedOrigins.Length > 0)
                 {
+                    // 生产环境：如果前端由反向代理（Cloudflare 等）处理 CORS，请将 AllowedOrigins 置空，
+                    // 避免 ASP.NET Core 和代理重复添加 CORS 响应头导致登录失败。
                     policy.WithOrigins(allowedOrigins)
                           .AllowAnyHeader()
                           .AllowAnyMethod()
-                          .AllowCredentials(); // 前端需读写 HttpOnly Cookie
+                          .AllowCredentials();
                 }
+                // AllowedOrigins 为空时不添加任何 CORS 头，由上游代理统一处理。
             });
         });
 

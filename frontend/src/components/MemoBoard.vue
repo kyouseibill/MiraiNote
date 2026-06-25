@@ -152,24 +152,36 @@ async function create() {
 }
 
 async function toggleDone(item: Memo) {
-  try { await store.patchStatus(props.section, item.id, { isDone: !item.isDone }) } catch { /* */ }
+  try {
+    await store.patchStatus(props.section, item.id, { isDone: !item.isDone })
+  } catch {
+    toast.error('操作失败，请稍后重试')
+  }
 }
 async function togglePin(item: Memo) {
-  try { await store.patchStatus(props.section, item.id, { isPinned: !item.isPinned }) } catch { /* */ }
+  try {
+    await store.patchStatus(props.section, item.id, { isPinned: !item.isPinned })
+  } catch {
+    toast.error('操作失败，请稍后重试')
+  }
 }
 async function archive(item: Memo) {
   if (!confirm('归档后将从列表中移除，确认？')) return
   try {
     await store.patchStatus(props.section, item.id, { isArchived: true })
     toast.success('已归档')
-  } catch { /* */ }
+  } catch {
+    toast.error('归档失败，请稍后重试')
+  }
 }
 async function remove(item: Memo) {
   if (!confirm('确定删除该备忘？')) return
   try {
     await store.remove(props.section, item.id)
     toast.success('已删除')
-  } catch { /* */ }
+  } catch {
+    toast.error('删除失败，请稍后重试')
+  }
 }
 
 function startEdit(item: Memo) {

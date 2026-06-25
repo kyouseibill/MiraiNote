@@ -2,7 +2,6 @@
 import { ref, onMounted, computed } from 'vue'
 import { useWeeklyReportStore } from '@/stores/weeklyReport'
 import { useToast } from '@/composables/useToast'
-import type { WeeklyReport } from '@/types/weeklyReport'
 
 const store = useWeeklyReportStore()
 const toast = useToast()
@@ -37,11 +36,11 @@ function getWeekRange(): { start: string; end: string } {
   const day = now.getDay() || 7
   const monday = new Date(now)
   monday.setDate(now.getDate() - day + 1)
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
+  const friday = new Date(monday)
+  friday.setDate(monday.getDate() + 4)
   return {
     start: fmtLocalDate(monday),
-    end: fmtLocalDate(sunday),
+    end: fmtLocalDate(friday),
   }
 }
 
@@ -63,12 +62,6 @@ async function generate() {
   } catch {
     // 拦截器已 toast
   }
-}
-
-function selectReport(report: WeeklyReport) {
-  selectedReportId.value = report.id
-  editingContent.value = report.content
-  isEditing.value = false
 }
 
 async function saveEdit() {
@@ -137,8 +130,7 @@ onMounted(async () => {
   const { start, end } = getWeekRange()
   weekStart.value = start
   weekEnd.value = end
-  await Promise.all([store.fetchList(), store.fetchReferences()])
-  if (store.reports.length > 0) selectReport(store.reports[0])
+  await store.fetchReferences()
 })
 </script>
 
@@ -164,54 +156,32 @@ onMounted(async () => {
 
     <!-- 周报 Tab -->
     <div v-if="activeTab === 'reports'" class="flex gap-6">
-      <!-- 左侧：生成 + 历史列表 -->
-      <div class="w-64 shrink-0 space-y-4">
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
-          <h3 class="text-sm font-medium text-gray-700">生成周报</h3>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">开始日期</label>
-            <input v-model="weekStart" type="date" class="w-full h-8 px-2 text-sm rounded-md border border-gray-200" />
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">结束日期</label>
-            <input v-model="weekEnd" type="date" class="w-full h-8 px-2 text-sm rounded-md border border-gray-200" />
-          </div>
-          <button
-            class="w-full h-9 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
-            :disabled="store.generating"
-            @click="generate"
-          >
-            {{ store.generating ? 'AI 生成中…' : '✨ 一键生成' }}
-          </button>
-        </div>
-
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div class="px-4 py-3 border-b text-sm font-medium text-gray-700">历史周报</div>
-          <div v-if="store.reports.length === 0" class="px-4 py-4 text-xs text-gray-400">暂无周报</div>
-          <ul class="divide-y divide-gray-100">
-            <li
-              v-for="r in store.reports"
-              :key="r.id"
-              class="px-4 py-3 cursor-pointer hover:bg-gray-50 transition"
-              :class="{ 'bg-indigo-50': selectedReportId === r.id }"
-              @click="selectReport(r)"
+        <!-- 左侧：生成表单 -->
+        <div class="w-64 shrink-0 space-y-4">
+          <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
+            <h3 class="text-sm font-medium text-gray-700">生成周报</h3>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">开始日期</label>
+              <input v-model="weekStart" type="date" class="w-full h-8 px-2 text-sm rounded-md border border-gray-200" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">结束日期</label>
+              <input v-model="weekEnd" type="date" class="w-full h-8 px-2 text-sm rounded-md border border-gray-200" />
+            </div>
+            <button
+              class="w-full h-9 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+              :disabled="store.generating"
+              @click="generate"
             >
-              <div class="text-xs font-medium text-gray-800">
-                {{ fmtDate(r.weekStart) }} ~ {{ fmtDate(r.weekEnd) }}
-              </div>
-              <div class="flex items-center gap-1 mt-0.5">
-                <span v-if="r.isEdited" class="text-xs text-amber-500">已编辑</span>
-                <span class="text-xs text-gray-400">{{ fmtDate(r.generatedAt) }}</span>
-              </div>
-            </li>
-          </ul>
+              {{ store.generating ? 'AI 生成中…' : '✨ 一键生成' }}
+            </button>
+          </div>
         </div>
-      </div>
 
       <!-- 右侧：周报预览/编辑 -->
       <div class="flex-1 min-w-0">
         <div v-if="!selectedReport" class="text-center text-gray-400 text-sm py-20">
-          选择左侧周报查看内容，或点击「一键生成」创建新周报
+          点击「一键生成」开始生成周报
         </div>
         <div v-else class="bg-white rounded-xl border border-gray-100 shadow-sm h-full flex flex-col">
           <div class="flex items-center justify-between px-6 py-4 border-b gap-3 flex-wrap">

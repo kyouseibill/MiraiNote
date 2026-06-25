@@ -28,6 +28,9 @@ function safeMarkdown(content: string | null | undefined): string {
 
 const inputContent = ref('')
 
+// 每个会话的输入草稿（切换时保存/恢复）
+const inputDrafts = new Map<number, string>()
+
 // ── 文件附件 ──
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingFiles = ref<Set<string>>(new Set())
@@ -130,8 +133,14 @@ async function newSession() {
 }
 
 async function selectSession(id: number) {
+  // 保存当前会话的输入草稿
+  if (store.currentSession) {
+    inputDrafts.set(store.currentSession.id, inputContent.value)
+  }
   try {
     await store.openSession(id)
+    // 恢复新会话的输入草稿
+    inputContent.value = inputDrafts.get(id) ?? ''
     store.pendingAttachments.splice(0)
     scrollToBottom()
   } catch {
@@ -318,10 +327,6 @@ onMounted(async () => {
             <input type="checkbox" v-model="store.autoMode" class="w-3 h-3" />
             <span :class="store.autoMode ? 'text-orange-600' : ''">⚡ Auto</span>
           </label>
-          <label class="flex items-center gap-1 cursor-pointer" title="显示工具调用详情和入参">
-            <input type="checkbox" v-model="store.verbose" class="w-3 h-3" />
-            <span :class="store.verbose ? 'text-blue-600' : ''">📝 Verbose</span>
-          </label>
           <!-- 上下文用量 -->
           <span
             v-if="store.contextUsage"
@@ -378,8 +383,8 @@ onMounted(async () => {
     v-html="msg.role === 'user' ? (msg.content ?? '').replace(/\n/g, '<br>') : safeMarkdown(msg.content)"
           />
         </div>
-                <!-- 流式输出中的 AI 回复（通过 streamMessage 实时渲染） -->
-        <div v-if="store.streamMessage" class="flex flex-col items-start">
+        <!-- 流式输出中的 AI 回复（仅属于当前会话时显示） -->
+        <div v-if="store.streamMessage && store.streamSessionId === store.currentSession?.id" class="flex flex-col items-start">
           <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(store.streamMessage.createdAt) }}</span>
           <div
             class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none"
@@ -390,13 +395,10 @@ onMounted(async () => {
             <div
               v-for="tc in store.toolCalls"
               :key="tc.id"
-              class="flex items-center gap-2 text-xs"
-              :class="store.verbose ? 'text-gray-500' : 'text-gray-400 animate-pulse'"
+              class="flex items-center gap-2 text-xs text-gray-400 animate-pulse"
             >
-              <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"
-                :class="{ 'animate-pulse': !store.verbose }"></span>
+              <span class="inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
               <span>🔧 {{ tc.label }}</span>
-              <span v-if="store.verbose" class="text-gray-400">({{ tc.name }})</span>
             </div>
           </div>
           <div
@@ -537,7 +539,7 @@ onMounted(async () => {
               </div>
             </div>
             <div
-              v-if="store.verbose && store.pendingConfirm.arguments"
+              v-if="store.pendingConfirm.arguments"
               class="bg-gray-50 rounded-lg p-2 mb-4 text-xs text-gray-500 max-h-24 overflow-y-auto font-mono"
             >
               {{ store.pendingConfirm.arguments }}

@@ -54,6 +54,24 @@ public class MemosController : ControllerBase
         return Ok(ApiResponse<MemoDto>.Ok(updated));
     }
 
+    /// <summary>状态切换兼容入口（某些网关/IIS 环境可能不支持 PATCH）。</summary>
+    [HttpPut("{id:int}/status")]
+    public async Task<ActionResult<ApiResponse<MemoDto>>> PutStatus(
+        int id, [FromBody] PatchMemoStatusRequest request, CancellationToken ct)
+    {
+        var updated = await _service.PatchStatusAsync(_currentUser.UserId, id, request, ct);
+        return Ok(ApiResponse<MemoDto>.Ok(updated));
+    }
+
+    /// <summary>状态切换兼容入口（兼容仅允许 GET/POST 的代理）。</summary>
+    [HttpPost("{id:int}/status")]
+    public async Task<ActionResult<ApiResponse<MemoDto>>> PostStatus(
+        int id, [FromBody] PatchMemoStatusRequest request, CancellationToken ct)
+    {
+        var updated = await _service.PatchStatusAsync(_currentUser.UserId, id, request, ct);
+        return Ok(ApiResponse<MemoDto>.Ok(updated));
+    }
+
     [HttpDelete("{id:int}")]
     public async Task<ActionResult<ApiResponse>> Delete(int id, CancellationToken ct)
     {
@@ -72,6 +90,14 @@ public class MemosController : ControllerBase
     /// <summary>用户在前端关闭/确认弹窗。</summary>
     [HttpPatch("{id:int}/acknowledge-popup")]
     public async Task<ActionResult<ApiResponse>> AcknowledgePopup(int id, CancellationToken ct)
+    {
+        await _service.AcknowledgePopupAsync(_currentUser.UserId, id, ct);
+        return Ok(ApiResponse.Ok());
+    }
+
+    /// <summary>acknowledge-popup 兼容入口（Cloudflare 等代理不允许 PATCH 时使用）。</summary>
+    [HttpPut("{id:int}/acknowledge-popup")]
+    public async Task<ActionResult<ApiResponse>> PutAcknowledgePopup(int id, CancellationToken ct)
     {
         await _service.AcknowledgePopupAsync(_currentUser.UserId, id, ct);
         return Ok(ApiResponse.Ok());

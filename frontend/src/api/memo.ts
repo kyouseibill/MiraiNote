@@ -18,8 +18,14 @@ export const memoApi = {
   update: (id: number, payload: UpdateMemoPayload) =>
     unwrap<Memo>(http.put(`/memos/${id}`, payload)),
 
-  patchStatus: (id: number, payload: PatchMemoStatusPayload) =>
-    unwrap<Memo>(http.patch(`/memos/${id}/status`, payload)),
+  patchStatus: async (id: number, payload: PatchMemoStatusPayload) => {
+    // 优先使用 PUT，兼容 Cloudflare/IIS 等可能拦截 PATCH 的环境
+    try {
+      return await unwrap<Memo>(http.put(`/memos/${id}/status`, payload))
+    } catch {
+      return await unwrap<Memo>(http.patch(`/memos/${id}/status`, payload))
+    }
+  },
 
   remove: (id: number) => unwrap<null>(http.delete(`/memos/${id}`)),
 
@@ -27,6 +33,11 @@ export const memoApi = {
   duePopups: () => unwrap<Memo[]>(http.get('/memos/due-popups')),
 
   /** 用户关闭弹窗 */
-  acknowledgePopup: (id: number) =>
-    unwrap<null>(http.patch(`/memos/${id}/acknowledge-popup`)),
+  acknowledgePopup: async (id: number) => {
+    try {
+      return await unwrap<null>(http.put(`/memos/${id}/acknowledge-popup`))
+    } catch {
+      return await unwrap<null>(http.patch(`/memos/${id}/acknowledge-popup`))
+    }
+  },
 }

@@ -34,6 +34,23 @@ const form = reactive<CreateWorkLogPayload>({
 const isEdit = computed(() => editingId.value !== null)
 const totalPages = computed(() => Math.ceil(store.total / store.pageSize))
 
+// 智能页码列表（超过7页时显示省略号）
+const pageNumbers = computed<(number | '...')[]>(() => {
+  const total = totalPages.value
+  const current = store.page
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages: (number | '...')[] = [1]
+  if (current > 3) pages.push('...')
+  for (let p = Math.max(2, current - 1); p <= Math.min(total - 1, current + 1); p++) pages.push(p)
+  if (current < total - 2) pages.push('...')
+  pages.push(total)
+  return pages
+})
+
+// 每页条数选项
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+const selectedPageSize = ref(store.pageSize)
+
 // 当前选中条目展开详情
 const expandedId = ref<number | null>(null)
 
@@ -83,10 +100,11 @@ const STATUS_COLORS: Record<number, string> = {
   3: 'bg-orange-50 text-orange-600',
 }
 
-async function load(page = 1) {
+async function load(page = 1, size?: number) {
   try {
     await store.fetchList({
       page,
+      pageSize: size ?? selectedPageSize.value,
       keyword: keyword.value || undefined,
       dateFrom: dateFrom.value || undefined,
       dateTo: dateTo.value || undefined,
@@ -96,6 +114,12 @@ async function load(page = 1) {
   } catch {
     // 错误已由拦截器处理
   }
+}
+
+async function changePageSize(e: Event) {
+  const size = Number((e.target as HTMLSelectElement).value)
+  selectedPageSize.value = size
+  await load(1, size)
 }
 
 function resetForm() {
@@ -365,34 +389,48 @@ onMounted(() => {
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="mt-4 flex items-center justify-center gap-2">
-      <button
-        :disabled="store.page <= 1"
-        class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-        @click="load(store.page - 1)"
-      >
-        上一页
-      </button>
-      <div class="flex gap-1">
-        <button
-          v-for="p in totalPages"
-          :key="p"
-          class="w-8 h-8 text-sm rounded-md transition"
-          :class="p === store.page
-            ? 'bg-indigo-600 text-white'
-            : 'border border-gray-200 text-gray-600 hover:bg-gray-50'"
-          @click="load(p)"
+    <div v-if="store.total > 0" class="mt-4 flex items-center justify-between gap-2">
+      <!-- 每页条数 -->
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span>每页</span>
+        <select
+          :value="selectedPageSize"
+          class="h-7 px-1.5 rounded border border-gray-200 text-xs bg-white"
+          @change="changePageSize"
         >
-          {{ p }}
+          <option v-for="s in PAGE_SIZE_OPTIONS" :key="s" :value="s">{{ s }} 条</option>
+        </select>
+      </div>
+      <!-- 页码 -->
+      <div v-if="totalPages > 1" class="flex items-center gap-1">
+        <button
+          :disabled="store.page <= 1"
+          class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          @click="load(store.page - 1)"
+        >
+          上一页
+        </button>
+        <template v-for="(p, idx) in pageNumbers" :key="idx">
+          <span v-if="p === '...'" class="px-2 text-gray-400 text-sm">…</span>
+          <button
+            v-else
+            class="w-8 h-8 text-sm rounded-md transition"
+            :class="p === store.page
+              ? 'bg-indigo-600 text-white'
+              : 'border border-gray-200 text-gray-600 hover:bg-gray-50'"
+            @click="load(p)"
+          >
+            {{ p }}
+          </button>
+        </template>
+        <button
+          :disabled="store.page >= totalPages"
+          class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          @click="load(store.page + 1)"
+        >
+          下一页
         </button>
       </div>
-      <button
-        :disabled="store.page >= totalPages"
-        class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-        @click="load(store.page + 1)"
-      >
-        下一页
-      </button>
     </div>
   </div>
 

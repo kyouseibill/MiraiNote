@@ -30,7 +30,9 @@ export const useChatStore = defineStore('chat', () => {
   const enablePlanner = ref(true)
   const enableReflector = ref(true)
   const autoMode = ref(true)
-  const verbose = ref(false)
+
+  // 流式回复所属的会话 ID（用于防止切换会话时内容显示到错误会话）
+  const streamSessionId = ref<number | null>(null)
 
   // 并行工具调用列表
   const toolCalls = ref<{ id: string; name: string; label: string }[]>([])
@@ -106,10 +108,12 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function sendMessageStream(content: string) {
     if (!currentSession.value) return
-    const sessionId = currentSession.value.id
+    const targetSession = currentSession.value
+    const sessionId = targetSession.id
 
     sending.value = true
     currentToolCall.value = ''
+    streamSessionId.value = sessionId
 
     // 1. 添加临时用户消息
     const attachmentsToSend = [...pendingAttachments.value]
@@ -123,9 +127,9 @@ export const useChatStore = defineStore('chat', () => {
       content: content + attachmentNote,
       createdAt: new Date().toISOString(),
     }
-    currentSession.value.messages.push(tempUserMsg)
+    targetSession.messages.push(tempUserMsg)
 
-        // 2. 创建流式 AI 回复占位（不 push 到 messages 中，由独立模板区块渲染）
+    // 2. 创建流式 AI 回复占位（不 push 到 messages 中，由独立模板区块渲染）
     streamMessage.value = {
       id: -Date.now() - 1,
       role: 'assistant',
@@ -133,22 +137,20 @@ export const useChatStore = defineStore('chat', () => {
       createdAt: new Date().toISOString(),
     }
 
-        // 3. 用 SSE 向服务器发送请求
+    // 3. 用 SSE 向服务器发送请求
     try {
       await chatApi.sendMessageStream(
         sessionId,
         { content, attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined },
         (event) => {
-        if (!currentSession.value) return
-
         switch (event.type) {
           case 'user_msg':
             // 用户消息已持久化，替换临时 ID
-            const userIdx = currentSession.value.messages.findIndex(
+            const userIdx = targetSession.messages.findIndex(
               (m) => m.id === tempUserMsg.id,
             )
             if (userIdx >= 0) {
-              currentSession.value.messages[userIdx].id = event.data.id
+              targetSession.messages[userIdx].id = event.data.id
             }
             break
 
@@ -171,14 +173,14 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'done':
             // AI 回复完成：将 streamMessage 转为正式消息加入列表
-            if (streamMessage.value && currentSession.value) {
+            if (streamMessage.value) {
               const finalMsg: ChatMessage = {
                 id: event.data.messageId,
                 role: 'assistant',
                 content: streamMessage.value.content,
                 createdAt: event.data.createdAt || streamMessage.value.createdAt,
               }
-              currentSession.value.messages.push(finalMsg)
+              targetSession.messages.push(finalMsg)
               streamMessage.value = null
             }
             // 更新会话列表（标题可能已更改）
@@ -186,9 +188,7 @@ export const useChatStore = defineStore('chat', () => {
             if (sessionIdx >= 0) {
               sessions.value[sessionIdx].title = event.data.title
             }
-            if (currentSession.value) {
-              currentSession.value.title = event.data.title
-            }
+            targetSession.title = event.data.title
             break
 
           case 'error':
@@ -198,14 +198,15 @@ export const useChatStore = defineStore('chat', () => {
             break
         }
       })
-        } catch (e) {
-          // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
-          streamMessage.value = null
-          toast.error('网络连接失败，请检查后端服务是否正常运行')
-        } finally {
+    } catch (e) {
+      // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
+      streamMessage.value = null
+      toast.error('网络连接失败，请检查后端服务是否正常运行')
+    } finally {
       sending.value = false
       currentToolCall.value = ''
       streamMessage.value = null
+      streamSessionId.value = null
     }
   }
 
@@ -223,7 +224,8 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function sendAgentMessageStream(content: string) {
     if (!currentSession.value) return
-    const sessionId = currentSession.value.id
+    const targetSession = currentSession.value
+    const sessionId = targetSession.id
 
     sending.value = true
     currentToolCall.value = ''
@@ -232,6 +234,7 @@ export const useChatStore = defineStore('chat', () => {
     agentReflection.value = null
     contextUsage.value = null
     pendingConfirm.value = null
+    streamSessionId.value = sessionId
 
     const attachmentsToSend = [...pendingAttachments.value]
     pendingAttachments.value = []
@@ -245,7 +248,7 @@ export const useChatStore = defineStore('chat', () => {
       content: content + agentAttachmentNote,
       createdAt: new Date().toISOString(),
     }
-    currentSession.value.messages.push(tempUserMsg)
+    targetSession.messages.push(tempUserMsg)
 
     streamMessage.value = {
       id: -Date.now() - 1,
@@ -265,15 +268,13 @@ export const useChatStore = defineStore('chat', () => {
           attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
         },
         (event) => {
-        if (!currentSession.value) return
-
         switch (event.type) {
           case 'user_msg':
-            const userIdx = currentSession.value.messages.findIndex(
+            const userIdx = targetSession.messages.findIndex(
               (m) => m.id === tempUserMsg.id,
             )
             if (userIdx >= 0) {
-              currentSession.value.messages[userIdx].id = event.data.id
+              targetSession.messages[userIdx].id = event.data.id
             }
             break
 
@@ -328,23 +329,21 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'done':
-            if (streamMessage.value && currentSession.value) {
+            if (streamMessage.value) {
               const finalMsg: ChatMessage = {
                 id: event.data.messageId,
                 role: 'assistant',
                 content: streamMessage.value.content,
                 createdAt: event.data.createdAt || streamMessage.value.createdAt,
               }
-              currentSession.value.messages.push(finalMsg)
+              targetSession.messages.push(finalMsg)
               streamMessage.value = null
             }
             const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
             if (sessionIdx >= 0) {
               sessions.value[sessionIdx].title = event.data.title
             }
-            if (currentSession.value) {
-              currentSession.value.title = event.data.title
-            }
+            targetSession.title = event.data.title
             break
 
           case 'error':
@@ -361,6 +360,7 @@ export const useChatStore = defineStore('chat', () => {
       currentToolCall.value = ''
       toolCalls.value = []
       streamMessage.value = null
+      streamSessionId.value = null
     }
   }
 
@@ -417,6 +417,7 @@ export const useChatStore = defineStore('chat', () => {
     loading,
     sending,
     streamMessage,
+    streamSessionId,
     currentToolCall,
     toolCalls,
     agentPlan,
@@ -425,7 +426,6 @@ export const useChatStore = defineStore('chat', () => {
     enablePlanner,
     enableReflector,
     autoMode,
-    verbose,
     contextUsage,
     pendingConfirm,
     pendingAttachments,
