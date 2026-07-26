@@ -146,19 +146,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto px-6 py-6">
+  <div class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
     <!-- Tab 切换 -->
-    <div class="flex gap-4 mb-6 border-b border-gray-200">
+    <div class="mb-6 inline-flex gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
       <button
-        class="pb-2 text-sm font-medium border-b-2 transition"
-        :class="activeTab === 'reports' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="rounded-lg px-4 py-2 text-sm font-medium transition"
+        :class="activeTab === 'reports' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'"
         @click="activeTab = 'reports'"
       >
         周报列表
       </button>
       <button
-        class="pb-2 text-sm font-medium border-b-2 transition"
-        :class="activeTab === 'references' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="rounded-lg px-4 py-2 text-sm font-medium transition"
+        :class="activeTab === 'references' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'"
         @click="activeTab = 'references'"
       >
         参考文件 ({{ store.references.length }})
@@ -166,10 +166,10 @@ onMounted(async () => {
     </div>
 
     <!-- 周报 Tab -->
-    <div v-if="activeTab === 'reports'" class="flex gap-6">
+    <div v-if="activeTab === 'reports'" class="flex flex-col gap-6 lg:flex-row">
         <!-- 左侧：生成表单 -->
-        <div class="w-64 shrink-0 space-y-4">
-          <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
+        <div class="w-full shrink-0 space-y-4 lg:w-72">
+          <div class="surface-card p-4 space-y-3">
             <h3 class="text-sm font-medium text-gray-700">生成周报</h3>
             <div>
               <label class="block text-xs text-gray-500 mb-1">开始日期</label>
@@ -188,7 +188,7 @@ onMounted(async () => {
                   type="button"
                   class="flex-1 h-8 text-xs transition"
                   :class="detailLevel === opt.value
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-teal-600 text-white'
                     : 'bg-white text-gray-500 hover:bg-gray-50'"
                   @click="detailLevel = opt.value"
                 >
@@ -197,7 +197,7 @@ onMounted(async () => {
               </div>
             </div>
             <button
-              class="w-full h-9 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+              class="w-full h-9 rounded-lg bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-50"
               :disabled="store.generating"
               @click="generate"
             >
@@ -211,7 +211,7 @@ onMounted(async () => {
         <div v-if="!selectedReport" class="text-center text-gray-400 text-sm py-20">
           点击「一键生成」开始生成周报
         </div>
-        <div v-else class="bg-white rounded-xl border border-gray-100 shadow-sm h-full flex flex-col">
+        <div v-else class="surface-card h-full flex flex-col">
           <div class="flex items-center justify-between px-6 py-4 border-b gap-3 flex-wrap">
             <div>
               <span class="font-medium text-gray-800">
@@ -228,14 +228,14 @@ onMounted(async () => {
               </button>
               <button
                 v-if="!isEditing"
-                class="h-8 px-3 text-sm rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                class="h-8 px-3 text-sm rounded bg-teal-50 text-teal-700 hover:bg-teal-100"
                 @click="isEditing = true"
               >
                 编辑
               </button>
               <button
                 v-else
-                class="h-8 px-3 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                class="h-8 px-3 text-sm rounded bg-teal-600 text-white hover:bg-teal-700"
                 @click="saveEdit"
               >
                 保存
@@ -253,7 +253,7 @@ onMounted(async () => {
             <textarea
               v-if="isEditing"
               v-model="editingContent"
-              class="w-full h-full min-h-[400px] text-sm font-mono border border-gray-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              class="w-full h-full min-h-[400px] text-sm font-mono border border-gray-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-teal-200"
             />
             <!-- 阅读模式：纯文本显示 -->
             <pre
@@ -267,7 +267,7 @@ onMounted(async () => {
 
     <!-- 参考文件 Tab -->
     <div v-if="activeTab === 'references'" class="max-w-2xl">
-      <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-6 mb-6">
+      <div class="surface-card p-6 mb-6">
         <h3 class="text-sm font-medium text-gray-700 mb-4">上传参考文件（.xlsx / .xls）</h3>
         <div class="space-y-3">
           <div>
@@ -293,7 +293,7 @@ onMounted(async () => {
             />
           </div>
           <button
-            class="h-9 px-4 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+            class="h-9 px-4 rounded-lg bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-50"
             :disabled="uploading"
             @click="uploadRef"
           >
@@ -302,7 +302,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div class="surface-card overflow-hidden">
         <div v-if="store.references.length === 0" class="p-6 text-sm text-gray-400 text-center">
           暂无参考文件，上传后 AI 生成周报时将自动参考格式和历史内容
         </div>
@@ -315,7 +315,7 @@ onMounted(async () => {
             <div>
               <div class="text-sm font-medium text-gray-800">{{ ref.fileName }}</div>
               <div class="text-xs text-gray-400 mt-0.5">
-                <span v-if="ref.remark" class="mr-2 text-indigo-600">{{ ref.remark }}</span>
+                <span v-if="ref.remark" class="mr-2 text-teal-600">{{ ref.remark }}</span>
                 <span v-if="ref.weekStart">{{ fmtDate(ref.weekStart) }} ~ {{ fmtDate(ref.weekEnd ?? '') }}</span>
                 <span v-else>上传于 {{ fmtDate(ref.createdAt) }}</span>
               </div>

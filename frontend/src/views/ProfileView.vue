@@ -59,13 +59,13 @@ function fmtDate(iso: string | null): string {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-6 py-8 space-y-8">
+  <div class="max-w-3xl mx-auto px-4 py-6 sm:px-6 lg:py-10 space-y-8">
 
     <!-- 账户信息卡 -->
-    <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+    <section class="surface-card overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <!-- 头像占位 -->
-        <div class="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl font-bold select-none">
+        <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center text-xl font-bold select-none">
           {{ auth.user?.username?.charAt(0).toUpperCase() }}
         </div>
         <div>
@@ -75,7 +75,7 @@ function fmtDate(iso: string | null): string {
         <div class="ml-auto flex gap-2">
           <span
             v-if="auth.isAdmin"
-            class="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium"
+            class="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium"
           >管理员</span>
           <span
             class="text-xs px-2 py-0.5 rounded-full"
@@ -116,7 +116,7 @@ function fmtDate(iso: string | null): string {
     </section>
 
     <!-- 修改密码卡 -->
-    <section class="bg-white rounded-xl border border-gray-100 shadow-sm">
+    <section class="surface-card">
       <div class="px-6 py-4 border-b border-gray-100">
         <h2 class="font-semibold text-gray-900">修改密码</h2>
         <p class="text-sm text-gray-500 mt-0.5">修改后将自动退出，需重新登录</p>
@@ -130,7 +130,7 @@ function fmtDate(iso: string | null): string {
             v-model="pwForm.currentPassword"
             type="password"
             autocomplete="current-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
             :class="pwErrors.currentPassword ? 'border-red-400' : 'border-gray-200'"
           />
           <p v-if="pwErrors.currentPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.currentPassword }}</p>
@@ -143,7 +143,7 @@ function fmtDate(iso: string | null): string {
             v-model="pwForm.newPassword"
             type="password"
             autocomplete="new-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
             :class="pwErrors.newPassword ? 'border-red-400' : 'border-gray-200'"
           />
           <p v-if="pwErrors.newPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.newPassword }}</p>
@@ -156,7 +156,7 @@ function fmtDate(iso: string | null): string {
             v-model="pwForm.confirmPassword"
             type="password"
             autocomplete="new-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
             :class="pwErrors.confirmPassword ? 'border-red-400' : 'border-gray-200'"
           />
           <p v-if="pwErrors.confirmPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.confirmPassword }}</p>
@@ -165,7 +165,7 @@ function fmtDate(iso: string | null): string {
         <div class="pt-1">
           <button
             type="submit"
-            class="h-9 px-5 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-60 transition"
+            class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
             :disabled="pwSubmitting"
           >
             {{ pwSubmitting ? '保存中…' : '保存修改' }}

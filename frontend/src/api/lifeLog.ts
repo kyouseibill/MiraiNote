@@ -25,7 +25,7 @@ export const lifeLogApi = {
     const form = new FormData()
     form.append('file', file)
     return unwrap<string>(http.post('/upload/image', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
     }))
   },
 }

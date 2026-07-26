@@ -90,6 +90,7 @@ const messagesContainer = ref<HTMLElement | null>(null)
 const renamingId = ref<number | null>(null)
 const renameTitle = ref('')
 const showArchiveManager = ref(false)
+const showSessionList = ref(false)
 const restoringId = ref<number | null>(null)
 
 // 会话条目的单一入口“…”菜单（编辑/归档/删除）
@@ -378,6 +379,7 @@ async function newSession() {
 async function selectSession(id: number) {
   try {
     await store.openSession(id)
+    showSessionList.value = false
     store.pendingAttachments.splice(0)
     scrollToBottom()
   } catch {
@@ -488,7 +490,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-4rem)] overflow-hidden">
+  <div class="relative flex h-[calc(100vh-4.5rem)] overflow-hidden bg-slate-50">
     <div
       v-if="renderError"
       class="fixed inset-0 z-[100] flex items-center justify-center bg-white/90"
@@ -496,7 +498,7 @@ onMounted(async () => {
       <div class="text-center">
         <p class="text-red-500 text-sm mb-3">{{ renderError }}</p>
         <button
-          class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700"
+          class="px-4 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700"
           @click="renderError = null"
         >
           重试
@@ -519,10 +521,20 @@ onMounted(async () => {
       </div>
     </Teleport>
 
-    <div class="w-64 shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col">
-      <div class="px-4 py-3 border-b border-gray-200">
+    <div
+      v-if="showSessionList"
+      class="fixed inset-0 top-[72px] z-30 bg-slate-950/30 backdrop-blur-sm md:hidden"
+      @click="showSessionList = false"
+    />
+
+    <aside
+      class="fixed bottom-0 left-0 top-[72px] z-40 flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white shadow-float transition-transform duration-300 md:static md:w-64 md:translate-x-0 md:shadow-none"
+      :class="showSessionList ? 'translate-x-0' : '-translate-x-full'"
+    >
+      <div class="border-b border-slate-100 px-4 py-4">
+        <p class="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Conversations</p>
         <button
-          class="w-full h-9 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+          class="h-10 w-full rounded-xl bg-teal-700 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800"
           @click="newSession"
         >
           + 新对话
@@ -537,7 +549,7 @@ onMounted(async () => {
             v-for="s in store.sessions"
             :key="s.id"
             class="group px-3 py-2 cursor-pointer hover:bg-gray-100 rounded-lg mx-1 my-0.5 transition"
-            :class="{ 'bg-indigo-50': store.currentSession?.id === s.id }"
+            :class="{ 'bg-teal-50': store.currentSession?.id === s.id }"
             @click="selectSession(s.id)"
           >
             <div class="flex items-center justify-between gap-1">
@@ -551,7 +563,7 @@ onMounted(async () => {
                   @keyup.escape="renamingId = null"
                 />
                 <button
-                  class="text-xs text-indigo-600 px-1"
+                  class="text-xs text-teal-600 px-1"
                   title="保存"
                   aria-label="保存"
                   @click.stop="submitRename(s.id)"
@@ -601,22 +613,31 @@ onMounted(async () => {
           </li>
         </ul>
       </div>
-      <div class="px-4 py-2 border-t border-gray-200">
+      <div class="border-t border-slate-100 px-4 py-3">
         <button
-          class="w-full h-8 rounded-lg text-xs text-gray-500 hover:text-indigo-600 hover:bg-gray-100 transition"
+          class="w-full h-8 rounded-lg text-xs text-gray-500 hover:text-teal-600 hover:bg-gray-100 transition"
           @click="openArchiveManager"
         >
           归档管理
         </button>
       </div>
-    </div>
+    </aside>
 
     <div class="flex-1 flex flex-col min-w-0">
-      <div class="px-4 py-2 border-b border-gray-200 bg-white">
-        <div class="flex items-center justify-between">
-          <span class="font-medium text-gray-800 text-sm">
+      <div class="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-3">
+            <button
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 md:hidden"
+              aria-label="打开对话列表"
+              @click="showSessionList = true"
+            >
+              ☰
+            </button>
+            <span class="truncate text-sm font-semibold text-slate-800">
             {{ store.currentSession?.title ?? 'Mirai Chat' }}
-          </span>
+            </span>
+          </div>
           <span
             v-if="store.contextUsage"
             class="px-1.5 py-0.5 rounded text-[10px]"
@@ -630,29 +651,29 @@ onMounted(async () => {
 
       <div
         ref="messagesContainer"
-        class="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-gray-50"
+        class="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-4 py-5 sm:px-6 lg:px-10"
       >
         <div v-if="store.loading" class="text-center text-gray-400 text-sm">加载中...</div>
 
         <div
           v-if="store.agentPlan"
-          class="max-w-[70%] rounded-2xl px-4 py-3 bg-indigo-50 border border-indigo-200 text-sm"
+          class="max-w-[70%] rounded-2xl px-4 py-3 bg-teal-50 border border-teal-200 text-sm"
         >
-          <p class="font-medium text-indigo-800 mb-2">执行计划：{{ store.agentPlan.goal }}</p>
-          <ol class="list-decimal list-inside space-y-1 text-indigo-700">
+          <p class="font-medium text-teal-800 mb-2">执行计划：{{ store.agentPlan.goal }}</p>
+          <ol class="list-decimal list-inside space-y-1 text-teal-700">
             <li v-for="(step, i) in (store.agentPlan?.steps ?? [])" :key="i">
               {{ step.action }}
               <span class="text-xs text-gray-400">({{ (step.tools ?? []).join(', ') }})</span>
             </li>
           </ol>
-          <div v-if="(store.agentPlan?.risks ?? []).length" class="mt-2 pt-2 border-t border-indigo-200">
+          <div v-if="(store.agentPlan?.risks ?? []).length" class="mt-2 pt-2 border-t border-teal-200">
             <p class="text-xs text-yellow-600">{{ (store.agentPlan?.risks ?? []).join('；') }}</p>
           </div>
         </div>
 
         <div
           v-else-if="!store.currentSession || store.currentSession.messages.length === 0"
-          class="text-center text-gray-400 text-sm mt-20"
+          class="mx-auto mt-20 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white/70 px-8 py-12 text-center text-sm text-slate-400"
         >
           开始对话吧
         </div>
@@ -665,9 +686,9 @@ onMounted(async () => {
         >
           <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(msg.createdAt) }}</span>
           <div
-            class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed"
+            class="max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed sm:max-w-[76%] lg:max-w-[68%]"
             :class="msg.role === 'user'
-              ? 'bg-indigo-600 text-white rounded-br-sm'
+              ? 'bg-teal-600 text-white rounded-br-sm'
               : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none'"
           >
             <div v-if="msg.role === 'user'" v-html="renderUserContent(msg.content)" />
@@ -687,7 +708,7 @@ onMounted(async () => {
         <div v-if="store.streamMessage && store.streamSessionId === store.currentSession?.id" class="flex flex-col items-start">
           <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(store.streamMessage.createdAt) }}</span>
           <div
-            class="max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none"
+            class="max-w-[88%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-800 shadow-sm prose prose-sm sm:max-w-[76%] lg:max-w-[68%]"
           >
             <details
               v-if="splitAssistantContent(store.streamMessage.content, true).thinking"
@@ -705,7 +726,7 @@ onMounted(async () => {
               :key="tc.id"
               class="flex items-center gap-2 text-xs text-gray-400 animate-pulse"
             >
-              <span class="inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+              <span class="inline-block w-2 h-2 rounded-full bg-teal-400 animate-pulse"></span>
               <span>{{ tc.label }}</span>
             </div>
           </div>
@@ -713,7 +734,7 @@ onMounted(async () => {
             v-else-if="store.currentToolCall && !store.streamMessage.content"
             class="mt-1 flex items-center gap-2 text-xs text-gray-400 animate-pulse"
           >
-            <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span class="inline-block w-2 h-2 rounded-full bg-teal-400"></span>
             {{ store.currentToolCall }}
           </div>
         </div>
@@ -743,12 +764,12 @@ onMounted(async () => {
           <div
             v-for="(att, idx) in store.pendingAttachments"
             :key="idx"
-            class="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-xs text-indigo-700"
+            class="flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-700"
           >
             <span>{{ getFileIcon(att.fileType) }}</span>
             <span class="max-w-[120px] truncate" :title="att.fileName">{{ att.fileName }}</span>
             <button
-              class="ml-1 text-indigo-400 hover:text-red-500 leading-none"
+              class="ml-1 text-teal-400 hover:text-red-500 leading-none"
               @click="removeAttachment(idx)"
             >
               x
@@ -766,7 +787,7 @@ onMounted(async () => {
             @change="handleFileSelect"
           />
           <button
-            class="shrink-0 h-10 w-10 rounded-xl border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-300 flex items-center justify-center transition"
+            class="shrink-0 h-10 w-10 rounded-xl border border-gray-200 text-gray-400 hover:text-teal-600 hover:border-teal-300 flex items-center justify-center transition"
             :disabled="store.sending"
             title="上传文件（支持 PDF / Word / Excel / 文本 / 图片）"
             aria-label="上传文件"
@@ -785,8 +806,8 @@ onMounted(async () => {
           <button
             class="shrink-0 h-10 w-10 rounded-xl border flex items-center justify-center transition"
             :class="showWorkspaceBrowser
-              ? 'bg-indigo-50 border-indigo-300 text-indigo-600'
-              : 'border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-300'"
+              ? 'bg-teal-50 border-teal-300 text-teal-600'
+              : 'border-gray-200 text-gray-400 hover:text-teal-600 hover:border-teal-300'"
             :disabled="store.sending"
             title="从工作区选择文件附加到消息"
             aria-label="从工作区选择文件"
@@ -811,12 +832,12 @@ onMounted(async () => {
             v-model="inputContent"
             :style="{ height: inputHeightPx + 'px' }"
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            class="flex-1 px-4 py-2 rounded-xl border border-gray-200 text-sm resize-none overflow-y-auto focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            class="flex-1 px-4 py-2 rounded-xl border border-gray-200 text-sm resize-none overflow-y-auto focus:outline-none focus:ring-2 focus:ring-teal-200"
             @keydown="handleKeydown"
             @paste="handlePaste"
           />
           <button
-            class="shrink-0 h-10 px-5 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+            class="shrink-0 h-10 px-5 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-50"
             :disabled="store.sending || (!inputContent.trim() && store.pendingAttachments.length === 0)"
             @click="send"
           >
@@ -858,7 +879,7 @@ onMounted(async () => {
               </button>
               <button
                 class="px-4 py-2 rounded-lg text-sm text-white"
-                :class="store.pendingConfirm.riskLevel === 'dangerous' ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'"
+                :class="store.pendingConfirm.riskLevel === 'dangerous' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-600 hover:bg-teal-700'"
                 @click="store.confirmToolCall(true)"
               >
                 确认执行
@@ -901,7 +922,7 @@ onMounted(async () => {
                     <div class="text-xs text-gray-400 mt-0.5">{{ fmtSessionDate(s.updatedAt) }}</div>
                   </div>
                   <button
-                    class="shrink-0 text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50"
+                    class="shrink-0 text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:text-teal-600 hover:border-teal-300 disabled:opacity-50"
                     :disabled="restoringId === s.id"
                     @click="restoreSession(s.id)"
                   >

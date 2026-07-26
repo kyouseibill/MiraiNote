@@ -17,6 +17,8 @@ const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const imageUploading = ref(false)
+const MAX_IMAGES = 9
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 // 展开详情的记录 ID
 const expandedId = ref<number | null>(null)
@@ -24,7 +26,7 @@ const expandedId = ref<number | null>(null)
 const MOODS = ['开心', '平静', '疲惫', '难过', '兴奋', '焦虑', '感恩']
 
 const MOOD_COLOR: Record<string, string> = {
-  开心: '#f59e0b', 平静: '#6366f1', 疲惫: '#94a3b8', 难过: '#64748b',
+  开心: '#f59e0b', 平静: '#0ea5e9', 疲惫: '#94a3b8', 难过: '#64748b',
   兴奋: '#ec4899', 焦虑: '#ef4444', 感恩: '#10b981',
 }
 
@@ -32,6 +34,7 @@ const form = reactive<CreateLifeLogPayload>({
   content: '',
   mood: '',
   imagePath: null,
+  imagePaths: [],
   logDate: todayStr(),
 })
 
@@ -96,6 +99,7 @@ function resetForm() {
   form.content = ''
   form.mood = ''
   form.imagePath = null
+  form.imagePaths = []
   form.logDate = todayStr()
 }
 
@@ -108,7 +112,8 @@ function openEdit(item: LifeLog) {
   editingId.value = item.id
   form.content = item.content
   form.mood = item.mood ?? ''
-  form.imagePath = item.imagePath
+  form.imagePaths = getImagePaths(item)
+  form.imagePath = form.imagePaths[0] ?? null
   form.logDate = fmtDate(item.logDate)
   drawerOpen.value = true
 }
@@ -118,17 +123,55 @@ function toggleExpand(id: number) {
 }
 
 async function handleImageUpload(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length === 0) return
+
+  const existingPaths = form.imagePaths ?? []
+  const remaining = MAX_IMAGES - existingPaths.length
+  if (files.length > remaining) {
+    toast.error(`最多上传 ${MAX_IMAGES} 张图片，还可选择 ${remaining} 张`)
+    return
+  }
+
+  const invalidType = files.find((file) => !file.type.startsWith('image/'))
+  if (invalidType) {
+    toast.error(`「${invalidType.name}」不是有效的图片文件`)
+    return
+  }
+
+  const oversized = files.find((file) => file.size > MAX_IMAGE_SIZE)
+  if (oversized) {
+    toast.error(`「${oversized.name}」超过 5MB`)
+    return
+  }
+
   imageUploading.value = true
+  const uploadedPaths: string[] = []
   try {
-    const path = await lifeLogApi.uploadImage(file)
-    form.imagePath = path
-  } catch {
-    // 拦截器已 toast
+    for (const file of files) {
+      try {
+        uploadedPaths.push(await lifeLogApi.uploadImage(file))
+      } catch {
+        // 单张失败时继续上传其余图片，错误由拦截器提示。
+      }
+    }
+    form.imagePaths = [...existingPaths, ...uploadedPaths]
+    form.imagePath = form.imagePaths[0] ?? null
   } finally {
     imageUploading.value = false
   }
+}
+
+function removeImage(index: number) {
+  form.imagePaths = (form.imagePaths ?? []).filter((_, currentIndex) => currentIndex !== index)
+  form.imagePath = form.imagePaths[0] ?? null
+}
+
+function getImagePaths(item: Pick<LifeLog, 'imagePath' | 'imagePaths'>): string[] {
+  if (item.imagePaths?.length) return item.imagePaths
+  return item.imagePath ? [item.imagePath] : []
 }
 
 async function submit() {
@@ -141,7 +184,8 @@ async function submit() {
     const payload: CreateLifeLogPayload = {
       content: form.content.trim(),
       mood: form.mood?.trim() || null,
-      imagePath: form.imagePath || null,
+      imagePath: form.imagePaths?.[0] || null,
+      imagePaths: form.imagePaths ?? [],
       logDate: form.logDate,
     }
     if (editingId.value !== null) {
@@ -177,7 +221,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-6 py-6">
+  <div class="max-w-4xl mx-auto px-4 py-6 sm:px-6 lg:py-8">
     <!-- 操作栏 -->
     <div class="flex flex-wrap items-end gap-3 mb-6">
       <div class="flex-1 min-w-[180px]">
@@ -221,7 +265,7 @@ onMounted(() => {
     <!-- 心情分布统计卡 -->
     <div
       v-if="moodStats.length >= 2"
-      class="mb-5 bg-white rounded-xl border border-gray-100 shadow-sm p-4"
+      class="mb-5 surface-card p-4"
     >
       <p class="text-xs text-gray-500 mb-3">
         {{ selectedMonth || '当前筛选' }}心情分布（{{ store.items.filter(i => i.mood).length }} 条有记录）
@@ -262,7 +306,7 @@ onMounted(() => {
       <div
         v-for="item in store.items"
         :key="item.id"
-        class="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition"
+        class="surface-card hover:shadow-md transition"
       >
         <!-- 摘要行 -->
         <div class="p-4">
@@ -278,7 +322,9 @@ onMounted(() => {
                     :style="{ backgroundColor: MOOD_COLOR[item.mood] + '22', color: MOOD_COLOR[item.mood] }"
                   >{{ item.mood }}</span>
                 </span>
-                <span v-if="item.imagePath" class="text-xs text-gray-400">📷</span>
+                <span v-if="getImagePaths(item).length" class="text-xs text-gray-400">
+                  📷 {{ getImagePaths(item).length }}
+                </span>
               </div>
 
               <!-- 内容 -->
@@ -290,12 +336,19 @@ onMounted(() => {
               </p>
 
               <!-- 展开后显示图片 -->
-              <img
-                v-if="expandedId === item.id && item.imagePath"
-                :src="staticUrl(item.imagePath)"
-                class="mt-3 rounded-lg max-h-64 object-cover"
-                alt="生活照片"
-              />
+              <div
+                v-if="expandedId === item.id && getImagePaths(item).length"
+                class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3"
+              >
+                <img
+                  v-for="(path, imageIndex) in getImagePaths(item)"
+                  :key="path"
+                  :src="staticUrl(path)"
+                  class="aspect-square w-full rounded-xl border border-slate-100 object-cover"
+                  :alt="`生活照片 ${imageIndex + 1}`"
+                  loading="lazy"
+                />
+              </div>
             </div>
 
             <!-- 操作按钮 -->
@@ -322,13 +375,23 @@ onMounted(() => {
           </div>
 
           <!-- 折叠时有图片显示缩略图 -->
-          <div v-if="expandedId !== item.id && item.imagePath" class="mt-2">
+          <div v-if="expandedId !== item.id && getImagePaths(item).length" class="mt-3 flex gap-2 overflow-hidden">
             <img
-              :src="staticUrl(item.imagePath)"
-              class="rounded-lg h-24 object-cover cursor-pointer"
-              alt="生活照片"
+              v-for="(path, imageIndex) in getImagePaths(item).slice(0, 4)"
+              :key="path"
+              :src="staticUrl(path)"
+              class="h-20 w-20 cursor-pointer rounded-xl border border-slate-100 object-cover sm:h-24 sm:w-24"
+              :alt="`生活照片 ${imageIndex + 1}`"
+              loading="lazy"
               @click="toggleExpand(item.id)"
             />
+            <button
+              v-if="getImagePaths(item).length > 4"
+              class="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-600 sm:h-24 sm:w-24"
+              @click="toggleExpand(item.id)"
+            >
+              +{{ getImagePaths(item).length - 4 }}
+            </button>
           </div>
         </div>
       </div>
@@ -417,27 +480,35 @@ onMounted(() => {
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">图片（最大 5MB）</label>
+            <div class="mb-2 flex items-center justify-between gap-3">
+              <label class="block text-sm font-medium text-gray-700">图片</label>
+              <span class="text-xs text-slate-400">{{ form.imagePaths?.length ?? 0 }} / {{ MAX_IMAGES }} 张 · 单张最大 5MB</span>
+            </div>
             <input
               type="file"
               accept="image/*"
+              multiple
               class="block text-sm text-gray-500"
+              :disabled="imageUploading || (form.imagePaths?.length ?? 0) >= MAX_IMAGES"
               @change="handleImageUpload"
             />
             <p v-if="imageUploading" class="text-xs text-gray-400 mt-1">上传中…</p>
-            <div v-if="form.imagePath" class="mt-2 relative inline-block">
-              <img
-                :src="staticUrl(form.imagePath)"
-                class="rounded-lg max-h-40 object-cover"
-                alt="预览"
-              />
-              <button
-                class="absolute top-1 right-1 bg-black/50 text-white text-xs rounded px-1.5 py-0.5 hover:bg-black/70"
-                type="button"
-                @click="form.imagePath = null"
-              >
-                移除
-              </button>
+            <div v-if="form.imagePaths?.length" class="mt-3 grid grid-cols-3 gap-2">
+              <div v-for="(path, imageIndex) in form.imagePaths" :key="path" class="group relative aspect-square">
+                <img
+                  :src="staticUrl(path)"
+                  class="h-full w-full rounded-xl border border-slate-200 object-cover"
+                  :alt="`预览 ${imageIndex + 1}`"
+                />
+                <button
+                  class="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/70 text-xs text-white opacity-90 transition hover:bg-red-600"
+                  type="button"
+                  :aria-label="`移除第 ${imageIndex + 1} 张图片`"
+                  @click="removeImage(imageIndex)"
+                >
+                  ×
+                </button>
+              </div>
             </div>
           </div>
         </div>

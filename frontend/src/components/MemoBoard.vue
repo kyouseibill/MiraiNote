@@ -6,8 +6,8 @@ import type { Memo, MemoSection, CreateMemoPayload, UpdateMemoPayload } from '@/
 
 const props = defineProps<{
   section: MemoSection
-  /** 主题色：indigo（工作）/ rose（生活） */
-  accent: 'indigo' | 'rose'
+  /** 主题色：teal（工作）/ rose（生活） */
+  accent: 'teal' | 'rose'
   title: string
 }>()
 
@@ -52,10 +52,10 @@ const accentClasses = computed(() => {
     }
   }
   return {
-    btn: 'bg-indigo-600 hover:bg-indigo-700',
-    ring: 'focus:ring-indigo-200',
-    pin: 'text-indigo-600',
-    link: 'text-indigo-600 hover:text-indigo-700',
+    btn: 'bg-teal-600 hover:bg-teal-700',
+    ring: 'focus:ring-teal-200',
+    pin: 'text-teal-600',
+    link: 'text-teal-600 hover:text-teal-700',
   }
 })
 
@@ -228,9 +228,9 @@ watch(keyword, () => {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-6 py-6">
+  <div class="max-w-4xl mx-auto px-4 py-6 sm:px-6 lg:py-8">
     <!-- 新建条 -->
-    <div class="bg-white border border-gray-100 rounded-xl shadow-sm p-4 mb-4">
+    <div class="surface-card mb-5 p-4 sm:p-5">
       <textarea
         v-model="newForm.content"
         :placeholder="`记一条${title}…（Ctrl+Enter 保存）`"
@@ -291,7 +291,7 @@ watch(keyword, () => {
     </div>
 
     <!-- 过滤栏 -->
-    <div class="flex flex-wrap items-center gap-3 mb-3 text-sm text-gray-600">
+    <div class="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-2.5 text-sm text-slate-600">
       <input
         v-model="keyword"
         type="text"
@@ -310,7 +310,7 @@ watch(keyword, () => {
     </div>
 
     <!-- 列表 -->
-    <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+    <div class="surface-card overflow-hidden">
       <div v-if="store.loading" class="p-10 text-center text-gray-400 text-sm">加载中…</div>
       <div v-else-if="items.length === 0" class="p-10 text-center text-gray-400 text-sm">
         还没有备忘，先记一条吧～
