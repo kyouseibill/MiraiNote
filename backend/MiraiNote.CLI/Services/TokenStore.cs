@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace MiraiNote.CLI.Services;
 
@@ -18,7 +18,7 @@ public class TokenStore
     public int?    LastChatSessionId => _data.LastChatSessionId;
     public string  DeepSeekApiKey    => _data.DeepSeekApiKey ?? string.Empty;
     public string  DeepSeekBaseUrl   => _data.DeepSeekBaseUrl ?? "https://api.deepseek.com";
-    public string  DeepSeekModel     => _data.DeepSeekModel ?? "deepseek-chat";
+    public string  DeepSeekModel     => _data.DeepSeekModel ?? "deepseek-v4-flash";
     public string? TavilyApiKey      => _data.TavilyApiKey;
     public string? SmtpHost          => _data.SmtpHost;
     public int     SmtpPort          => _data.SmtpPort > 0 ? _data.SmtpPort : 587;

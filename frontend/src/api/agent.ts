@@ -1,4 +1,5 @@
 import { getAccessToken, API_BASE_URL } from './auth'
+import { consumeSseResponse } from './sse'
 
 export type AgentSseEventType =
   | 'user_msg'
@@ -45,7 +46,14 @@ export interface AgentMessagePayload {
   enablePlanner?: boolean
   enableReflector?: boolean
   skipConfirmation?: boolean
-  attachments?: { fileName: string; fileType: string; textContent: string }[]
+  attachments?: {
+    fileName: string
+    fileType: string
+    textContent: string
+    mimeType?: string
+    dataUrl?: string
+    isImage?: boolean
+  }[]
 }
 
 export const agentApi = {
@@ -77,38 +85,9 @@ export const agentApi = {
       return
     }
 
-    const reader = response.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      let currentEvent = ''
-      let currentData = ''
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim()
-        } else if (line.startsWith('data: ')) {
-          currentData = line.slice(6).trim()
-        } else if (line === '' && currentEvent && currentData) {
-          try {
-            onEvent({ type: currentEvent as AgentSseEventType, data: JSON.parse(currentData) })
-          } catch {
-            onEvent({ type: currentEvent as AgentSseEventType, data: currentData })
-          }
-          currentEvent = ''
-          currentData = ''
-        }
-      }
-    }
+    await consumeSseResponse(response, (event) => {
+      onEvent({ type: event.type as AgentSseEventType, data: event.data })
+    })
   },
 
   /** 确认/取消危险工具调用 */

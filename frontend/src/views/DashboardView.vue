@@ -315,7 +315,7 @@ onMounted(load)
             >
               <span class="text-base">✨</span>
               <div>
-                <p class="font-medium text-xs">AI 周报</p>
+                <p class="font-medium text-xs">写周报</p>
                 <p class="text-xs text-purple-400 mt-0.5">一键生成周报</p>
               </div>
             </button>

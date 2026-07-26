@@ -12,8 +12,8 @@ namespace MiraiNote.Shared.Agent;
 /// </summary>
 public class AgentContextManager
 {
-    /// <summary>目标模型上下文窗口（DeepSeek Chat 默认 128K）</summary>
-    private const int MaxContextTokens = 128_000;
+    /// <summary>目标模型上下文窗口（DeepSeek V4 默认 1M）</summary>
+    private const int MaxContextTokens = 1_000_000;
 
     /// <summary>系统提示词预估 token 数</summary>
     private const int SystemPromptTokens = 3_500;

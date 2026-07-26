@@ -32,7 +32,7 @@ const groups: NavGroup[] = [
       { to: '/dashboard', label: '工作台', icon: '◐' },
       { to: '/work/logs', label: '工作记录', icon: '✎' },
       { to: '/work/memos', label: '工作备忘', icon: '☑' },
-      { to: '/work/reports', label: 'AI 周报', icon: '✨' },
+      { to: '/work/reports', label: '写周报', icon: '✨' },
     ],
   },
   {
@@ -47,7 +47,7 @@ const groups: NavGroup[] = [
     title: '工具',
     accent: 'violet',
     items: [
-      { to: '/chat', label: 'AI 对话', icon: '💬' },
+      { to: '/chat', label: 'Mirai Chat', icon: '💬' },
     ],
   },
 ]

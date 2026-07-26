@@ -12,6 +12,8 @@ export interface WeeklyReport {
 export interface GenerateReportPayload {
   weekStart: string
   weekEnd: string
+  /** 输出内容复杂度：1=简洁，2=标准，3=详细 */
+  detailLevel: number
 }
 
 export interface UpdateReportPayload {

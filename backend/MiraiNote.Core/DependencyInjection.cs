@@ -33,6 +33,9 @@ public static class DependencyInjection
         services.AddScoped<Services.Tools.ServerSearchLifeLogsTool>();
         services.AddScoped<Services.Tools.ServerGetWeeklyReportsTool>();
         services.AddScoped<Services.Tools.ServerSearchInternetTool>();
+        services.AddScoped<Services.Tools.ServerFetchWebPageTool>();
+        services.AddScoped<Services.Tools.ServerHttpApiTool>();
+        services.AddScoped<Services.Tools.ServerLoginAndFetchWebTool>();
         services.AddScoped<Services.Tools.ServerCreateWorkLogTool>();
         services.AddScoped<Services.Tools.ServerUpdateWorkLogTool>();
         services.AddScoped<Services.Tools.ServerDeleteWorkLogTool>();
@@ -50,10 +53,14 @@ public static class DependencyInjection
         services.AddScoped<Services.Tools.ServerSendEmailTool>();
         services.AddScoped<Services.Tools.ServerExportFileTool>();
         services.AddScoped<Services.Tools.ServerCalendarTool>();
+        services.AddScoped<Services.Tools.ServerCurrentTimeTool>();
+        services.AddScoped<Services.Tools.ServerCalculatorTool>();
+        services.AddScoped<Services.Tools.ServerRecordOverviewTool>();
         services.AddScoped<Services.Tools.ServerFileReadTool>();
         services.AddScoped<Services.Tools.ServerFileWriteTool>();
         services.AddScoped<Services.Tools.ServerFileDeleteTool>();
         services.AddScoped<Services.Tools.ServerFileMoveOrRenameTool>();
+        services.AddScoped<Services.Tools.ServerPublishWorkspaceFileTool>();
         services.AddScoped<Services.Tools.ServerFileListTool>();
         services.AddScoped<Services.Tools.ServerShellTool>();
         services.AddScoped<Services.Tools.ServerScheduleTaskTool>();

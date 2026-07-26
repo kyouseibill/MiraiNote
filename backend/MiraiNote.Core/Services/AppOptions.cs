@@ -25,7 +25,11 @@ public class DeepSeekOptions
     public const string SectionName = "DeepSeek";
     public string ApiKey { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = "https://api.deepseek.com";
-    public string Model { get; set; } = "deepseek-chat";
+    public string Model { get; set; } = "deepseek-v4-flash";
+    /// <summary>模型上下文窗口 token 数。DeepSeek V4 默认按 1M 配置。</summary>
+    public int ContextWindowTokens { get; set; } = 1_000_000;
+    /// <summary>单个聊天附件提取后最多保留的文本字符数，用于长 PDF/Word/Excel 分析。</summary>
+    public int MaxAttachmentTextChars { get; set; } = 800_000;
 }
 
 /// <summary>

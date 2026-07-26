@@ -23,6 +23,9 @@ public class ChatSession : BaseEntity
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>是否已归档。归档会话默认不在列表展示。</summary>
+    public bool IsArchived { get; set; } = false;
+
     /// <summary>该会话下的所有消息。</summary>
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
 }

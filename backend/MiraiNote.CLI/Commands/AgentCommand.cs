@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using MiraiNote.CLI.Agent;
@@ -38,7 +38,7 @@ public class AgentSettings : CommandSettings
     public bool Auto { get; set; } = false;
 
     [CommandOption("--model")]
-    [Description("指定 DeepSeek 模型（默认 deepseek-chat）")]
+    [Description("指定 DeepSeek 模型（默认 deepseek-v4-flash）")]
     public string? Model { get; set; }
 
     [CommandOption("--max-rounds")]
@@ -321,7 +321,7 @@ public class AgentCommand : AsyncCommand<AgentSettings>
                 ?? Environment.GetEnvironmentVariable("DEEPSEEK_MODEL")
                 ?? (store?.DeepSeekModel is { Length: > 0 } model ? model : null)
                 ?? jsonConfig?.DeepSeekModel
-                ?? "deepseek-chat",
+                ?? "deepseek-v4-flash",
             TavilyApiKey = s.TavilyKey
                 ?? Environment.GetEnvironmentVariable("TAVILY_API_KEY")
                 ?? store?.TavilyApiKey
