@@ -21,6 +21,7 @@ public class CreateLifeLogRequest
     public string Content { get; set; } = string.Empty;
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
+    public List<string>? ImagePaths { get; set; }
     public DateTime LogDate { get; set; }
 }
 
@@ -32,6 +33,7 @@ public class UpdateLifeLogRequest
     public string Content { get; set; } = string.Empty;
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
+    public List<string>? ImagePaths { get; set; }
     public DateTime LogDate { get; set; }
 }
 
@@ -44,6 +46,7 @@ public class LifeLogDto
     public string Content { get; set; } = string.Empty;
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
+    public List<string> ImagePaths { get; set; } = [];
     public DateTime LogDate { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

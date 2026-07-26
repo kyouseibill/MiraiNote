@@ -119,7 +119,7 @@ load()
         :key="s"
         class="px-3 py-1 rounded-full text-xs transition"
         :class="scope === s
-          ? 'bg-indigo-600 text-white'
+          ? 'bg-teal-600 text-white'
           : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
         @click="scope = s"
       >
@@ -132,7 +132,7 @@ load()
       <button
         v-for="(crumb, i) in breadcrumbs"
         :key="i"
-        class="shrink-0 hover:text-indigo-600"
+        class="shrink-0 hover:text-teal-600"
         :class="{ 'text-gray-800 font-medium': i === breadcrumbs.length - 1 }"
         @click="navigateTo(crumb.path)"
       >{{ crumb.label }}</button>
@@ -155,7 +155,7 @@ load()
           <div class="flex-1 min-w-0">
             <div
               class="text-sm text-gray-700 truncate"
-              :class="entry.type === 'dir' ? 'cursor-pointer hover:text-indigo-600' : ''"
+              :class="entry.type === 'dir' ? 'cursor-pointer hover:text-teal-600' : ''"
               @click="entry.type === 'dir' ? openDir(entry) : undefined"
             >{{ entry.name }}</div>
             <div v-if="entry.type === 'file'" class="text-xs text-gray-400">{{ formatSize(entry.sizeBytes) }}</div>
@@ -163,7 +163,7 @@ load()
           <!-- 附加到消息按钮 -->
           <button
             v-if="canAttach(entry)"
-            class="hidden group-hover:flex items-center gap-1 shrink-0 px-2 py-1 rounded text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition"
+            class="hidden group-hover:flex items-center gap-1 shrink-0 px-2 py-1 rounded text-xs bg-teal-50 text-teal-600 hover:bg-teal-100 transition"
             :disabled="attaching === entry.relativePath"
             @click.stop="attachFile(entry)"
           >

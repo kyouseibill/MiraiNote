@@ -27,10 +27,10 @@ async function ok() {
         v-if="visible && current"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
       >
-        <div class="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
+        <div class="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-float">
           <div
             class="px-5 py-3 text-white font-semibold flex items-center gap-2"
-            :class="current.section === 'life' ? 'bg-rose-500' : 'bg-indigo-600'"
+            :class="current.section === 'life' ? 'bg-rose-500' : 'bg-slate-900'"
           >
             <span>🔔</span>
             <span>{{ current.section === 'life' ? '生活备忘提醒' : '工作备忘提醒' }}</span>
@@ -48,7 +48,7 @@ async function ok() {
           <div class="px-5 py-3 border-t border-gray-100 flex justify-end gap-2">
             <button
               class="h-9 px-4 rounded-md text-white text-sm"
-              :class="current.section === 'life' ? 'bg-rose-500 hover:bg-rose-600' : 'bg-indigo-600 hover:bg-indigo-700'"
+              :class="current.section === 'life' ? 'bg-rose-500 hover:bg-rose-600' : 'bg-teal-600 hover:bg-teal-700'"
               @click="ok"
             >
               我知道了

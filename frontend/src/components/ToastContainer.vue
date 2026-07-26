@@ -4,20 +4,20 @@ import { useToast } from '@/composables/useToast'
 const toast = useToast()
 
 const colorMap: Record<string, string> = {
-  success: 'bg-green-50 text-green-800 border-green-200',
-  error: 'bg-red-50 text-red-800 border-red-200',
-  info: 'bg-blue-50 text-blue-800 border-blue-200',
-  warning: 'bg-yellow-50 text-yellow-800 border-yellow-200',
+  success: 'bg-emerald-50/95 text-emerald-900 border-emerald-200',
+  error: 'bg-red-50/95 text-red-900 border-red-200',
+  info: 'bg-sky-50/95 text-sky-900 border-sky-200',
+  warning: 'bg-amber-50/95 text-amber-900 border-amber-200',
 }
 </script>
 
 <template>
-  <div class="fixed top-4 right-4 z-50 space-y-2 w-80 max-w-[90vw]">
+  <div class="fixed right-4 top-4 z-50 w-80 max-w-[90vw] space-y-2 sm:right-6 sm:top-6">
     <transition-group name="toast">
       <div
         v-for="t in toast.list"
         :key="t.id"
-        class="border rounded-md shadow-sm px-4 py-3 text-sm flex items-start gap-2"
+        class="flex items-start gap-3 rounded-xl border px-4 py-3.5 text-sm shadow-float backdrop-blur-xl"
         :class="colorMap[t.type]"
       >
         <span class="flex-1 break-words">{{ t.message }}</span>

@@ -26,7 +26,7 @@ async function handleLogout() {
         <div class="flex items-center gap-3 text-sm">
           <span class="text-gray-600 hidden sm:inline">
             欢迎，<span class="font-medium text-gray-900">{{ auth.user?.username }}</span>
-            <span v-if="auth.isAdmin" class="ml-1 inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-xs">管理员</span>
+            <span v-if="auth.isAdmin" class="ml-1 inline-block px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-xs">管理员</span>
           </span>
           <button
             class="px-3 py-1.5 rounded-md text-gray-700 hover:bg-gray-100 transition"
@@ -39,7 +39,7 @@ async function handleLogout() {
     </header>
 
     <main class="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-10">
-      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+      <div class="surface-card p-8">
         <h1 class="text-2xl font-bold text-gray-900">欢迎回来，{{ auth.user?.username }} 👋</h1>
         <p class="mt-2 text-gray-600 text-sm">
           这里是未来ノート首页占位。后续将接入工作记录、备忘、AI 周报等模块。

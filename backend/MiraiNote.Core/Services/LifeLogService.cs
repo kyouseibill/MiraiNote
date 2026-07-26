@@ -21,6 +21,8 @@ public interface ILifeLogService
 /// </summary>
 public class LifeLogService : ILifeLogService
 {
+    private const int MaxImages = 9;
+    private const string MultiImagePrefix = "multi:v1:";
     private readonly MiraiNoteDbContext _db;
 
     public LifeLogService(MiraiNoteDbContext db)
@@ -89,12 +91,13 @@ public class LifeLogService : ILifeLogService
         if (string.IsNullOrWhiteSpace(request.Content))
             throw new BusinessException("内容不能为空", 400);
 
+        var imagePaths = NormalizeImagePaths(request.ImagePaths, request.ImagePath);
         var entity = new LifeLog
         {
             UserId = userId,
             Content = request.Content.Trim(),
             Mood = NullIfBlank(request.Mood),
-            ImagePath = NullIfBlank(request.ImagePath),
+            ImagePath = SerializeImagePaths(imagePaths),
             LogDate = request.LogDate.Date
         };
         _db.LifeLogs.Add(entity);
@@ -110,9 +113,11 @@ public class LifeLogService : ILifeLogService
         var entity = await _db.LifeLogs.FirstOrDefaultAsync(l => l.Id == id && l.UserId == userId, ct)
             ?? throw new BusinessException("生活记录不存在", 404);
 
+        var imagePaths = NormalizeImagePaths(request.ImagePaths, request.ImagePath);
+
         entity.Content = request.Content.Trim();
         entity.Mood = NullIfBlank(request.Mood);
-        entity.ImagePath = NullIfBlank(request.ImagePath);
+        entity.ImagePath = SerializeImagePaths(imagePaths);
         entity.LogDate = request.LogDate.Date;
 
         await _db.SaveChangesAsync(ct);
@@ -128,17 +133,83 @@ public class LifeLogService : ILifeLogService
         await _db.SaveChangesAsync(ct);
     }
 
-    private static LifeLogDto Map(LifeLog l) => new()
+    private static LifeLogDto Map(LifeLog l)
     {
-        Id = l.Id,
-        Content = l.Content,
-        Mood = l.Mood,
-        ImagePath = l.ImagePath,
-        LogDate = l.LogDate,
-        CreatedAt = l.CreatedAt,
-        UpdatedAt = l.UpdatedAt
-    };
+        var imagePaths = DeserializeImagePaths(l.ImagePath);
+        return new LifeLogDto
+        {
+            Id = l.Id,
+            Content = l.Content,
+            Mood = l.Mood,
+            ImagePath = imagePaths.FirstOrDefault(),
+            ImagePaths = imagePaths,
+            LogDate = l.LogDate,
+            CreatedAt = l.CreatedAt,
+            UpdatedAt = l.UpdatedAt
+        };
+    }
 
     private static string? NullIfBlank(string? s) =>
         string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static List<string> NormalizeImagePaths(IEnumerable<string>? imagePaths, string? legacyImagePath)
+    {
+        var paths = (imagePaths ?? [])
+            .Select(NullIfBlank)
+            .Where(path => path != null)
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (paths.Count == 0 && NullIfBlank(legacyImagePath) is { } legacyPath)
+            paths.Add(legacyPath);
+
+        if (paths.Count > MaxImages)
+            throw new BusinessException($"每条生活记录最多上传 {MaxImages} 张图片", 400);
+
+        if (paths.Any(path => path.Length > 500))
+            throw new BusinessException("图片路径过长", 400);
+
+        return paths;
+    }
+
+    private static string? SerializeImagePaths(List<string> paths)
+    {
+        if (paths.Count == 0) return null;
+        if (paths.Count == 1) return paths[0];
+
+        var slashIndex = paths[0].LastIndexOf('/');
+        var commonDirectory = slashIndex >= 0 ? paths[0][..(slashIndex + 1)] : string.Empty;
+        var canCompact = commonDirectory.Length > 0 && paths.All(path =>
+            path.StartsWith(commonDirectory, StringComparison.Ordinal) &&
+            !path[commonDirectory.Length..].Contains('/'));
+
+        var values = canCompact
+            ? paths.Select(path => path[commonDirectory.Length..])
+            : paths;
+        var encoded = $"{MultiImagePrefix}{(canCompact ? commonDirectory : string.Empty)}|{string.Join('|', values)}";
+
+        if (encoded.Length > 500)
+            throw new BusinessException("图片路径总长度超过存储限制", 400);
+
+        return encoded;
+    }
+
+    private static List<string> DeserializeImagePaths(string? storedValue)
+    {
+        var value = NullIfBlank(storedValue);
+        if (value == null) return [];
+        if (!value.StartsWith(MultiImagePrefix, StringComparison.Ordinal)) return [value];
+
+        var parts = value[MultiImagePrefix.Length..].Split('|');
+        if (parts.Length < 2) return [];
+
+        var commonDirectory = parts[0];
+        return parts
+            .Skip(1)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Take(MaxImages)
+            .Select(part => commonDirectory + part)
+            .ToList();
+    }
 }

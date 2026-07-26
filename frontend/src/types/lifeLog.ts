@@ -3,6 +3,7 @@ export interface LifeLog {
   content: string
   mood: string | null
   imagePath: string | null
+  imagePaths: string[]
   logDate: string
   createdAt: string
   updatedAt: string
@@ -12,6 +13,7 @@ export interface CreateLifeLogPayload {
   content: string
   mood?: string | null
   imagePath?: string | null
+  imagePaths?: string[]
   logDate: string
 }
 

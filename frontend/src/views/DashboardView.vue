@@ -103,57 +103,63 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto px-6 py-6 space-y-6">
+  <div class="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
 
-    <!-- 顶部欢迎栏 -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="text-2xl font-bold text-gray-900">欢迎回来，{{ auth.user?.username }} 👋</h2>
-        <p class="mt-1 text-sm text-gray-500">{{ todayStr.replace(/-/g, ' / ') }}</p>
+    <section class="relative overflow-hidden rounded-[28px] bg-slate-950 px-6 py-7 text-white shadow-panel sm:px-8 sm:py-8">
+      <div class="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-teal-400/15 blur-3xl" />
+      <div class="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-teal-300">Today overview</p>
+          <h2 class="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">欢迎回来，{{ auth.user?.username }}</h2>
+          <p class="mt-2 text-sm text-slate-400">{{ todayStr.replace(/-/g, ' / ') }} · 梳理今天，稳步推进</p>
+        </div>
+        <button
+          class="inline-flex h-11 items-center justify-center rounded-xl bg-teal-500 px-5 text-sm font-semibold text-white shadow-lg shadow-teal-950/30 transition hover:bg-teal-400"
+          @click="router.push('/work/logs')"
+        >
+          <span class="mr-2 text-lg leading-none">＋</span> 新建工作记录
+        </button>
       </div>
-      <button
-        class="h-9 px-4 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700 shadow-sm"
+    </section>
+
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+      <div
+        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md sm:p-5"
         @click="router.push('/work/logs')"
       >
-        + 新建工作记录
-      </button>
-    </div>
-
-    <!-- 统计卡片 -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-      <div
-        class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md transition"
-        @click="router.push('/work/logs')"
-      >
-        <p class="text-xs text-gray-500">本周工作记录</p>
-        <p class="mt-2 text-3xl font-bold text-indigo-600">{{ recentLogs.length }}</p>
-        <p class="mt-1 text-xs text-gray-400">近 7 天</p>
+        <div class="mb-4 h-1 w-8 rounded-full bg-teal-500" />
+        <p class="text-xs font-medium text-slate-500">本周工作记录</p>
+        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ recentLogs.length }}</p>
+        <p class="mt-1 text-xs text-slate-400">近 7 天</p>
       </div>
       <div
-        class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md transition"
+        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md sm:p-5"
         @click="router.push('/work/memos')"
       >
-        <p class="text-xs text-gray-500">待办工作备忘</p>
-        <p class="mt-2 text-3xl font-bold text-indigo-600">{{ workMemos.length }}</p>
-        <p class="mt-1 text-xs text-gray-400">未完成</p>
+        <div class="mb-4 h-1 w-8 rounded-full bg-sky-500" />
+        <p class="text-xs font-medium text-slate-500">待办工作备忘</p>
+        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ workMemos.length }}</p>
+        <p class="mt-1 text-xs text-slate-400">未完成</p>
       </div>
       <div
-        class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md transition"
+        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-md sm:p-5"
         @click="router.push('/life/memos')"
       >
-        <p class="text-xs text-gray-500">待办生活备忘</p>
-        <p class="mt-2 text-3xl font-bold text-rose-500">{{ lifeMemos.length }}</p>
-        <p class="mt-1 text-xs text-gray-400">未完成</p>
+        <div class="mb-4 h-1 w-8 rounded-full bg-rose-400" />
+        <p class="text-xs font-medium text-slate-500">待办生活备忘</p>
+        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ lifeMemos.length }}</p>
+        <p class="mt-1 text-xs text-slate-400">未完成</p>
       </div>
       <div
-        class="rounded-xl p-4 shadow-sm"
-        :class="overdueCount > 0 ? 'bg-red-50 border border-red-200' : 'bg-white border border-gray-100'"
+        class="surface-card p-4 sm:p-5"
+        :class="overdueCount > 0 ? '!border-red-200 !bg-red-50/70' : ''"
       >
-        <p class="text-xs" :class="overdueCount > 0 ? 'text-red-500' : 'text-gray-500'">今日到期</p>
-        <p class="mt-2 text-3xl font-bold" :class="overdueCount > 0 ? 'text-red-600' : 'text-gray-400'">
+        <div class="mb-4 h-1 w-8 rounded-full" :class="overdueCount > 0 ? 'bg-red-500' : 'bg-amber-400'" />
+        <p class="text-xs font-medium" :class="overdueCount > 0 ? 'text-red-600' : 'text-slate-500'">今日到期</p>
+        <p class="mt-2 text-3xl font-semibold tracking-tight" :class="overdueCount > 0 ? 'text-red-700' : 'text-slate-900'">
           {{ upcomingTodayCount + overdueCount }}
         </p>
-        <p class="mt-1 text-xs" :class="overdueCount > 0 ? 'text-red-400' : 'text-gray-400'">
+        <p class="mt-1 text-xs" :class="overdueCount > 0 ? 'text-red-500' : 'text-slate-400'">
           {{ overdueCount > 0 ? `${overdueCount} 条已逾期` : '今天到期' }}
         </p>
       </div>
@@ -167,11 +173,11 @@ onMounted(load)
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         <!-- 工作备忘 -->
-        <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+        <div class="surface-card overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="font-semibold text-gray-900 text-sm">📌 工作备忘</h3>
+            <h3 class="text-sm font-semibold text-slate-900">工作备忘</h3>
             <button
-              class="text-xs text-indigo-600 hover:underline"
+              class="text-xs text-teal-600 hover:underline"
               @click="router.push('/work/memos')"
             >
               全部 →
@@ -196,7 +202,7 @@ onMounted(load)
                     <span v-if="m.remindAt" class="text-xs" :class="isOverdue(m) ? 'text-red-500 font-medium' : isToday(m) ? 'text-amber-600' : 'text-gray-400'">
                       🔔 {{ fmtRemind(m.remindAt) }}{{ isOverdue(m) ? ' 已逾期' : '' }}
                     </span>
-                    <span v-if="m.isPinned" class="text-xs text-indigo-500">📌 已置顶</span>
+                    <span v-if="m.isPinned" class="text-xs text-teal-500">📌 已置顶</span>
                   </div>
                 </div>
               </div>
@@ -208,11 +214,11 @@ onMounted(load)
         </div>
 
         <!-- 最近工作记录 -->
-        <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+        <div class="surface-card overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="font-semibold text-gray-900 text-sm">📝 本周工作记录</h3>
+            <h3 class="text-sm font-semibold text-slate-900">本周工作记录</h3>
             <button
-              class="text-xs text-indigo-600 hover:underline"
+              class="text-xs text-teal-600 hover:underline"
               @click="router.push('/work/logs')"
             >
               全部 →
@@ -227,7 +233,7 @@ onMounted(load)
             >
               <div class="flex items-center gap-2">
                 <span class="text-xs font-mono text-gray-400 shrink-0">{{ fmtDate(log.logDate) }}</span>
-                <span v-if="log.category" class="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 shrink-0">{{ log.category }}</span>
+                <span v-if="log.category" class="text-xs px-1.5 py-0.5 rounded bg-teal-50 text-teal-600 shrink-0">{{ log.category }}</span>
                 <p class="text-sm text-gray-800 font-medium truncate">{{ log.title }}</p>
               </div>
               <p v-if="log.purpose" class="mt-0.5 ml-16 text-xs text-gray-400 truncate">{{ log.purpose }}</p>
@@ -235,14 +241,14 @@ onMounted(load)
           </ul>
           <div v-else class="px-4 py-8 text-center text-sm text-gray-400">
             本周还没有工作记录，
-            <button class="text-indigo-600 hover:underline" @click="router.push('/work/logs')">去记录一条</button>
+            <button class="text-teal-600 hover:underline" @click="router.push('/work/logs')">去记录一条</button>
           </div>
         </div>
 
         <!-- 生活备忘 -->
-        <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+        <div class="surface-card overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="font-semibold text-gray-900 text-sm">🌸 生活备忘</h3>
+            <h3 class="text-sm font-semibold text-slate-900">生活备忘</h3>
             <button
               class="text-xs text-rose-500 hover:underline"
               @click="router.push('/life/memos')"
@@ -276,27 +282,27 @@ onMounted(load)
         </div>
 
         <!-- 快捷导航 -->
-        <div class="bg-white border border-gray-100 rounded-xl shadow-sm p-4">
-          <h3 class="font-semibold text-gray-900 text-sm mb-3">⚡ 快捷入口</h3>
+        <div class="surface-card p-4">
+          <h3 class="mb-3 text-sm font-semibold text-slate-900">快捷入口</h3>
           <div class="grid grid-cols-2 gap-3">
             <button
-              class="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-3 text-sm text-indigo-700 hover:bg-indigo-100 transition text-left"
+              class="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-700 hover:bg-teal-100 transition text-left"
               @click="router.push('/work/logs')"
             >
               <span class="text-base">📝</span>
               <div>
                 <p class="font-medium text-xs">工作记录</p>
-                <p class="text-xs text-indigo-400 mt-0.5">记录今日工作</p>
+                <p class="text-xs text-teal-400 mt-0.5">记录今日工作</p>
               </div>
             </button>
             <button
-              class="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-3 text-sm text-indigo-700 hover:bg-indigo-100 transition text-left"
+              class="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-700 hover:bg-teal-100 transition text-left"
               @click="router.push('/work/memos')"
             >
               <span class="text-base">📌</span>
               <div>
                 <p class="font-medium text-xs">工作备忘</p>
-                <p class="text-xs text-indigo-400 mt-0.5">添加提醒事项</p>
+                <p class="text-xs text-teal-400 mt-0.5">添加提醒事项</p>
               </div>
             </button>
             <button
@@ -310,13 +316,13 @@ onMounted(load)
               </div>
             </button>
             <button
-              class="flex items-center gap-2 rounded-lg border border-purple-100 bg-purple-50 px-3 py-3 text-sm text-purple-700 hover:bg-purple-100 transition text-left"
+              class="flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-3 text-sm text-amber-700 hover:bg-amber-100 transition text-left"
               @click="router.push('/work/reports')"
             >
               <span class="text-base">✨</span>
               <div>
                 <p class="font-medium text-xs">写周报</p>
-                <p class="text-xs text-purple-400 mt-0.5">一键生成周报</p>
+                <p class="text-xs text-amber-400 mt-0.5">一键生成周报</p>
               </div>
             </button>
           </div>

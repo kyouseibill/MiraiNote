@@ -25,8 +25,9 @@ public class UploadController : ControllerBase
 
     /// <summary>上传图片，返回可访问的相对路径（用于 LifeLog.ImagePath）。</summary>
     [HttpPost("image")]
-    [RequestSizeLimit(5 * 1024 * 1024)]
-    public async Task<ActionResult<ApiResponse<string>>> UploadImage(IFormFile file, CancellationToken ct)
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<string>>> UploadImage([FromForm] IFormFile file, CancellationToken ct)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse.Fail("请选择文件"));

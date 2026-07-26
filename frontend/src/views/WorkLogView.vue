@@ -229,16 +229,16 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto px-6 py-6">
+  <div class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
     <!-- 顶部操作栏 -->
-    <div class="flex flex-wrap items-end gap-3 mb-4">
+    <div class="surface-card mb-5 flex flex-wrap items-end gap-3 p-4 sm:p-5">
       <div class="flex-1 min-w-[200px]">
         <label class="block text-xs text-gray-500 mb-1">关键字</label>
         <input
           v-model="keyword"
           type="text"
           placeholder="搜索标题 / 内容 / 标签"
-          class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
           @keyup.enter="load(1)"
         />
       </div>
@@ -270,9 +270,9 @@ onMounted(() => {
       <div>
         <label class="block text-xs text-gray-500 mb-1">日期快捷</label>
         <div class="flex gap-1">
-          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('today')">今天</button>
-          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('week')">本周</button>
-          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 transition" @click="setDateRange('month')">本月</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition" @click="setDateRange('today')">今天</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition" @click="setDateRange('week')">本周</button>
+          <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition" @click="setDateRange('month')">本月</button>
           <button class="h-9 px-2.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-gray-100 transition" @click="setDateRange('all')">全部</button>
         </div>
       </div>
@@ -285,7 +285,7 @@ onMounted(() => {
         <input v-model="dateTo" type="date" class="h-9 px-2 rounded-md border border-gray-200 text-sm" @change="load(1)" />
       </div>
       <button
-        class="h-9 px-4 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700 shadow-sm"
+        class="h-9 px-4 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 shadow-sm"
         @click="openCreate"
       >
         + 新建记录
@@ -298,7 +298,7 @@ onMounted(() => {
     </p>
 
     <!-- 列表 -->
-    <div class="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+    <div class="surface-card overflow-hidden">
       <div v-if="store.loading" class="p-10 text-center text-gray-400 text-sm">加载中…</div>
       <div v-else-if="store.items.length === 0" class="p-10 text-center text-gray-400 text-sm">
         暂无记录，点击右上角「新建记录」开始
@@ -317,7 +317,7 @@ onMounted(() => {
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-xs text-gray-400 font-mono shrink-0">{{ fmtDate(item.logDate) }}</span>
-                <span v-if="item.category" class="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 shrink-0">
+                <span v-if="item.category" class="text-xs px-1.5 py-0.5 rounded bg-teal-50 text-teal-600 shrink-0">
                   {{ item.category }}
                 </span>
                 <span
@@ -362,7 +362,7 @@ onMounted(() => {
                 复制
               </button>
               <button
-                class="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-1"
+                class="text-xs text-teal-500 hover:text-teal-700 px-2 py-1"
                 @click.stop="openEdit(item)"
               >
                 编辑
@@ -416,7 +416,7 @@ onMounted(() => {
             v-else
             class="w-8 h-8 text-sm rounded-md transition"
             :class="p === store.page
-              ? 'bg-indigo-600 text-white'
+              ? 'bg-teal-600 text-white'
               : 'border border-gray-200 text-gray-600 hover:bg-gray-50'"
             @click="load(p)"
           >
@@ -449,7 +449,7 @@ onMounted(() => {
         <div class="flex-1 overflow-y-auto p-5 space-y-4">
           <div>
             <label class="block text-sm text-gray-700 mb-1">标题 <span class="text-red-500">*</span></label>
-            <input v-model="form.title" type="text" maxlength="200" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+            <input v-model="form.title" type="text" maxlength="200" class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200" />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -497,7 +497,7 @@ onMounted(() => {
               type="text"
               maxlength="500"
               placeholder="例如：进行中，还差排水、环卫等条线数据未统计"
-              class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
             />
           </div>
           <div>
@@ -512,14 +512,14 @@ onMounted(() => {
               <div class="flex rounded-md overflow-hidden border border-gray-200 text-xs">
                 <button
                   class="px-2 py-0.5 transition"
-                  :class="!previewMode ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
+                  :class="!previewMode ? 'bg-teal-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
                   @click="previewMode = false"
                 >
                   编辑
                 </button>
                 <button
                   class="px-2 py-0.5 transition"
-                  :class="previewMode ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
+                  :class="previewMode ? 'bg-teal-600 text-white' : 'text-gray-500 hover:bg-gray-50'"
                   @click="previewMode = true"
                 >
                   预览
@@ -530,7 +530,7 @@ onMounted(() => {
               v-if="!previewMode"
               v-model="form.content"
               rows="12"
-              class="w-full p-3 rounded-md border border-gray-200 text-sm font-mono leading-6 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              class="w-full p-3 rounded-md border border-gray-200 text-sm font-mono leading-6 focus:outline-none focus:ring-2 focus:ring-teal-200"
               placeholder="支持 Markdown 语法，如 **粗体**、# 标题、- 列表…"
             />
             <div
@@ -549,7 +549,7 @@ onMounted(() => {
         <footer class="h-14 px-5 border-t border-gray-100 flex items-center justify-end gap-2">
           <button class="h-9 px-4 rounded-md text-gray-700 hover:bg-gray-100" @click="drawerOpen = false">取消</button>
           <button
-            class="h-9 px-4 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+            class="h-9 px-4 rounded-md bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-60"
             :disabled="submitting"
             @click="submit"
           >
