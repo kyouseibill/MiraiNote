@@ -2,6 +2,7 @@ using System.Text;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using Microsoft.Extensions.Options;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 
@@ -13,6 +14,8 @@ namespace MiraiNote.Core.Services;
 /// </summary>
 public class ChatFileParserService
 {
+    private readonly int _maxTextChars;
+
     /// <summary>支持的文本类文件扩展名（可直接读取内容）</summary>
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -30,8 +33,10 @@ public class ChatFileParserService
         ".tiff", ".tif", ".avif", ".heic", ".heif"
     };
 
-    /// <summary>最大字符数（防止超出 AI 上下文窗口）</summary>
-    private const int MaxTextChars = 50_000;
+    public ChatFileParserService(IOptions<DeepSeekOptions> deepSeekOptions)
+    {
+        _maxTextChars = NormalizeMaxTextChars(deepSeekOptions.Value.MaxAttachmentTextChars);
+    }
 
     /// <summary>
     /// 从流中提取文本内容。
@@ -47,28 +52,28 @@ public class ChatFileParserService
 
         // PDF
         if (ext == ".pdf")
-            return ExtractPdfText(fileStream, fileName);
+            return ExtractPdfText(fileStream, fileName, _maxTextChars);
 
         // Word
         if (ext == ".docx")
-            return ExtractDocxText(fileStream, fileName);
+            return ExtractDocxText(fileStream, fileName, _maxTextChars);
 
         // Excel
         if (ext is ".xlsx" or ".xls")
-            return ExtractExcelText(fileStream, fileName);
+            return ExtractExcelText(fileStream, fileName, _maxTextChars);
 
         // 纯文本及代码文件
         if (TextExtensions.Contains(ext) || IsLikelyText(ext))
         {
             using var reader = new StreamReader(fileStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
             var text = await reader.ReadToEndAsync(ct);
-            return TruncateIfNeeded(text, fileName);
+            return TruncateIfNeeded(text, fileName, _maxTextChars);
         }
 
         return $"[不支持的文件类型: {ext}，文件名: {fileName}]";
     }
 
-    private static string ExtractPdfText(Stream stream, string fileName)
+    private static string ExtractPdfText(Stream stream, string fileName, int maxTextChars)
     {
         try
         {
@@ -77,12 +82,12 @@ public class ChatFileParserService
             foreach (var page in doc.GetPages())
             {
                 sb.AppendLine(page.Text);
-                if (sb.Length > MaxTextChars) break;
+                if (sb.Length > maxTextChars) break;
             }
             var result = sb.ToString().Trim();
             return string.IsNullOrWhiteSpace(result)
                 ? $"[PDF 文件 {fileName}：无法提取文本内容（可能是扫描件）]"
-                : TruncateIfNeeded(result, fileName);
+                : TruncateIfNeeded(result, fileName, maxTextChars);
         }
         catch (Exception ex)
         {
@@ -90,7 +95,7 @@ public class ChatFileParserService
         }
     }
 
-    private static string ExtractDocxText(Stream stream, string fileName)
+    private static string ExtractDocxText(Stream stream, string fileName, int maxTextChars)
     {
         try
         {
@@ -103,12 +108,12 @@ public class ChatFileParserService
             foreach (var para in body.Elements<Paragraph>())
             {
                 sb.AppendLine(para.InnerText);
-                if (sb.Length > MaxTextChars) break;
+                if (sb.Length > maxTextChars) break;
             }
             var result = sb.ToString().Trim();
             return string.IsNullOrWhiteSpace(result)
                 ? $"[Word 文件 {fileName}：文档内容为空]"
-                : TruncateIfNeeded(result, fileName);
+                : TruncateIfNeeded(result, fileName, maxTextChars);
         }
         catch (Exception ex)
         {
@@ -116,7 +121,7 @@ public class ChatFileParserService
         }
     }
 
-    private static string ExtractExcelText(Stream stream, string fileName)
+    private static string ExtractExcelText(Stream stream, string fileName, int maxTextChars)
     {
         try
         {
@@ -132,14 +137,14 @@ public class ChatFileParserService
                 {
                     var cells = row.CellsUsed().Select(c => c.GetValue<string>() ?? "");
                     sb.AppendLine(string.Join("\t", cells));
-                    if (sb.Length > MaxTextChars) break;
+                    if (sb.Length > maxTextChars) break;
                 }
-                if (sb.Length > MaxTextChars) break;
+                if (sb.Length > maxTextChars) break;
             }
             var result = sb.ToString().Trim();
             return string.IsNullOrWhiteSpace(result)
                 ? $"[Excel 文件 {fileName}：表格内容为空]"
-                : TruncateIfNeeded(result, fileName);
+                : TruncateIfNeeded(result, fileName, maxTextChars);
         }
         catch (Exception ex)
         {
@@ -147,10 +152,15 @@ public class ChatFileParserService
         }
     }
 
-    private static string TruncateIfNeeded(string text, string fileName)
+    private static string TruncateIfNeeded(string text, string fileName, int maxTextChars)
     {
-        if (text.Length <= MaxTextChars) return text;
-        return text[..MaxTextChars] + $"\n\n... [文件内容已截断，共 {text.Length} 字符，文件名：{fileName}]";
+        if (text.Length <= maxTextChars) return text;
+        return text[..maxTextChars] + $"\n\n... [文件内容已截断，共 {text.Length} 字符，文件名：{fileName}]";
+    }
+
+    private static int NormalizeMaxTextChars(int value)
+    {
+        return Math.Clamp(value <= 0 ? 800_000 : value, 50_000, 2_000_000);
     }
 
     private static bool IsLikelyText(string ext)

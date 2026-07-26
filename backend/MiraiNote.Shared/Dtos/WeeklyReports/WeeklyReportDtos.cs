@@ -7,6 +7,11 @@ public class GenerateReportRequest
 {
     public DateTime WeekStart { get; set; }
     public DateTime WeekEnd { get; set; }
+
+    /// <summary>
+    /// 输出内容复杂度等级：1=简洁，2=标准，3=详细。默认 2。
+    /// </summary>
+    public int DetailLevel { get; set; } = 2;
 }
 
 /// <summary>

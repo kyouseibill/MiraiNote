@@ -15,7 +15,7 @@ public class AgentConfig
 {
     public string DeepSeekApiKey { get; set; } = string.Empty;
     public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com";
-    public string DeepSeekModel { get; set; } = "deepseek-chat";
+    public string DeepSeekModel { get; set; } = "deepseek-v4-flash";
     public string? TavilyApiKey { get; set; }
     public string? SmtpHost { get; set; }
     public int SmtpPort { get; set; } = 587;

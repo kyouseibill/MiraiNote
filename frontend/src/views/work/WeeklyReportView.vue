@@ -14,6 +14,13 @@ const isEditing = ref(false)
 // 生成周报参数
 const weekStart = ref('')
 const weekEnd = ref('')
+// 输出内容复杂度：1=简洁，2=标准，3=详细
+const detailLevel = ref(2)
+const detailLevelOptions = [
+  { value: 1, label: '简洁' },
+  { value: 2, label: '标准' },
+  { value: 3, label: '详细' },
+]
 
 // 上传参考文件
 const refFile = ref<File | null>(null)
@@ -54,7 +61,11 @@ async function generate() {
     return
   }
   try {
-    const report = await store.generate({ weekStart: weekStart.value, weekEnd: weekEnd.value })
+    const report = await store.generate({
+      weekStart: weekStart.value,
+      weekEnd: weekEnd.value,
+      detailLevel: detailLevel.value,
+    })
     selectedReportId.value = report.id
     editingContent.value = report.content
     isEditing.value = false
@@ -167,6 +178,23 @@ onMounted(async () => {
             <div>
               <label class="block text-xs text-gray-500 mb-1">结束日期</label>
               <input v-model="weekEnd" type="date" class="w-full h-8 px-2 text-sm rounded-md border border-gray-200" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">输出内容复杂度</label>
+              <div class="flex rounded-md border border-gray-200 overflow-hidden">
+                <button
+                  v-for="opt in detailLevelOptions"
+                  :key="opt.value"
+                  type="button"
+                  class="flex-1 h-8 text-xs transition"
+                  :class="detailLevel === opt.value
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'"
+                  @click="detailLevel = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
             </div>
             <button
               class="w-full h-9 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"

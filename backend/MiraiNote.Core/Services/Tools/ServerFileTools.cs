@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using MiraiNote.Shared.Agent;
 
@@ -309,7 +311,10 @@ public class ServerShellTool : IServerAgentTool
         Required = new() { "command" }
     };
 
-    public ServerShellTool(IOptions<FileSystemOptions> options) { _options = options.Value; }
+    public ServerShellTool(IOptions<FileSystemOptions> options)
+    {
+        _options = options.Value;
+    }
 
     Task<string> IAgentTool.ExecuteAsync(string argumentsJson, CancellationToken ct)
         => ExecuteAsync(0, argumentsJson, ct);
@@ -347,6 +352,9 @@ public class ServerShellTool : IServerAgentTool
 
         try
         {
+            var installCheck = await SkipInstalledPipPackagesAsync(command, resolved, ct);
+            if (installCheck != null) return installCheck;
+
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
@@ -380,6 +388,97 @@ public class ServerShellTool : IServerAgentTool
         catch (Exception ex)
         {
             return $"执行命令失败：{ex.Message}";
+        }
+    }
+
+    private static async Task<string?> SkipInstalledPipPackagesAsync(string command, string workingDirectory, CancellationToken ct)
+    {
+        var packages = TryGetPipInstallPackages(command);
+        if (packages.Count == 0) return null;
+
+        var installed = new List<string>();
+        var missing = new List<string>();
+
+        foreach (var package in packages)
+        {
+            var importName = ToPythonImportName(package);
+            if (await CanImportPythonPackageAsync(importName, workingDirectory, ct))
+                installed.Add(package);
+            else
+                missing.Add(package);
+        }
+
+        if (packages.Count > 0 && missing.Count == 0)
+        {
+            return "依赖已安装，无需重复安装：" + string.Join(", ", installed)
+                + "。请直接运行 Python 脚本生成结果。";
+        }
+
+        return null;
+    }
+
+    private static List<string> TryGetPipInstallPackages(string command)
+    {
+        var normalized = command.Trim();
+        var lower = normalized.ToLowerInvariant();
+        var isPipInstall = lower.StartsWith("pip install ")
+            || lower.StartsWith("pip3 install ")
+            || lower.StartsWith("python -m pip install ")
+            || lower.StartsWith("py -m pip install ");
+        if (!isPipInstall) return new List<string>();
+
+        var tokens = Regex.Matches(normalized, @"(?:\""[^\""]+\""|'[^']+'|\S+)")
+            .Select(m => m.Value.Trim('"', '\''))
+            .ToList();
+
+        var installIndex = tokens.FindIndex(t => string.Equals(t, "install", StringComparison.OrdinalIgnoreCase));
+        if (installIndex < 0 || installIndex >= tokens.Count - 1) return new List<string>();
+
+        return tokens
+            .Skip(installIndex + 1)
+            .Where(t => !t.StartsWith("-") && !t.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !t.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            .Select(t => Regex.Split(t, @"[<>=!~\[]")[0].Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string ToPythonImportName(string packageName)
+    {
+        return packageName.ToLowerInvariant() switch
+        {
+            "pillow" => "PIL",
+            "beautifulsoup4" => "bs4",
+            "opencv-python" => "cv2",
+            "scikit-learn" => "sklearn",
+            "pyyaml" => "yaml",
+            _ => packageName.Replace("-", "_")
+        };
+    }
+
+    private static async Task<bool> CanImportPythonPackageAsync(string importName, string workingDirectory, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c python -c \"import {importName}\"",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null) return false;
+            await process.WaitForExitAsync(ct);
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
         }
     }
 }
@@ -529,5 +628,115 @@ public class ServerFileMoveOrRenameTool : IServerAgentTool
         {
             return Task.FromResult($"移动失败：{ex.Message}");
         }
+    }
+}
+
+/// <summary>
+/// Publishes a private workspace file to the static uploads area so it can be rendered in chat.
+/// </summary>
+public class ServerPublishWorkspaceFileTool : IServerAgentTool
+{
+    private readonly FileSystemOptions _fsOptions;
+    private readonly UploadOptions _uploadOptions;
+    private readonly IHostEnvironment _hostEnv;
+
+    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff", ".tif", ".avif"
+    };
+
+    public string Name => "publish_workspace_file";
+    public ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
+    public string Description =>
+        "将 Agent 私有工作区中的图片文件发布为聊天中可直接展示的静态链接，并返回 Markdown 图片语法。"
+        + "适用于 Python/matplotlib/seaborn/plotly 等生成图形后，把 png/jpg/svg/webp 等图片展示给用户。";
+
+    public ToolParameterSchema Parameters => new()
+    {
+        Properties = new()
+        {
+            ["path"] = ToolParameterProperty.String("工作区私有文件相对路径，例如 plot.png 或 charts/result.svg"),
+            ["alt"] = ToolParameterProperty.String("图片替代文本，默认使用文件名")
+        },
+        Required = new() { "path" }
+    };
+
+    public ServerPublishWorkspaceFileTool(
+        IOptions<FileSystemOptions> fsOptions,
+        IOptions<UploadOptions> uploadOptions,
+        IHostEnvironment hostEnv)
+    {
+        _fsOptions = fsOptions.Value;
+        _uploadOptions = uploadOptions.Value;
+        _hostEnv = hostEnv;
+    }
+
+    Task<string> IAgentTool.ExecuteAsync(string argumentsJson, CancellationToken ct)
+        => ExecuteAsync(0, argumentsJson, ct);
+
+    public Task<string> ExecuteAsync(int userId, string argumentsJson, CancellationToken ct = default)
+    {
+        using var doc = JsonDocument.Parse(argumentsJson);
+        var args = doc.RootElement;
+        if (!ToolArgHelper.TryGetString(args, "path", out var path))
+            return Task.FromResult("发布失败：path 为必填项。");
+        ToolArgHelper.TryGetString(args, "alt", out var alt);
+
+        var root = WorkspacePaths.Root(_fsOptions);
+        var (resolved, isPublic) = WorkspacePaths.Resolve(path, root, userId);
+        if (resolved == null)
+            return Task.FromResult("发布失败：路径越界，只能发布当前用户私有工作区文件。");
+        if (isPublic)
+            return Task.FromResult("发布失败：请传入私有工作区文件相对路径，不需要 public/ 前缀。");
+        if (!File.Exists(resolved))
+            return Task.FromResult($"发布失败：文件不存在：{path}");
+
+        var ext = Path.GetExtension(resolved);
+        if (!AllowedImageExtensions.Contains(ext))
+            return Task.FromResult($"发布失败：仅支持图片文件（png/jpg/jpeg/gif/webp/bmp/svg/tiff/avif），当前扩展名：{ext}");
+
+        try
+        {
+            var uploadRoot = ResolveUploadRoot();
+            var targetDir = Path.Combine(uploadRoot, "agent", userId.ToString());
+            Directory.CreateDirectory(targetDir);
+
+            var safeBase = Path.GetFileNameWithoutExtension(resolved)
+                .Replace(" ", "_")
+                .Replace("/", "_")
+                .Replace("\\", "_")
+                .Replace("..", "_")
+                .Replace(":", "_");
+            if (string.IsNullOrWhiteSpace(safeBase)) safeBase = "image";
+
+            var targetName = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{safeBase}{ext.ToLowerInvariant()}";
+            var targetPath = Path.Combine(targetDir, targetName);
+            File.Copy(resolved, targetPath, overwrite: true);
+
+            var url = $"/{_uploadOptions.BasePath.Trim('/')}/agent/{userId}/{targetName}";
+            var markdown = $"![{(string.IsNullOrWhiteSpace(alt) ? Path.GetFileName(resolved) : alt)}]({url})";
+            return Task.FromResult(JsonSerializer.Serialize(new
+            {
+                fileName = Path.GetFileName(resolved),
+                url,
+                markdown,
+                message = "图片已发布。请在最终回复中原样包含 markdown 字段，聊天窗口会直接显示图片。"
+            }));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult($"发布失败：{ex.Message}");
+        }
+    }
+
+    private string ResolveUploadRoot()
+    {
+        if (!string.IsNullOrWhiteSpace(_uploadOptions.PhysicalPath))
+            return _uploadOptions.PhysicalPath;
+
+        var webRoot = string.IsNullOrWhiteSpace(_hostEnv.ContentRootPath)
+            ? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")
+            : Path.Combine(_hostEnv.ContentRootPath, "wwwroot");
+        return Path.Combine(webRoot, _uploadOptions.BasePath);
     }
 }

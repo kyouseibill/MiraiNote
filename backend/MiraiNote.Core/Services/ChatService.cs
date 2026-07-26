@@ -26,9 +26,16 @@ public delegate Task ChatStreamCallback(
 public interface IChatService
 {
     Task<List<ChatSessionDto>> GetSessionsAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 获取已归档会话的轻量列表（仅标题/时间，不加载消息内容，避免归档管理页一次性加载过多数据）。
+    /// </summary>
+    Task<List<ChatSessionDto>> GetArchivedSessionsAsync(int userId, CancellationToken ct = default);
     Task<ChatSessionDetailDto> GetSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task<ChatSessionDto> CreateSessionAsync(int userId, CreateSessionRequest request, CancellationToken ct = default);
     Task<ChatSessionDto> UpdateSessionTitleAsync(int userId, int sessionId, UpdateSessionTitleRequest request, CancellationToken ct = default);
+    Task ArchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default);
+    Task UnarchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task DeleteSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default);
 
@@ -100,6 +107,9 @@ public class ChatService : IChatService
         Tools.ServerSearchLifeLogsTool searchLifeLogs,
         Tools.ServerGetWeeklyReportsTool getWeeklyReports,
         Tools.ServerSearchInternetTool searchInternet,
+        Tools.ServerFetchWebPageTool fetchWebPage,
+        Tools.ServerHttpApiTool callHttpApi,
+        Tools.ServerLoginAndFetchWebTool loginAndFetchWeb,
         Tools.ServerCreateWorkLogTool createWorkLog,
         Tools.ServerUpdateWorkLogTool updateWorkLog,
         Tools.ServerDeleteWorkLogTool deleteWorkLog,
@@ -117,10 +127,14 @@ public class ChatService : IChatService
         Tools.ServerSendEmailTool sendEmail,
         Tools.ServerExportFileTool exportFile,
         Tools.ServerCalendarTool queryCalendar,
+        Tools.ServerCurrentTimeTool currentTime,
+        Tools.ServerCalculatorTool calculator,
+        Tools.ServerRecordOverviewTool recordOverview,
         Tools.ServerFileReadTool readFile,
         Tools.ServerFileWriteTool writeFile,
         Tools.ServerFileDeleteTool deleteFile,
         Tools.ServerFileMoveOrRenameTool moveFile,
+        Tools.ServerPublishWorkspaceFileTool publishWorkspaceFile,
         Tools.ServerFileListTool listFiles,
         Tools.ServerShellTool runShell,
         Tools.ServerScheduleTaskTool scheduleTask,
@@ -142,12 +156,14 @@ public class ChatService : IChatService
         // 注册所有工具
         foreach (var t in new IServerAgentTool[] {
             searchWorkLogs, searchMemos, searchLifeLogs, getWeeklyReports, searchInternet,
+            fetchWebPage, callHttpApi, loginAndFetchWeb,
             createWorkLog, updateWorkLog, deleteWorkLog,
             createMemo, updateMemo, patchMemoStatus, deleteMemo,
             createLifeLog, updateLifeLog, deleteLifeLog,
             remember, recall, forget,
             getWeather, sendEmail, exportFile, queryCalendar,
-            readFile, writeFile, deleteFile, moveFile, listFiles, runShell,
+            currentTime, calculator, recordOverview,
+            readFile, writeFile, deleteFile, moveFile, publishWorkspaceFile, listFiles, runShell,
             scheduleTask, listScheduledTasks
         }) _toolRegistry.Register(t);
     }
@@ -158,7 +174,7 @@ public class ChatService : IChatService
     {
         return await _db.ChatSessions
             .AsNoTracking()
-            .Where(s => s.UserId == userId)
+            .Where(s => s.UserId == userId && !s.IsArchived)
             .OrderByDescending(s => s.UpdatedAt)
             .Select(s => MapSession(s))
             .ToListAsync(ct);
@@ -176,6 +192,7 @@ public class ChatService : IChatService
         {
             Id = session.Id,
             Title = session.Title,
+            IsArchived = session.IsArchived,
             Messages = session.Messages
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => MapMessage(m))
@@ -211,6 +228,36 @@ public class ChatService : IChatService
         return MapSession(session);
     }
 
+    public async Task<List<ChatSessionDto>> GetArchivedSessionsAsync(int userId, CancellationToken ct = default)
+    {
+        return await _db.ChatSessions
+            .AsNoTracking()
+            .Where(s => s.UserId == userId && s.IsArchived)
+            .OrderByDescending(s => s.UpdatedAt)
+            .Select(s => MapSession(s))
+            .ToListAsync(ct);
+    }
+
+    public async Task ArchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default)
+    {
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            ?? throw new BusinessException("对话不存在", 404);
+
+        session.IsArchived = true;
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task UnarchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default)
+    {
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            ?? throw new BusinessException("对话不存在", 404);
+
+        session.IsArchived = false;
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task DeleteSessionAsync(int userId, int sessionId, CancellationToken ct = default)
     {
         var session = await _db.ChatSessions
@@ -230,7 +277,7 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Content))
+        if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
             return;
@@ -249,7 +296,7 @@ public class ChatService : IChatService
         {
             SessionId = sessionId,
             Role = "user",
-            Content = request.Content.Trim()
+            Content = BuildStoredUserContent(request)
         };
         _db.ChatMessages.Add(userMsg);
         await _db.SaveChangesAsync(ct);
@@ -269,9 +316,11 @@ public class ChatService : IChatService
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(ct);
 
+        AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
+
         // 3. 流式调用 DeepSeek（含 Function Calling 循环）
         var assistantContent = await CallDeepSeekStreamWithToolsAsync(
-            userId, history, callback, ct);
+            userId, history, request, callback, ct);
 
         // 4. 存储 AI 回复
         var assistantMsg = new ChatMessage
@@ -285,9 +334,10 @@ public class ChatService : IChatService
         // 5. 首次对话自动更新标题
         if (history.Count == 1 && session.Title == "新对话")
         {
-            session.Title = request.Content.Length > 30
-                ? request.Content[..30] + "..."
-                : request.Content;
+            var titleSource = BuildTitleSource(request);
+            session.Title = titleSource.Length > 30
+                ? titleSource[..30] + "..."
+                : titleSource;
         }
 
         await _db.SaveChangesAsync(ct);
@@ -312,7 +362,7 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Content))
+        if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
             return;
@@ -327,9 +377,7 @@ public class ChatService : IChatService
         }
 
         // 存储用户消息（附件文件名追加到消息末尾供历史展示）
-        var storedContent = request.Content.Trim();
-        if (request.Attachments != null && request.Attachments.Count > 0)
-            storedContent += "\n" + string.Join(" ", request.Attachments.Select(a => $"📎{a.FileName}"));
+        var storedContent = BuildStoredUserContent(request);
         var userMsg = new ChatMessage { SessionId = sessionId, Role = "user", Content = storedContent };
         _db.ChatMessages.Add(userMsg);
         await _db.SaveChangesAsync(ct);
@@ -347,19 +395,23 @@ public class ChatService : IChatService
             .ToListAsync(ct);
 
         // 附件文件内容追加到最后一条用户消息（仅用于发给 AI，不存 DB）
-        AppendAttachmentsToHistory(history, request);
+        AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
+        var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
         // ── 阶段 1：Plan ──
-        var toolNames = _toolRegistry.Tools.Select(t => t.Name).ToList();
-        var plan = await _plannerService.GeneratePlanAsync(request.Content, toolNames, ct);
-        if (plan != null)
+        if (request.EnablePlanner)
         {
-            await callback("plan", JsonSerializer.Serialize(new
+            var toolNames = _toolRegistry.Tools.Select(t => t.Name).ToList();
+            var plan = await _plannerService.GeneratePlanAsync(agentInput, toolNames, ct);
+            if (plan != null)
             {
-                goal = plan.Goal,
-                steps = plan.Steps,
-                risks = plan.Risks
-            }));
+                await callback("plan", JsonSerializer.Serialize(new
+                {
+                    goal = plan.Goal,
+                    steps = plan.Steps,
+                    risks = plan.Risks
+                }));
+            }
         }
 
         // ── 阶段 2：Execute ──
@@ -373,7 +425,7 @@ public class ChatService : IChatService
         }
 
         var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId, history, WrappedCallback, skipConfirm, confirmCallback, ct);
+            userId, history, request, WrappedCallback, skipConfirm, confirmCallback, ct);
 
         // 存储 AI 回复
         var assistantMsg = new ChatMessage { SessionId = sessionId, Role = "assistant", Content = assistantContent };
@@ -381,15 +433,17 @@ public class ChatService : IChatService
 
         if (history.Count == 1 && session.Title == "新对话")
         {
-            session.Title = request.Content.Length > 30 ? request.Content[..30] + "..." : request.Content;
+            var titleSource = BuildTitleSource(request);
+            session.Title = titleSource.Length > 30 ? titleSource[..30] + "..." : titleSource;
         }
         await _db.SaveChangesAsync(ct);
 
         // ── 阶段 3：Reflect ──
         if (request.EnableReflector && assistantContent.Length > 100)
         {
+            var reflectionContext = await BuildReflectionContextAsync(userId, agentInput, toolCallCount, ct);
             var reflection = await _reflectorService.ReflectAsync(
-                request.Content, assistantContent, toolCallCount, ct);
+                agentInput, assistantContent, toolCallCount, ct, reflectionContext);
 
             if (reflection != null)
             {
@@ -407,14 +461,14 @@ public class ChatService : IChatService
                 {
                     await callback("token", JsonSerializer.Serialize(new { content = "\n\n---\n*自动补充中...*" }));
                     var followUpContent = await CallDeepSeekStreamWithToolsAgentAsync(
-                        userId, history, callback, skipConfirm, confirmCallback, ct);
+                        userId, history, request, callback, skipConfirm, confirmCallback, ct);
                     assistantMsg.Content += "\n\n---\n" + followUpContent;
                 }
             }
         }
 
         // ── 阶段 5：Auto Memory ──
-        await _memoryService.AutoExtractAsync(userId, request.Content, assistantContent, ct);
+        await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
 
         // 通知前端完成
         await callback("done", JsonSerializer.Serialize(new
@@ -432,6 +486,7 @@ public class ChatService : IChatService
     private async Task<string> CallDeepSeekStreamWithToolsAgentAsync(
         int userId,
         List<ChatMessage> history,
+        SendMessageRequest request,
         ChatStreamCallback callback,
         bool skipConfirm,
         Func<Task<bool>>? confirmCallback,
@@ -459,8 +514,7 @@ public class ChatService : IChatService
                 }));
         }
 
-        var messages = new List<object> { new { role = "system", content = BuildSystemPrompt(skipConfirm) + memoryContext } };
-        messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
+        var messages = BuildMessages(history, BuildSystemPrompt(skipConfirm) + memoryContext, request);
 
         var tools = _toolRegistry.BuildToolDefinitions();
         var fullContent = new StringBuilder();
@@ -589,7 +643,10 @@ public class ChatService : IChatService
     /// <summary>
     /// 将附件文件内容追加到历史消息中最后一条用户消息（仅内存操作，不存 DB）。
     /// </summary>
-    private static void AppendAttachmentsToHistory(List<ChatMessage> history, SendMessageRequest request)
+    private static void AppendAttachmentsToHistory(
+        List<ChatMessage> history,
+        SendMessageRequest request,
+        int maxAttachmentTextChars)
     {
         if (request.Attachments == null || request.Attachments.Count == 0) return;
         var lastUser = history.LastOrDefault(m => m.Role == "user");
@@ -602,9 +659,159 @@ public class ChatService : IChatService
         foreach (var a in request.Attachments)
         {
             sb.AppendLine($"【文件：{a.FileName}（{a.FileType}）】");
-            sb.AppendLine(a.TextContent.Length > 50000 ? a.TextContent[..50000] + "\n... (已截断)" : a.TextContent);
+            sb.AppendLine(TruncateAttachmentText(a.TextContent, maxAttachmentTextChars));
         }
         lastUser.Content = sb.ToString();
+    }
+
+    private static string BuildAgentAuxiliaryInput(SendMessageRequest request, int maxAttachmentTextChars)
+    {
+        var content = request.Content.Trim();
+        if (request.Attachments == null || request.Attachments.Count == 0)
+            return content;
+
+        var sb = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            sb.AppendLine(content);
+            sb.AppendLine();
+        }
+        else
+        {
+            sb.AppendLine("请分析这些附件的内容。");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("【本次对话上传附件】");
+        foreach (var attachment in request.Attachments)
+        {
+            sb.AppendLine($"- 文件名：{attachment.FileName}");
+            sb.AppendLine($"  类型：{attachment.FileType}");
+            if (!string.IsNullOrWhiteSpace(attachment.MimeType))
+                sb.AppendLine($"  MIME：{attachment.MimeType}");
+            if (attachment.IsImage && !string.IsNullOrWhiteSpace(attachment.DataUrl))
+                sb.AppendLine("  图片内容：已作为多模态 image_url 随当前用户消息发送。");
+            if (!string.IsNullOrWhiteSpace(attachment.TextContent))
+            {
+                sb.AppendLine("  文本内容：");
+                sb.AppendLine(TruncateAttachmentText(attachment.TextContent, maxAttachmentTextChars));
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private async Task<string> BuildReflectionContextAsync(
+        int userId,
+        string agentInput,
+        int toolCallCount,
+        CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"工具调用次数：{toolCallCount}");
+
+        var memories = await _memoryService.GetRelevantMemoriesAsync(userId, agentInput, maxCount: 10, ct: ct);
+        if (memories.Count == 0)
+        {
+            sb.AppendLine("相关用户记忆：无。");
+            return sb.ToString();
+        }
+
+        sb.AppendLine("相关用户记忆（可作为判断偏好和背景事实的依据）：");
+        foreach (var memory in memories)
+        {
+            var relevance = string.IsNullOrWhiteSpace(memory.Relevance)
+                ? ""
+                : $"；相关原因：{memory.Relevance}";
+            sb.AppendLine($"- [{memory.Category}] {memory.Key}: {memory.Value}{relevance}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string TruncateAttachmentText(string text, int maxAttachmentTextChars)
+    {
+        var maxChars = Math.Clamp(maxAttachmentTextChars <= 0 ? 800_000 : maxAttachmentTextChars, 50_000, 2_000_000);
+        return text.Length > maxChars
+            ? text[..maxChars] + $"\n... (已截断，原始字符数：{text.Length})"
+            : text;
+    }
+
+    private static string BuildStoredUserContent(SendMessageRequest request)
+    {
+        var content = request.Content.Trim();
+        if (request.Attachments == null || request.Attachments.Count == 0)
+            return content;
+
+        if (string.IsNullOrWhiteSpace(content))
+            content = "请分析这些附件";
+
+        return content + "\n" + string.Join(" ", request.Attachments.Select(a => $"📎{a.FileName}"));
+    }
+
+    private static string BuildTitleSource(SendMessageRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Content))
+            return request.Content.Trim();
+
+        var firstAttachmentName = request.Attachments?.FirstOrDefault()?.FileName;
+        return string.IsNullOrWhiteSpace(firstAttachmentName)
+            ? "附件分析"
+            : $"分析 {firstAttachmentName}";
+    }
+
+    private static bool HasMessageContent(SendMessageRequest request) =>
+        !string.IsNullOrWhiteSpace(request.Content) ||
+        request.Attachments?.Any(a => !string.IsNullOrWhiteSpace(a.TextContent)) == true;
+
+    private static List<object> BuildMessages(
+        List<ChatMessage> history,
+        string systemPrompt,
+        SendMessageRequest request)
+    {
+        var messages = new List<object> { new { role = "system", content = systemPrompt } };
+        var lastUserId = history.LastOrDefault(m => m.Role == "user")?.Id;
+        foreach (var message in history)
+        {
+            if (message.Id == lastUserId && HasImageAttachments(request))
+            {
+                messages.Add(new
+                {
+                    role = message.Role,
+                    content = BuildMultimodalContent(message.Content, request)
+                });
+                continue;
+            }
+
+            messages.Add(new { role = message.Role, content = message.Content });
+        }
+
+        return messages;
+    }
+
+    private static bool HasImageAttachments(SendMessageRequest request) =>
+        request.Attachments?.Any(a =>
+            a.IsImage &&
+            !string.IsNullOrWhiteSpace(a.DataUrl) &&
+            !string.IsNullOrWhiteSpace(a.MimeType)) == true;
+
+    private static object[] BuildMultimodalContent(string text, SendMessageRequest request)
+    {
+        var content = new List<object>
+        {
+            new { type = "text", text }
+        };
+
+        foreach (var attachment in request.Attachments!.Where(a => a.IsImage && !string.IsNullOrWhiteSpace(a.DataUrl)))
+        {
+            content.Add(new
+            {
+                type = "image_url",
+                image_url = new { url = attachment.DataUrl }
+            });
+        }
+
+        return content.ToArray();
     }
 
     // ===== DeepSeek 流式 Function Calling 循环 =====
@@ -612,6 +819,7 @@ public class ChatService : IChatService
     private async Task<string> CallDeepSeekStreamWithToolsAsync(
         int userId,
         List<ChatMessage> history,
+        SendMessageRequest request,
         ChatStreamCallback callback,
         CancellationToken ct)
     {
@@ -626,11 +834,7 @@ public class ChatService : IChatService
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
 
-        var messages = new List<object>
-        {
-            new { role = "system", content = BuildSystemPrompt() }
-        };
-        messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
+        var messages = BuildMessages(history, BuildSystemPrompt(), request);
 
         var tools = _toolRegistry.BuildToolDefinitions();
         var fullContent = new StringBuilder();
@@ -741,9 +945,12 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct)
     {
-                var assistantContent = new StringBuilder();
+        var assistantContent = new StringBuilder();
         var toolCalls = new Dictionary<int, ToolCallInfo>(); // index → ToolCallInfo
         var finishReason = "";
+        var hasReasoningContent = false;
+        var reasoningClosed = false;
+        var answerStarted = false;
 
         using var reader = new StreamReader(responseStream);
 
@@ -776,6 +983,26 @@ public class ChatService : IChatService
 
             var delta = choices.GetProperty("delta");
 
+            // DeepSeek reasoning models may stream internal reasoning separately.
+            // Expose it as a collapsible, user-facing thinking block.
+            if (delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
+                reasoningEl.ValueKind == JsonValueKind.String)
+            {
+                var token = reasoningEl.GetString();
+                if (!string.IsNullOrEmpty(token))
+                {
+                    if (!hasReasoningContent)
+                    {
+                        hasReasoningContent = true;
+                        assistantContent.Append("<thinking>\n");
+                        await callback("token", JsonSerializer.Serialize(new { content = "<thinking>\n" }));
+                    }
+
+                    assistantContent.Append(token);
+                    await callback("token", JsonSerializer.Serialize(new { content = token }));
+                }
+            }
+
             // 常规文本 token
             if (delta.TryGetProperty("content", out var contentEl) &&
                 contentEl.ValueKind == JsonValueKind.String)
@@ -783,6 +1010,15 @@ public class ChatService : IChatService
                 var token = contentEl.GetString();
                 if (!string.IsNullOrEmpty(token))
                 {
+                    if (hasReasoningContent && !reasoningClosed)
+                    {
+                        reasoningClosed = true;
+                        answerStarted = true;
+                        var separator = "\n</thinking>\n<answer>\n";
+                        assistantContent.Append(separator);
+                        await callback("token", JsonSerializer.Serialize(new { content = separator }));
+                    }
+
                     assistantContent.Append(token);
                     await callback("token", JsonSerializer.Serialize(new { content = token }));
                 }
@@ -816,6 +1052,17 @@ public class ChatService : IChatService
             }
         }
 
+        if (hasReasoningContent && !reasoningClosed)
+        {
+            assistantContent.Append("\n</thinking>");
+            await callback("token", JsonSerializer.Serialize(new { content = "\n</thinking>" }));
+        }
+        else if (answerStarted)
+        {
+            assistantContent.Append("\n</answer>");
+            await callback("token", JsonSerializer.Serialize(new { content = "\n</answer>" }));
+        }
+
         return (
             assistantContent.ToString(),
             toolCalls.Values.Where(t => !string.IsNullOrEmpty(t.Id)).ToList(),
@@ -827,7 +1074,7 @@ public class ChatService : IChatService
 
     public async Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Content))
+        if (!HasMessageContent(request))
             throw new BusinessException("消息内容不能为空", 400);
 
         var session = await _db.ChatSessions
@@ -838,7 +1085,7 @@ public class ChatService : IChatService
         {
             SessionId = sessionId,
             Role = "user",
-            Content = request.Content.Trim()
+            Content = BuildStoredUserContent(request)
         };
         _db.ChatMessages.Add(userMsg);
         await _db.SaveChangesAsync(ct);
@@ -849,7 +1096,9 @@ public class ChatService : IChatService
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(ct);
 
-        var assistantContent = await CallDeepSeekWithToolsAsync(userId, history, ct);
+        AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
+
+        var assistantContent = await CallDeepSeekWithToolsAsync(userId, history, request, ct);
 
         var assistantMsg = new ChatMessage
         {
@@ -861,9 +1110,10 @@ public class ChatService : IChatService
 
         if (history.Count == 1 && session.Title == "新对话")
         {
-            session.Title = request.Content.Length > 30
-                ? request.Content[..30] + "..."
-                : request.Content;
+            var titleSource = BuildTitleSource(request);
+            session.Title = titleSource.Length > 30
+                ? titleSource[..30] + "..."
+                : titleSource;
         }
 
         await _db.SaveChangesAsync(ct);
@@ -872,7 +1122,7 @@ public class ChatService : IChatService
 
     // ===== DeepSeek Function Calling 循环 =====
 
-    private async Task<string> CallDeepSeekWithToolsAsync(int userId, List<ChatMessage> history, CancellationToken ct)
+    private async Task<string> CallDeepSeekWithToolsAsync(int userId, List<ChatMessage> history, SendMessageRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
             throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
@@ -882,11 +1132,7 @@ public class ChatService : IChatService
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
 
-        var messages = new List<object>
-        {
-            new { role = "system", content = BuildSystemPrompt() }
-        };
-        messages.AddRange(history.Select(m => (object)new { role = m.Role, content = m.Content }));
+        var messages = BuildMessages(history, BuildSystemPrompt(), request);
 
         var tools = _toolRegistry.BuildToolDefinitions();
         for (int round = 0; round < 20; round++)
@@ -1390,6 +1636,28 @@ public class ChatService : IChatService
             【当前时间】今天是 {today}（{weekday}），本周范围：{weekMon} 至 {weekSun}。
             【运行模式】{(autoMode ? "Auto（全自动）：系统会自动处理所有确认，无需在文字中向用户请示操作权限。" : "手动：危险操作会由系统弹出确认框，不需要你在文字中询问用户。")}
 
+            【输出格式】
+            - 简单寒暄、确认、短问答，或无需工具/查询/计算/文件处理的直接回答，不要输出 <thinking>，直接用自然语言回答。
+            - 需要分析、比较、查询、计算、文件处理、调用工具或多步处理时，最终回复使用以下结构：
+              <thinking>
+              用 1-3 句简要说明你的处理思路、会使用的依据或已完成的检查。这里是给用户看的简要思路，不要展开隐私链式推理。
+              </thinking>
+              <answer>
+              正式回答用户。
+              </answer>
+            - 如果需要调用工具，第一步必须直接发起 tool_calls，不要先输出 <thinking> 或任何文字。
+            - 工具调用过程中不要用文字替代工具执行；所有必要工具执行完后，再输出上述结构。
+            - 如果无法完整输出上述标签，也必须优先输出正式回答内容，不要停留在只有 <thinking> 的状态。
+
+            【聊天上传附件与多模态规则】
+            - 用户通过聊天输入框上传或粘贴的附件已经随当前用户消息提供，不是工作区文件路径。
+            - PDF、Word、Excel、文本、代码等文件的可提取文本会直接出现在当前用户消息的"用户上传的文件内容"部分。
+              你必须优先基于这些已提供内容完成分析，不要再要求用户复制文本，不要说附件不在工作区，除非当前消息确实没有附件内容。
+            - 图片附件会以多模态 image_url 随当前用户消息发送；如果当前消息包含图片内容，应直接识别和分析图片，不要调用 read_file 查找图片路径。
+            - 只有用户明确要求读取工作区内某个路径，或需要处理已存在于工作区的文件时，才调用 read_file/list_files。
+            - 如果附件文本提示"无法提取文本内容"或"解析失败"，如实说明该附件无法从服务端解析，并继续处理其他已成功解析的附件。
+            - 不要声称当前环境没有 PDF 解析库、无法安装库、无法访问上传附件路径；附件解析由 MiraiNote 服务端在调用模型前完成。
+
             ══════════════════════════════════════════════
             【最高优先级规则 — 任何情况下绝对不得违反】
             ══════════════════════════════════════════════
@@ -1424,8 +1692,9 @@ public class ChatService : IChatService
 
             ★ 规则 D：Shell 命令与安装权限
             1. {(autoMode ? "当前为 Auto 模式：直接执行 Shell 命令，系统不会弹出任何确认框。" : "当前为手动模式：执行 Shell 命令或安装操作时，系统会弹出确认框，你无需在文字中再次请示。")}
-            2. 安装依赖包时（pip install、npm install 等），告知用户需要安装什么及原因，手动模式下系统会弹确认框；Auto 模式下直接安装。
-            3. 不得在文字中说"我需要确认才能执行"或"请允许我执行"——系统已处理权限，直接调用工具。
+            2. 不要假设依赖缺失。运行 Python/Node 等任务前，优先直接导入或执行现有环境；只有工具返回明确的 ModuleNotFoundError、ImportError、command not found 等缺失证据后，才允许安装依赖。
+            3. 安装依赖包时（pip install、npm install 等），必须先用工具验证缺失并说明证据；手动模式下系统会弹确认框，Auto 模式下直接安装。
+            4. 不得在文字中说"我需要确认才能执行"或"请允许我执行"——系统已处理权限，直接调用工具。
 
             【查询策略】
             - 问题涉及"今天/本周/某日期"时，所有数据源均需查询：工作记录、备忘（work + life 两个板块）、生活记录。
@@ -1433,6 +1702,12 @@ public class ChatService : IChatService
             - 问题明确指定数据类型时（如"工作记录""备忘""生活日记"），只查对应工具。
             - 跨数据源查询时，所有工具结果汇总后再作答，某一源无结果时不遗漏其他源的结果。
             - 问题涉及互联网公开信息（天气预报、新闻、知识查询、产品介绍等非个人数据）时，调用 search_internet。
+            - 用户给出明确 URL 并要求分析网页内容、提取正文/链接/标题时，优先调用 fetch_web_page，不要只做搜索。
+            - 用户要求测试、分析或调用某个 API 时，调用 call_http_api；非 GET 请求可能产生远端写入，按工具风险提示执行。
+            - 用户提供用户名/密码并要求登录后查看页面或调用接口时，优先调用 login_and_fetch_web。
+              该工具适用于传统表单登录或 JSON 登录接口，会在同一次工具调用里保存 Cookie 并访问目标 URL。
+            - 若登录需要验证码、短信、扫码、复杂前端 JS、点击流程、多步表单或登录后模拟鼠标键盘操作，
+              使用 run_shell 编写 Python Playwright/Selenium 脚本完成；不要声称无法登录，除非工具执行结果证明失败。
 
             【写操作规则（必须严格执行）】
             创建操作：
@@ -1464,6 +1739,7 @@ public class ChatService : IChatService
             - 写入文件：使用 write_file 工具创建或覆盖文件。
             - 删除文件：使用 delete_file 工具删除文件或目录。
             - 移动/重命名：使用 move_file 工具。
+            - 展示工作区图片：使用 publish_workspace_file 工具把私有工作区图片发布成聊天可直接显示的 Markdown 图片链接。
             - 浏览目录：使用 list_files 工具列出文件和子目录。
             - 执行命令：使用 run_shell 工具在用户私有工作区执行任意 cmd 命令。
               可用于：运行 Python 脚本（python/python3）、Node.js（node）、curl/wget 发起 HTTP 请求、
@@ -1471,6 +1747,15 @@ public class ChatService : IChatService
               实现网页登录、页面抓取、自动化操作等任务。
               用户提供 URL、用户名、密码时，可用 requests 或 playwright 脚本完成登录和页面操作。
             所有文件操作限定在工作区目录内，无法访问系统敏感路径。
+
+            【Python 生成图形的展示规则】
+            - 生成图形时优先使用已安装的 matplotlib/numpy/pandas。不要在未尝试 import 前说“需要先安装 matplotlib”。
+            - 如果需要某个 Python 库，先用 run_shell 执行类似 python -c "import matplotlib" 的检查；只有检查失败时才考虑 pip install。
+            - 当你使用 run_shell 执行 Python/matplotlib/seaborn/plotly 等生成 png/jpg/svg/webp 图片时，
+              必须让脚本把图片保存到当前私有工作区，例如 output.png。
+            - 图片生成后，必须调用 publish_workspace_file，path 传入生成图片的相对路径。
+            - publish_workspace_file 返回的 markdown 字段必须原样放进最终回复，这样聊天窗口才能直接展示图片。
+            - 不要只告诉用户“图片已保存到 xxx.png”；除非 publish_workspace_file 返回失败，否则最终回复必须包含图片 Markdown。
             """;
     }
 
@@ -1814,6 +2099,7 @@ public class ChatService : IChatService
     {
         Id = s.Id,
         Title = s.Title,
+        IsArchived = s.IsArchived,
         CreatedAt = s.CreatedAt,
         UpdatedAt = s.UpdatedAt
     };

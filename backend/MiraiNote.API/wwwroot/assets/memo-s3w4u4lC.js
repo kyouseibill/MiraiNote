@@ -1,1 +1,0 @@
-import{a as e,o as t}from"./index-D5a9gChw.js";var n={list:n=>t(e.get(`/memos`,{params:n})),create:n=>t(e.post(`/memos`,n)),update:(n,r)=>t(e.put(`/memos/${n}`,r)),patchStatus:(n,r)=>t(e.patch(`/memos/${n}/status`,r)),remove:n=>t(e.delete(`/memos/${n}`)),duePopups:()=>t(e.get(`/memos/due-popups`)),acknowledgePopup:n=>t(e.patch(`/memos/${n}/acknowledge-popup`))};export{n as t};

@@ -129,6 +129,12 @@ public class MiraiNoteDbContext : DbContext
             .HasIndex(s => s.UserId);
 
         modelBuilder.Entity<ChatSession>()
+            .HasIndex(s => new { s.UserId, s.UpdatedAt });
+
+        modelBuilder.Entity<ChatSession>()
+            .HasIndex(s => new { s.UserId, s.IsArchived, s.UpdatedAt });
+
+        modelBuilder.Entity<ChatSession>()
             .HasOne(s => s.User)
             .WithMany()
             .HasForeignKey(s => s.UserId)
@@ -136,6 +142,9 @@ public class MiraiNoteDbContext : DbContext
 
         modelBuilder.Entity<ChatMessage>()
             .HasIndex(m => m.SessionId);
+
+        modelBuilder.Entity<ChatMessage>()
+            .HasIndex(m => new { m.SessionId, m.CreatedAt });
 
         modelBuilder.Entity<ChatMessage>()
             .HasOne(m => m.Session)

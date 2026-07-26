@@ -20,5 +20,6 @@ public interface IAgentReflector
         string userMessage,
         string assistantResponse,
         int toolCallsCount,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? evaluationContext = null);
 }

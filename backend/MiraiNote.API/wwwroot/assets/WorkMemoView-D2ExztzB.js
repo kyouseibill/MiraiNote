@@ -1,0 +1,1 @@
+import{P as e,k as t,w as n}from"./index-EOBNvIfP.js";import{t as r}from"./MemoBoard-DHJIulkE.js";var i=t({__name:`WorkMemoView`,setup(t){return(t,i)=>(e(),n(r,{section:`work`,accent:`indigo`,title:`工作备忘`}))}});export{i as default};

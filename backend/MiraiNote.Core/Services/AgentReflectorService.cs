@@ -10,7 +10,12 @@ namespace MiraiNote.Core.Services;
 /// </summary>
 public interface IAgentReflectorService
 {
-    Task<ReflectionResult?> ReflectAsync(string userMessage, string assistantResponse, int toolCallsCount, CancellationToken ct = default);
+    Task<ReflectionResult?> ReflectAsync(
+        string userMessage,
+        string assistantResponse,
+        int toolCallsCount,
+        CancellationToken ct = default,
+        string? evaluationContext = null);
 }
 
 public class AgentReflectorService : IAgentReflectorService
@@ -30,8 +35,12 @@ public class AgentReflectorService : IAgentReflectorService
     }
 
     public async Task<ReflectionResult?> ReflectAsync(
-        string userMessage, string assistantResponse, int toolCallsCount, CancellationToken ct = default)
+        string userMessage,
+        string assistantResponse,
+        int toolCallsCount,
+        CancellationToken ct = default,
+        string? evaluationContext = null)
     {
-        return await _reflector.ReflectAsync(userMessage, assistantResponse, toolCallsCount, ct);
+        return await _reflector.ReflectAsync(userMessage, assistantResponse, toolCallsCount, ct, evaluationContext);
     }
 }

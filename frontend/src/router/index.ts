@@ -42,13 +42,13 @@ const routes: RouteRecordRaw[] = [
         path: 'work/reports',
         name: 'work-reports',
         component: () => import('@/views/work/WeeklyReportView.vue'),
-        meta: { requiresAuth: true, title: 'AI 周报' },
+        meta: { requiresAuth: true, title: '写周报' },
       },
       {
         path: 'chat',
         name: 'chat',
         component: () => import('@/views/chat/ChatView.vue'),
-        meta: { requiresAuth: true, title: 'AI 对话' },
+        meta: { requiresAuth: true, title: 'Mirai Chat' },
       },
       {
         path: 'profile',

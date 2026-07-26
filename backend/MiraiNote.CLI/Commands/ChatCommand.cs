@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using MiraiNote.CLI.Agent;
 using MiraiNote.CLI.Agent.Tools;
 using MiraiNote.CLI.Services;
@@ -33,7 +33,7 @@ public class ChatSettings : CommandSettings
     public string? DeepSeekUrl { get; set; }
 
     [CommandOption("--deepseek-model")]
-    [Description("DeepSeek 模型（默认 deepseek-chat）")]
+    [Description("DeepSeek 模型（默认 deepseek-v4-flash）")]
     public string? DeepSeekModel { get; set; }
 }
 
@@ -477,7 +477,7 @@ public class ChatCommand : AsyncCommand<ChatSettings>
             DeepSeekModel = _deepSeekModelOverride
                 ?? Environment.GetEnvironmentVariable("DEEPSEEK_MODEL")
                 ?? (_store.DeepSeekModel is { Length: > 0 } m ? m : null)
-                ?? "deepseek-chat",
+                ?? "deepseek-v4-flash",
 
             // Tavily 互联网搜索 Key（环境变量 > TokenStore）
             TavilyApiKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY")

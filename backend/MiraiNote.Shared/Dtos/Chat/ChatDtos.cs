@@ -26,8 +26,8 @@ public class SendMessageRequest
     // ── Agent 模式控制参数 ──
     /// <summary>是否启用 Planner（默认 true）</summary>
     public bool EnablePlanner { get; set; } = true;
-    /// <summary>是否启用 Reflector（默认 true）</summary>
-    public bool EnableReflector { get; set; } = true;
+    /// <summary>是否启用 Reflector（默认 false）</summary>
+    public bool EnableReflector { get; set; } = false;
     /// <summary>是否跳过危险操作确认（默认 false）</summary>
     public bool SkipConfirmation { get; set; } = false;
 
@@ -46,6 +46,9 @@ public class ChatAttachmentContent
     public string FileType { get; set; } = string.Empty;
     /// <summary>提取的文本内容（图片时为占位描述）</summary>
     public string TextContent { get; set; } = string.Empty;
+    public string? MimeType { get; set; }
+    public string? DataUrl { get; set; }
+    public bool IsImage { get; set; }
 }
 
 /// <summary>
@@ -57,6 +60,9 @@ public class ChatAttachmentResponseDto
     public string FileType { get; set; } = string.Empty;
     public string TextContent { get; set; } = string.Empty;
     public long FileSizeBytes { get; set; }
+    public string? MimeType { get; set; }
+    public string? DataUrl { get; set; }
+    public bool IsImage { get; set; }
 }
 
 /// <summary>
@@ -66,6 +72,7 @@ public class ChatSessionDto
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
+    public bool IsArchived { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -88,6 +95,7 @@ public class ChatSessionDetailDto
 {
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
+    public bool IsArchived { get; set; }
     public List<ChatMessageDto> Messages { get; set; } = new();
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

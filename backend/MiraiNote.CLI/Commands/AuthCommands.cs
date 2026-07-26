@@ -1,4 +1,4 @@
-using MiraiNote.CLI.Services;
+﻿using MiraiNote.CLI.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
@@ -131,7 +131,7 @@ public class ConfigSettings : CommandSettings
     public string? DeepSeekUrl { get; set; }
 
     [CommandOption("--deepseek-model")]
-    [Description("设置 DeepSeek 模型（默认 deepseek-chat）")]
+    [Description("设置 DeepSeek 模型（默认 deepseek-v4-flash）")]
     public string? DeepSeekModel { get; set; }
 
     [CommandOption("--tavily-key")]

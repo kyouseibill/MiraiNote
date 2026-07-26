@@ -69,7 +69,8 @@ public class WeeklyReportService : IWeeklyReportService
             .ToListAsync(ct);
 
         // 构建 Prompt
-        var prompt = BuildPrompt(weekStart, weekEnd, workLogs, references);
+        var detailLevel = request.DetailLevel is >= 1 and <= 3 ? request.DetailLevel : 2;
+        var prompt = BuildPrompt(weekStart, weekEnd, workLogs, references, detailLevel);
 
         // 调用 DeepSeek API
         var content = await CallDeepSeekAsync(prompt, ct);
@@ -206,7 +207,7 @@ public class WeeklyReportService : IWeeklyReportService
 
     // ===== 私有辅助方法 =====
 
-    private string BuildPrompt(DateTime weekStart, DateTime weekEnd, List<Data.Entities.WorkLog> workLogs, List<WeeklyReportReference> references)
+    private string BuildPrompt(DateTime weekStart, DateTime weekEnd, List<Data.Entities.WorkLog> workLogs, List<WeeklyReportReference> references, int detailLevel = 2)
     {
         var sb = new StringBuilder();
         sb.AppendLine("你是一名工作周报撰写助手。请根据下方【本周工作记录】，生成一份纯文本格式的工作周报。");
@@ -217,6 +218,14 @@ public class WeeklyReportService : IWeeklyReportService
         sb.AppendLine("- 禁止添加、推测或虚构任何记录中未提及的工作内容、步骤或结论。");
         sb.AppendLine("- 若某条记录的 \"目的\" 或 \"内容\" 为空，则对应字段跳过，不要自行补充。");
         sb.AppendLine("- 若本周无工作记录，如实输出 \"本周暂无工作记录。\" ，不要编造内容。");
+        sb.AppendLine();
+        sb.AppendLine("【输出复杂度要求】");
+        sb.AppendLine(detailLevel switch
+        {
+            1 => "- 复杂度：简洁。每项工作只保留核心信息，过程步骤合并为 1~2 条短句，不展开细节，目的与结果只用一句话概括。",
+            3 => "- 复杂度：详细。在不违背上述严格内容限制的前提下，尽量展开每个步骤的表述，补充必要的上下文连接词使叙述更完整，目的与结果可适当展开为 1~2 句，但仍不得新增记录中没有的事实。",
+            _ => "- 复杂度：标准。按记录实际内容适度描述，既不过于精简也不过度展开。",
+        });
         sb.AppendLine();
         sb.AppendLine("【输出格式要求】");
         sb.AppendLine("- 禁止使用 Markdown 语法（禁止 #、**、*、-、> 等符号）");

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatSession, ChatSessionDetail, ChatMessage, ChatAttachmentContent } from '@/types/chat'
 import { chatApi } from '@/api/chat'
-import { agentApi, type AgentPlanData, type AgentReflectionData } from '@/api/agent'
+import { agentApi, type AgentPlanData } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
 
 export const useChatStore = defineStore('chat', () => {
@@ -23,12 +23,9 @@ export const useChatStore = defineStore('chat', () => {
 
   // Agent 特有状态
   const agentPlan = ref<AgentPlanData | null>(null)
-  const agentReflection = ref<AgentReflectionData | null>(null)
-  const useAgentMode = ref(true) // 默认使用 Agent 模式
 
   // Agent 控制开关
   const enablePlanner = ref(true)
-  const enableReflector = ref(true)
   const autoMode = ref(true)
 
   // 流式回复所属的会话 ID（用于防止切换会话时内容显示到错误会话）
@@ -47,6 +44,8 @@ export const useChatStore = defineStore('chat', () => {
   // 待发送的附件列表（用户选择文件后上传解析，随下次发送一起提交给 AI）
   const pendingAttachments = ref<ChatAttachmentContent[]>([])
 
+  const sessionDetailsCache = new Map<number, ChatSessionDetail>()
+
   async function fetchSessions() {
     loading.value = true
     try {
@@ -57,9 +56,32 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function openSession(sessionId: number) {
+    const cached = sessionDetailsCache.get(sessionId)
+    if (cached) {
+      loading.value = false
+      currentSession.value = cached
+      chatApi.getSession(sessionId)
+        .then((fresh) => {
+          // 若该会话正在流式生成回复，跳过本次刷新：
+          // 避免用不含新消息的旧数据覆盖 currentSession，导致回复完成后界面显示空白
+          // （需重新进入会话才能看到内容）。
+          if (streamSessionId.value === sessionId) return
+          sessionDetailsCache.set(sessionId, fresh)
+          if (currentSession.value?.id === sessionId) {
+            currentSession.value = fresh
+          }
+        })
+        .catch(() => {
+          // 保留缓存内容，避免后台刷新失败影响切换体验。
+        })
+      return
+    }
+
     loading.value = true
     try {
-      currentSession.value = await chatApi.getSession(sessionId)
+      const detail = await chatApi.getSession(sessionId)
+      sessionDetailsCache.set(sessionId, detail)
+      currentSession.value = detail
     } finally {
       loading.value = false
     }
@@ -68,14 +90,43 @@ export const useChatStore = defineStore('chat', () => {
   async function createSession(title?: string) {
     const session = await chatApi.createSession({ title })
     sessions.value.unshift(session)
-    currentSession.value = { ...session, messages: [] }
+    const detail: ChatSessionDetail = { ...session, messages: [] }
+    sessionDetailsCache.set(session.id, detail)
+    currentSession.value = detail
     return session
   }
 
   async function deleteSession(sessionId: number) {
     await chatApi.deleteSession(sessionId)
+    sessionDetailsCache.delete(sessionId)
     sessions.value = sessions.value.filter((s) => s.id !== sessionId)
     if (currentSession.value?.id === sessionId) currentSession.value = null
+  }
+
+  async function archiveSession(sessionId: number) {
+    await chatApi.archiveSession(sessionId)
+    sessionDetailsCache.delete(sessionId)
+    sessions.value = sessions.value.filter((s) => s.id !== sessionId)
+    if (currentSession.value?.id === sessionId) currentSession.value = null
+  }
+
+  // 归档管理：仅在打开归档管理面板时按需加载，避免每次进入页面都拉取归档内容。
+  const archivedSessions = ref<ChatSession[]>([])
+  const archivedLoading = ref(false)
+
+  async function fetchArchivedSessions() {
+    archivedLoading.value = true
+    try {
+      archivedSessions.value = await chatApi.getArchivedSessions()
+    } finally {
+      archivedLoading.value = false
+    }
+  }
+
+  async function unarchiveSession(sessionId: number) {
+    await chatApi.unarchiveSession(sessionId)
+    archivedSessions.value = archivedSessions.value.filter((s) => s.id !== sessionId)
+    await fetchSessions()
   }
 
   async function sendMessage(content: string) {
@@ -96,6 +147,7 @@ export const useChatStore = defineStore('chat', () => {
       const assistantMsg = await chatApi.sendMessage(sessionId, { content })
       // 非流式模式：追加 AI 回复
       currentSession.value.messages.push(assistantMsg)
+      sessionDetailsCache.set(sessionId, currentSession.value)
       await fetchSessions()
     } finally {
       sending.value = false
@@ -118,6 +170,8 @@ export const useChatStore = defineStore('chat', () => {
     // 1. 添加临时用户消息
     const attachmentsToSend = [...pendingAttachments.value]
     pendingAttachments.value = []
+    let persistedUserMessage = false
+    let shouldRestoreAttachments = false
     const attachmentNote = attachmentsToSend.length > 0
       ? '\n' + attachmentsToSend.map(a => `📎${a.fileName}`).join(' ')
       : ''
@@ -130,12 +184,14 @@ export const useChatStore = defineStore('chat', () => {
     targetSession.messages.push(tempUserMsg)
 
     // 2. 创建流式 AI 回复占位（不 push 到 messages 中，由独立模板区块渲染）
-    streamMessage.value = {
+    const activeStreamMessage: ChatMessage = {
       id: -Date.now() - 1,
       role: 'assistant',
       content: '',
       createdAt: new Date().toISOString(),
     }
+    streamMessage.value = activeStreamMessage
+    let streamedContent = ''
 
     // 3. 用 SSE 向服务器发送请求
     try {
@@ -145,6 +201,7 @@ export const useChatStore = defineStore('chat', () => {
         (event) => {
         switch (event.type) {
           case 'user_msg':
+            persistedUserMessage = true
             // 用户消息已持久化，替换临时 ID
             const userIdx = targetSession.messages.findIndex(
               (m) => m.id === tempUserMsg.id,
@@ -156,8 +213,9 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'token':
             // 追加文本 token
-            if (streamMessage.value) {
-              streamMessage.value.content += event.data.content
+            streamedContent += String(event.data?.content ?? '')
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value.content = streamedContent
             }
             break
 
@@ -172,15 +230,20 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'done':
-            // AI 回复完成：将 streamMessage 转为正式消息加入列表
-            if (streamMessage.value) {
-              const finalMsg: ChatMessage = {
-                id: event.data.messageId,
-                role: 'assistant',
-                content: streamMessage.value.content,
-                createdAt: event.data.createdAt || streamMessage.value.createdAt,
-              }
+            // done 自带完整正文。即使临时渲染对象被刷新/替换，也能可靠落入消息列表。
+            const finalMsg: ChatMessage = {
+              id: event.data.messageId,
+              role: 'assistant',
+              content: streamedContent || String(event.data?.content ?? ''),
+              createdAt: event.data.createdAt || activeStreamMessage.createdAt,
+            }
+            const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
+            if (finalIdx >= 0) {
+              targetSession.messages[finalIdx] = finalMsg
+            } else {
               targetSession.messages.push(finalMsg)
+            }
+            if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
             }
             // 更新会话列表（标题可能已更改）
@@ -189,24 +252,44 @@ export const useChatStore = defineStore('chat', () => {
               sessions.value[sessionIdx].title = event.data.title
             }
             targetSession.title = event.data.title
+            sessionDetailsCache.set(sessionId, targetSession)
             break
 
           case 'error':
             // 出错时清除 streamMessage 占位，给用户提示
-            streamMessage.value = null
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            shouldRestoreAttachments = !persistedUserMessage
             toast.error(event.data?.message || '对话出错，请重试')
             break
         }
       })
     } catch (e) {
       // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
-      streamMessage.value = null
+      if (streamMessage.value?.id === activeStreamMessage.id) {
+        streamMessage.value = null
+      }
+      shouldRestoreAttachments = !persistedUserMessage
       toast.error('网络连接失败，请检查后端服务是否正常运行')
     } finally {
+      if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
+        pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
+      }
       sending.value = false
       currentToolCall.value = ''
-      streamMessage.value = null
-      streamSessionId.value = null
+      if (streamMessage.value?.id === activeStreamMessage.id) {
+        streamMessage.value = null
+      }
+      if (streamSessionId.value === sessionId) {
+        streamSessionId.value = null
+      }
+      sessionDetailsCache.set(sessionId, targetSession)
+      // 兜底：若流式过程中 currentSession 被其他逻辑替换为同一会话的不同对象，
+      // 这里强制恢复为包含完整回复内容的 targetSession，避免界面显示空白。
+      if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
+        currentSession.value = targetSession
+      }
     }
   }
 
@@ -215,6 +298,8 @@ export const useChatStore = defineStore('chat', () => {
     const idx = sessions.value.findIndex((s) => s.id === sessionId)
     if (idx >= 0) sessions.value[idx] = updated
     if (currentSession.value?.id === sessionId) currentSession.value.title = updated.title
+    const cached = sessionDetailsCache.get(sessionId)
+    if (cached) cached.title = updated.title
     return updated
   }
 
@@ -231,13 +316,14 @@ export const useChatStore = defineStore('chat', () => {
     currentToolCall.value = ''
     toolCalls.value = []
     agentPlan.value = null
-    agentReflection.value = null
     contextUsage.value = null
     pendingConfirm.value = null
     streamSessionId.value = sessionId
 
     const attachmentsToSend = [...pendingAttachments.value]
     pendingAttachments.value = []
+    let persistedUserMessage = false
+    let shouldRestoreAttachments = false
     const agentAttachmentNote = attachmentsToSend.length > 0
       ? '\n' + attachmentsToSend.map(a => `📎${a.fileName}`).join(' ')
       : ''
@@ -250,12 +336,14 @@ export const useChatStore = defineStore('chat', () => {
     }
     targetSession.messages.push(tempUserMsg)
 
-    streamMessage.value = {
+    const activeStreamMessage: ChatMessage = {
       id: -Date.now() - 1,
       role: 'assistant',
       content: '',
       createdAt: new Date().toISOString(),
     }
+    streamMessage.value = activeStreamMessage
+    let streamedContent = ''
 
     try {
       await agentApi.sendAgentMessageStream(
@@ -263,13 +351,14 @@ export const useChatStore = defineStore('chat', () => {
         {
           content,
           enablePlanner: enablePlanner.value,
-          enableReflector: enableReflector.value,
+          enableReflector: false,
           skipConfirmation: autoMode.value,
           attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
         },
         (event) => {
         switch (event.type) {
           case 'user_msg':
+            persistedUserMessage = true
             const userIdx = targetSession.messages.findIndex(
               (m) => m.id === tempUserMsg.id,
             )
@@ -283,8 +372,9 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'token':
-            if (streamMessage.value) {
-              streamMessage.value.content += event.data.content
+            streamedContent += String(event.data?.content ?? '')
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value.content = streamedContent
             }
             break
 
@@ -320,23 +410,24 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
-          case 'reflection':
-            agentReflection.value = event.data as AgentReflectionData
-            break
-
           case 'context':
             contextUsage.value = event.data
             break
 
           case 'done':
-            if (streamMessage.value) {
-              const finalMsg: ChatMessage = {
-                id: event.data.messageId,
-                role: 'assistant',
-                content: streamMessage.value.content,
-                createdAt: event.data.createdAt || streamMessage.value.createdAt,
-              }
+            const finalMsg: ChatMessage = {
+              id: event.data.messageId,
+              role: 'assistant',
+              content: streamedContent || String(event.data?.content ?? ''),
+              createdAt: event.data.createdAt || activeStreamMessage.createdAt,
+            }
+            const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
+            if (finalIdx >= 0) {
+              targetSession.messages[finalIdx] = finalMsg
+            } else {
               targetSession.messages.push(finalMsg)
+            }
+            if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
             }
             const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
@@ -344,23 +435,41 @@ export const useChatStore = defineStore('chat', () => {
               sessions.value[sessionIdx].title = event.data.title
             }
             targetSession.title = event.data.title
+            sessionDetailsCache.set(sessionId, targetSession)
             break
 
           case 'error':
-            streamMessage.value = null
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            shouldRestoreAttachments = !persistedUserMessage
             toast.error(event.data?.message || '对话出错，请重试')
             break
         }
       })
     } catch (e) {
-      streamMessage.value = null
+      if (streamMessage.value?.id === activeStreamMessage.id) {
+        streamMessage.value = null
+      }
+      shouldRestoreAttachments = !persistedUserMessage
       toast.error('网络连接失败')
     } finally {
+      if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
+        pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
+      }
       sending.value = false
       currentToolCall.value = ''
       toolCalls.value = []
-      streamMessage.value = null
-      streamSessionId.value = null
+      if (streamMessage.value?.id === activeStreamMessage.id) {
+        streamMessage.value = null
+      }
+      if (streamSessionId.value === sessionId) {
+        streamSessionId.value = null
+      }
+      sessionDetailsCache.set(sessionId, targetSession)
+      if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
+        currentSession.value = targetSession
+      }
     }
   }
 
@@ -386,6 +495,9 @@ export const useChatStore = defineStore('chat', () => {
       search_life_logs: '查询生活记录',
       get_weekly_reports: '获取周报',
       search_internet: '搜索互联网',
+      fetch_web_page: '分析网页',
+      call_http_api: '调用 API',
+      login_and_fetch_web: '登录后访问网页',
       create_work_log: '创建工作记录',
       update_work_log: '更新工作记录',
       delete_work_log: '删除工作记录',
@@ -403,8 +515,12 @@ export const useChatStore = defineStore('chat', () => {
       send_email: '发送邮件',
       export_file: '导出文件',
       query_calendar: '日期计算',
+      get_current_time: '获取当前时间',
+      calculate: '执行计算',
+      record_overview: '汇总记录概览',
       read_file: '读取文件',
       write_file: '写入文件',
+      publish_workspace_file: '展示图片',
       list_files: '浏览目录',
       run_shell: '执行命令',
     }
@@ -421,18 +537,20 @@ export const useChatStore = defineStore('chat', () => {
     currentToolCall,
     toolCalls,
     agentPlan,
-    agentReflection,
-    useAgentMode,
     enablePlanner,
-    enableReflector,
     autoMode,
     contextUsage,
     pendingConfirm,
     pendingAttachments,
+    archivedSessions,
+    archivedLoading,
     fetchSessions,
     openSession,
     createSession,
     deleteSession,
+    archiveSession,
+    fetchArchivedSessions,
+    unarchiveSession,
     sendMessage,
     sendMessageStream,
     sendAgentMessageStream,

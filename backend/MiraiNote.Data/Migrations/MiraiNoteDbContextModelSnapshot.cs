@@ -125,6 +125,8 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("SessionId");
 
+                    b.HasIndex("SessionId", "CreatedAt");
+
                     b.ToTable("ChatMessage");
                 });
 
@@ -141,6 +143,9 @@ namespace MiraiNote.Data.Migrations
 
                     b.Property<int>("CreatedBy")
                         .HasColumnType("int");
+
+                    b.Property<bool>("IsArchived")
+                        .HasColumnType("bit");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
@@ -162,6 +167,10 @@ namespace MiraiNote.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "UpdatedAt");
+
+                    b.HasIndex("UserId", "IsArchived", "UpdatedAt");
 
                     b.ToTable("ChatSession");
                 });
