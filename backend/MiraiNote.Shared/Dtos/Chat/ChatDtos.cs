@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MiraiNote.Shared.Dtos.Chat;
 
 /// <summary>
@@ -6,6 +8,7 @@ namespace MiraiNote.Shared.Dtos.Chat;
 public class CreateSessionRequest
 {
     public string Title { get; set; } = "新对话";
+    public int? ProjectId { get; set; }
 }
 
 /// <summary>
@@ -33,6 +36,53 @@ public class SendMessageRequest
 
     /// <summary>附件内容列表（已提取的文本，由前端先上传再附加）</summary>
     public List<ChatAttachmentContent>? Attachments { get; set; }
+
+    [JsonIgnore]
+    public string? ProjectInstructions { get; set; }
+}
+
+public class SetSessionPinnedRequest
+{
+    public bool IsPinned { get; set; }
+}
+
+public class AssignSessionProjectRequest
+{
+    public int? ProjectId { get; set; }
+}
+
+public class BranchSessionRequest
+{
+    /// <summary>复制到该消息为止；为空则创建空分支。</summary>
+    public int? MessageId { get; set; }
+    public string? Title { get; set; }
+}
+
+public class CreateChatProjectRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string Instructions { get; set; } = string.Empty;
+    public string Color { get; set; } = "#0f766e";
+    public string Icon { get; set; } = "◇";
+}
+
+public class UpdateChatProjectRequest : CreateChatProjectRequest { }
+
+/// <summary>
+/// 临时聊天请求。历史消息由客户端随请求携带，服务端不会创建会话或持久化消息。
+/// </summary>
+public class TemporaryChatRequest : SendMessageRequest
+{
+    public List<TemporaryChatHistoryMessage> History { get; set; } = new();
+}
+
+/// <summary>
+/// 临时聊天中的单条上下文消息。
+/// </summary>
+public class TemporaryChatHistoryMessage
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -73,6 +123,11 @@ public class ChatSessionDto
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
     public bool IsArchived { get; set; }
+    public bool IsPinned { get; set; }
+    public int? ProjectId { get; set; }
+    public int? BranchedFromSessionId { get; set; }
+    public int? BranchedFromMessageId { get; set; }
+    public string? MatchSnippet { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -96,7 +151,23 @@ public class ChatSessionDetailDto
     public int Id { get; set; }
     public string Title { get; set; } = string.Empty;
     public bool IsArchived { get; set; }
+    public bool IsPinned { get; set; }
+    public int? ProjectId { get; set; }
+    public int? BranchedFromSessionId { get; set; }
+    public int? BranchedFromMessageId { get; set; }
     public List<ChatMessageDto> Messages { get; set; } = new();
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class ChatProjectDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Instructions { get; set; } = string.Empty;
+    public string Color { get; set; } = "#0f766e";
+    public string Icon { get; set; } = "◇";
+    public int SessionCount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

@@ -367,15 +367,39 @@ public class ServerShellTool : IServerAgentTool
             };
 
             using var process = Process.Start(psi)!;
-            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
-            var stderr = await process.StandardError.ReadToEndAsync(ct);
+            // 必须并行读取 stdout/stderr，否则任一缓冲区写满都可能导致子进程与服务端互相等待。
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
-            var exited = process.WaitForExit(30_000);
-            if (!exited)
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            try
             {
-                process.Kill(entireProcessTree: true);
-                return "命令执行超时（30 秒）。";
+                await process.WaitForExitAsync(timeoutCts.Token);
             }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // 进程可能恰好已经退出。
+                }
+                try
+                {
+                    await Task.WhenAll(stdoutTask, stderrTask);
+                }
+                catch
+                {
+                    // 超时终止后输出流可能同步关闭，不影响超时结果。
+                }
+                return "命令执行超时（30 秒），进程已停止。";
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
 
             var output = stdout.TrimEnd();
             if (!string.IsNullOrEmpty(stderr))
@@ -384,6 +408,10 @@ public class ServerShellTool : IServerAgentTool
                 output = $"(exit code: {process.ExitCode})";
 
             return output.Length > 5000 ? output[..5000] + "\n... (输出已截断)" : output;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
@@ -9,6 +11,7 @@ using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
+using MiraiNote.Shared.Dtos.Agent;
 using MiraiNote.Shared.Dtos.Chat;
 using MiraiNote.Shared.Dtos.LifeLogs;
 using MiraiNote.Shared.Dtos.Memos;
@@ -26,6 +29,8 @@ public delegate Task ChatStreamCallback(
 public interface IChatService
 {
     Task<List<ChatSessionDto>> GetSessionsAsync(int userId, CancellationToken ct = default);
+    Task<List<ChatSessionDto>> GetSessionsAsync(int userId, int? projectId, CancellationToken ct = default);
+    Task<List<ChatSessionDto>> SearchSessionsAsync(int userId, string query, int? projectId = null, CancellationToken ct = default);
 
     /// <summary>
     /// 获取已归档会话的轻量列表（仅标题/时间，不加载消息内容，避免归档管理页一次性加载过多数据）。
@@ -37,6 +42,13 @@ public interface IChatService
     Task ArchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task UnarchiveSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task DeleteSessionAsync(int userId, int sessionId, CancellationToken ct = default);
+    Task<ChatSessionDto> SetSessionPinnedAsync(int userId, int sessionId, bool isPinned, CancellationToken ct = default);
+    Task<ChatSessionDto> AssignSessionProjectAsync(int userId, int sessionId, int? projectId, CancellationToken ct = default);
+    Task<ChatSessionDetailDto> BranchSessionAsync(int userId, int sessionId, BranchSessionRequest request, CancellationToken ct = default);
+    Task<List<ChatProjectDto>> GetProjectsAsync(int userId, CancellationToken ct = default);
+    Task<ChatProjectDto> CreateProjectAsync(int userId, CreateChatProjectRequest request, CancellationToken ct = default);
+    Task<ChatProjectDto> UpdateProjectAsync(int userId, int projectId, UpdateChatProjectRequest request, CancellationToken ct = default);
+    Task DeleteProjectAsync(int userId, int projectId, CancellationToken ct = default);
     Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default);
 
     /// <summary>
@@ -59,6 +71,25 @@ public interface IChatService
         int userId,
         int sessionId,
         SendMessageRequest request,
+        ChatStreamCallback callback,
+        Func<Task<bool>>? confirmCallback = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 无状态临时聊天。上下文仅存在于本次请求内，不创建会话、不持久化消息。
+    /// </summary>
+    Task SendTemporaryMessageStreamAsync(
+        int userId,
+        TemporaryChatRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 无状态临时 Agent 聊天。允许工具调用，但不保存对话或自动提取长期记忆。
+    /// </summary>
+    Task SendTemporaryMessageAgentStreamAsync(
+        int userId,
+        TemporaryChatRequest request,
         ChatStreamCallback callback,
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default);
@@ -171,13 +202,51 @@ public class ChatService : IChatService
     // ===== 会话 CRUD =====
 
     public async Task<List<ChatSessionDto>> GetSessionsAsync(int userId, CancellationToken ct = default)
+        => await GetSessionsAsync(userId, projectId: null, ct);
+
+    public async Task<List<ChatSessionDto>> GetSessionsAsync(int userId, int? projectId, CancellationToken ct = default)
     {
-        return await _db.ChatSessions
+        var query = _db.ChatSessions
             .AsNoTracking()
-            .Where(s => s.UserId == userId && !s.IsArchived)
-            .OrderByDescending(s => s.UpdatedAt)
+            .Where(s => s.UserId == userId && !s.IsArchived);
+        if (projectId.HasValue) query = query.Where(s => s.ProjectId == projectId);
+
+        return await query
+            .OrderByDescending(s => s.IsPinned)
+            .ThenByDescending(s => s.UpdatedAt)
             .Select(s => MapSession(s))
             .ToListAsync(ct);
+    }
+
+    public async Task<List<ChatSessionDto>> SearchSessionsAsync(
+        int userId, string query, int? projectId = null, CancellationToken ct = default)
+    {
+        var keyword = query.Trim();
+        if (keyword.Length == 0) return new();
+        if (keyword.Length > 100) keyword = keyword[..100];
+
+        var sessionsQuery = _db.ChatSessions
+            .AsNoTracking()
+            .Include(s => s.Messages.Where(m => !m.IsDeleted))
+            .Where(s => s.UserId == userId && !s.IsArchived &&
+                (s.Title.Contains(keyword) || s.Messages.Any(m => m.Content.Contains(keyword))));
+        if (projectId.HasValue) sessionsQuery = sessionsQuery.Where(s => s.ProjectId == projectId);
+
+        var matches = await sessionsQuery
+            .OrderByDescending(s => s.IsPinned)
+            .ThenByDescending(s => s.UpdatedAt)
+            .Take(50)
+            .ToListAsync(ct);
+
+        return matches.Select(session =>
+        {
+            var dto = MapSession(session);
+            var message = session.Messages
+                .OrderByDescending(m => m.CreatedAt)
+                .FirstOrDefault(m => m.Content.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+            dto.MatchSnippet = message == null ? null : BuildSearchSnippet(message.Content, keyword);
+            return dto;
+        }).ToList();
     }
 
     public async Task<ChatSessionDetailDto> GetSessionAsync(int userId, int sessionId, CancellationToken ct = default)
@@ -193,6 +262,10 @@ public class ChatService : IChatService
             Id = session.Id,
             Title = session.Title,
             IsArchived = session.IsArchived,
+            IsPinned = session.IsPinned,
+            ProjectId = session.ProjectId,
+            BranchedFromSessionId = session.BranchedFromSessionId,
+            BranchedFromMessageId = session.BranchedFromMessageId,
             Messages = session.Messages
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => MapMessage(m))
@@ -204,10 +277,15 @@ public class ChatService : IChatService
 
     public async Task<ChatSessionDto> CreateSessionAsync(int userId, CreateSessionRequest request, CancellationToken ct = default)
     {
+        if (request.ProjectId.HasValue && !await _db.ChatProjects
+                .AnyAsync(p => p.Id == request.ProjectId && p.UserId == userId, ct))
+            throw new BusinessException("项目不存在", 404);
+
         var session = new ChatSession
         {
             UserId = userId,
-            Title = string.IsNullOrWhiteSpace(request.Title) ? "新对话" : request.Title.Trim()
+            Title = string.IsNullOrWhiteSpace(request.Title) ? "新对话" : request.Title.Trim(),
+            ProjectId = request.ProjectId
         };
         _db.ChatSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -268,6 +346,125 @@ public class ChatService : IChatService
         await _db.SaveChangesAsync(ct);
     }
 
+    public async Task<ChatSessionDto> SetSessionPinnedAsync(
+        int userId, int sessionId, bool isPinned, CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(userId, sessionId, ct);
+        session.IsPinned = isPinned;
+        await _db.SaveChangesAsync(ct);
+        return MapSession(session);
+    }
+
+    public async Task<ChatSessionDto> AssignSessionProjectAsync(
+        int userId, int sessionId, int? projectId, CancellationToken ct = default)
+    {
+        if (projectId.HasValue && !await _db.ChatProjects
+                .AnyAsync(p => p.Id == projectId && p.UserId == userId, ct))
+            throw new BusinessException("项目不存在", 404);
+
+        var session = await GetOwnedSessionAsync(userId, sessionId, ct);
+        session.ProjectId = projectId;
+        await _db.SaveChangesAsync(ct);
+        return MapSession(session);
+    }
+
+    public async Task<ChatSessionDetailDto> BranchSessionAsync(
+        int userId, int sessionId, BranchSessionRequest request, CancellationToken ct = default)
+    {
+        var source = await _db.ChatSessions
+            .AsNoTracking()
+            .Include(s => s.Messages.Where(m => !m.IsDeleted))
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            ?? throw new BusinessException("对话不存在", 404);
+
+        List<ChatMessage> messagesToCopy = new();
+        if (request.MessageId.HasValue)
+        {
+            var ordered = source.Messages.OrderBy(m => m.CreatedAt).ThenBy(m => m.Id).ToList();
+            var branchIndex = ordered.FindIndex(m => m.Id == request.MessageId.Value);
+            if (branchIndex < 0) throw new BusinessException("分支消息不存在", 404);
+            messagesToCopy = ordered.Take(branchIndex + 1).ToList();
+        }
+
+        var branch = new ChatSession
+        {
+            UserId = userId,
+            ProjectId = source.ProjectId,
+            Title = string.IsNullOrWhiteSpace(request.Title)
+                ? $"{source.Title}（分支）"
+                : request.Title.Trim(),
+            BranchedFromSessionId = source.Id,
+            BranchedFromMessageId = request.MessageId
+        };
+        _db.ChatSessions.Add(branch);
+        await _db.SaveChangesAsync(ct);
+
+        foreach (var message in messagesToCopy)
+        {
+            branch.Messages.Add(new ChatMessage
+            {
+                SessionId = branch.Id,
+                Role = message.Role,
+                Content = message.Content
+            });
+        }
+        if (messagesToCopy.Count > 0) await _db.SaveChangesAsync(ct);
+        return await GetSessionAsync(userId, branch.Id, ct);
+    }
+
+    public async Task<List<ChatProjectDto>> GetProjectsAsync(int userId, CancellationToken ct = default)
+    {
+        var projects = await _db.ChatProjects.AsNoTracking()
+            .Include(p => p.Sessions.Where(s => !s.IsDeleted))
+            .Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.UpdatedAt)
+            .ToListAsync(ct);
+        return projects.Select(MapProject).ToList();
+    }
+
+    public async Task<ChatProjectDto> CreateProjectAsync(
+        int userId, CreateChatProjectRequest request, CancellationToken ct = default)
+    {
+        ValidateProject(request.Name);
+        var project = new ChatProject
+        {
+            UserId = userId,
+            Name = request.Name.Trim(),
+            Instructions = NullIfBlank(request.Instructions),
+            Color = NormalizeProjectColor(request.Color),
+            Icon = NormalizeProjectIcon(request.Icon)
+        };
+        _db.ChatProjects.Add(project);
+        await _db.SaveChangesAsync(ct);
+        return MapProject(project);
+    }
+
+    public async Task<ChatProjectDto> UpdateProjectAsync(
+        int userId, int projectId, UpdateChatProjectRequest request, CancellationToken ct = default)
+    {
+        ValidateProject(request.Name);
+        var project = await _db.ChatProjects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId, ct)
+            ?? throw new BusinessException("项目不存在", 404);
+        project.Name = request.Name.Trim();
+        project.Instructions = NullIfBlank(request.Instructions);
+        project.Color = NormalizeProjectColor(request.Color);
+        project.Icon = NormalizeProjectIcon(request.Icon);
+        await _db.SaveChangesAsync(ct);
+        return MapProject(project);
+    }
+
+    public async Task DeleteProjectAsync(int userId, int projectId, CancellationToken ct = default)
+    {
+        var project = await _db.ChatProjects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId, ct)
+            ?? throw new BusinessException("项目不存在", 404);
+        var sessions = await _db.ChatSessions.Where(s => s.ProjectId == projectId && s.UserId == userId).ToListAsync(ct);
+        foreach (var session in sessions) session.ProjectId = null;
+        project.IsDeleted = true;
+        await _db.SaveChangesAsync(ct);
+    }
+
     // ===== 流式发送消息（SSE） =====
 
     public async Task SendMessageStreamAsync(
@@ -284,12 +481,14 @@ public class ChatService : IChatService
         }
 
         var session = await _db.ChatSessions
+            .Include(s => s.Project)
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
         if (session == null)
         {
             await callback("error", "{\"message\":\"对话不存在\"}");
             return;
         }
+        request.ProjectInstructions = session.Project?.Instructions;
 
         // 1. 存储用户消息
         var userMsg = new ChatMessage
@@ -352,6 +551,29 @@ public class ChatService : IChatService
         }));
     }
 
+    public async Task SendTemporaryMessageStreamAsync(
+        int userId,
+        TemporaryChatRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct = default)
+    {
+        if (!HasMessageContent(request))
+        {
+            await callback("error", "{\"message\":\"消息内容不能为空\"}");
+            return;
+        }
+        var history = BuildTemporaryHistory(request);
+        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
+            userId, history, request, callback, ct);
+
+        await callback("done", JsonSerializer.Serialize(new
+        {
+            content = assistantContent,
+            title = "临时聊天",
+            createdAt = DateTime.UtcNow
+        }));
+    }
+
     // ===== Agent 模式流式发送消息 =====
 
     public async Task SendMessageAgentStreamAsync(
@@ -369,12 +591,14 @@ public class ChatService : IChatService
         }
 
         var session = await _db.ChatSessions
+            .Include(s => s.Project)
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
         if (session == null)
         {
             await callback("error", "{\"message\":\"对话不存在\"}");
             return;
         }
+        request.ProjectInstructions = session.Project?.Instructions;
 
         // 存储用户消息（附件文件名追加到消息末尾供历史展示）
         var storedContent = BuildStoredUserContent(request);
@@ -401,7 +625,7 @@ public class ChatService : IChatService
         // ── 阶段 1：Plan ──
         if (request.EnablePlanner)
         {
-            var toolNames = _toolRegistry.Tools.Select(t => t.Name).ToList();
+            var toolNames = GetAvailableToolNames(request);
             var plan = await _plannerService.GeneratePlanAsync(agentInput, toolNames, ct);
             if (plan != null)
             {
@@ -480,6 +704,318 @@ public class ChatService : IChatService
         }));
     }
 
+    public async Task SendTemporaryMessageAgentStreamAsync(
+        int userId,
+        TemporaryChatRequest request,
+        ChatStreamCallback callback,
+        Func<Task<bool>>? confirmCallback = null,
+        CancellationToken ct = default)
+    {
+        if (!HasMessageContent(request))
+        {
+            await callback("error", "{\"message\":\"消息内容不能为空\"}");
+            return;
+        }
+        var history = BuildTemporaryHistory(request);
+        var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
+
+        if (request.EnablePlanner)
+        {
+            var toolNames = GetAvailableToolNames(request);
+            var plan = await _plannerService.GeneratePlanAsync(agentInput, toolNames, ct);
+            if (plan != null)
+            {
+                await callback("plan", JsonSerializer.Serialize(new
+                {
+                    goal = plan.Goal,
+                    steps = plan.Steps,
+                    risks = plan.Risks
+                }));
+            }
+        }
+
+        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+            userId,
+            history,
+            request,
+            callback,
+            request.SkipConfirmation,
+            confirmCallback,
+            ct);
+
+        // 临时聊天刻意跳过 AutoExtractAsync，避免从临时内容生成长期记忆。
+        await callback("done", JsonSerializer.Serialize(new
+        {
+            content = assistantContent,
+            title = "临时聊天",
+            createdAt = DateTime.UtcNow
+        }));
+    }
+
+    private List<ChatMessage> BuildTemporaryHistory(TemporaryChatRequest request)
+    {
+        // 限制上下文条数，避免客户端构造无限大的历史请求。
+        var history = request.History
+            .Where(m => m.Role is "user" or "assistant" && !string.IsNullOrWhiteSpace(m.Content))
+            .TakeLast(100)
+            .Select((m, index) => new ChatMessage
+            {
+                Id = -(index + 1),
+                SessionId = 0,
+                Role = m.Role,
+                Content = m.Content
+            })
+            .ToList();
+
+        history.Add(new ChatMessage
+        {
+            Id = -(history.Count + 1),
+            SessionId = 0,
+            Role = "user",
+            Content = BuildStoredUserContent(request)
+        });
+        AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
+        return history;
+    }
+
+    private static readonly HashSet<string> TemporaryExcludedToolNames = new(StringComparer.Ordinal)
+    {
+        "remember",
+        "recall",
+        "forget"
+    };
+
+    private object[] BuildToolDefinitions(SendMessageRequest request) =>
+        _toolRegistry.BuildToolDefinitions(
+            request is TemporaryChatRequest ? TemporaryExcludedToolNames : null);
+
+    private List<string> GetAvailableToolNames(SendMessageRequest request) =>
+        _toolRegistry.Tools
+            .Where(t => request is not TemporaryChatRequest || !TemporaryExcludedToolNames.Contains(t.Name))
+            .Select(t => t.Name)
+            .ToList();
+
+    private Task<string> ExecuteToolAsync(
+        int userId,
+        string toolName,
+        string arguments,
+        SendMessageRequest request,
+        CancellationToken ct)
+    {
+        if (request is TemporaryChatRequest && TemporaryExcludedToolNames.Contains(toolName))
+            return Task.FromResult("临时聊天不会保存长期记忆，已跳过此操作。");
+
+        return _toolRegistry.ExecuteAsync(userId, toolName, arguments, ct);
+    }
+
+    private async Task<string> ExecuteToolWithProgressAsync(
+        int userId,
+        string toolName,
+        string arguments,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        string toolCallId,
+        CancellationToken ct)
+    {
+        var execution = ExecuteToolAsync(userId, toolName, arguments, request, ct);
+        if (!string.Equals(toolName, "run_shell", StringComparison.Ordinal))
+            return await execution;
+
+        var stopwatch = Stopwatch.StartNew();
+        while (!execution.IsCompleted)
+        {
+            var completed = await Task.WhenAny(execution, Task.Delay(TimeSpan.FromSeconds(3), ct));
+            if (completed == execution) break;
+
+            var elapsedSeconds = Math.Max(1, (int)stopwatch.Elapsed.TotalSeconds);
+            await callback("tool_progress", JsonSerializer.Serialize(new
+            {
+                id = toolCallId,
+                name = toolName,
+                elapsedSeconds,
+                message = $"命令仍在执行，已用时 {elapsedSeconds} 秒；最长 30 秒，可随时点击停止。"
+            }));
+        }
+
+        return await execution;
+    }
+
+    private static string PrepareToolResultForClient(string toolName, string result)
+    {
+        // export_file 返回的是结构化 JSON，截断后前端无法解析 URL 和 markdown。
+        if (string.Equals(toolName, "export_file", StringComparison.Ordinal)) return result;
+        return result.Length > 500 ? result[..500] + "..." : result;
+    }
+
+    private async Task<string> EnsureRequestedExportAsync(
+        int userId,
+        SendMessageRequest request,
+        string content,
+        List<ExportedFileLink> exportedFiles,
+        ChatStreamCallback? callback,
+        CancellationToken ct)
+    {
+        if (exportedFiles.Count > 0)
+            return AppendExportedFileLinks(content, exportedFiles);
+        if (!TryResolveRequestedExport(request, out var fileName, out var format, out _))
+            return content;
+
+        var exportBody = ExtractExportBody(content);
+        if (string.IsNullOrWhiteSpace(exportBody))
+            exportBody = string.IsNullOrWhiteSpace(request.Content) ? "Mirai Chat 导出文件" : request.Content.Trim();
+
+        var arguments = JsonSerializer.Serialize(new
+        {
+            filename = fileName,
+            content = exportBody,
+            format
+        });
+        const string fallbackCallId = "server_export_fallback";
+
+        if (callback != null)
+        {
+            await callback("tool_call", JsonSerializer.Serialize(new
+            {
+                name = "export_file",
+                arguments,
+                id = fallbackCallId,
+                serverFallback = true
+            }));
+        }
+
+        var result = await ExecuteToolAsync(userId, "export_file", arguments, request, ct);
+        CollectExportedFileLink("export_file", result, exportedFiles);
+
+        if (callback != null)
+        {
+            await callback("tool_result", JsonSerializer.Serialize(new
+            {
+                toolCallId = fallbackCallId,
+                name = "export_file",
+                result = PrepareToolResultForClient("export_file", result)
+            }));
+        }
+
+        if (exportedFiles.Count > 0)
+            return AppendExportedFileLinks(content, exportedFiles);
+
+        var failure = result.StartsWith("导出失败", StringComparison.Ordinal) ||
+                      result.StartsWith("工具执行失败", StringComparison.Ordinal)
+            ? result
+            : "文件导出工具没有返回有效的下载地址。";
+        return $"{content.TrimEnd()}\n\n> ⚠️ 文件实际未生成：{failure} 上述如有“已生成”的描述无效。".Trim();
+    }
+
+    private static bool TryResolveRequestedExport(
+        SendMessageRequest request,
+        out string fileName,
+        out string format,
+        out string extension)
+    {
+        fileName = string.Empty;
+        format = string.Empty;
+        extension = string.Empty;
+        var text = request.Content?.Trim() ?? string.Empty;
+        if (text.Length == 0) return false;
+
+        // 排除讨论“文件生成功能/如何生成”的问答，避免把说明性问题误判为导出任务。
+        if (Regex.IsMatch(text, @"(为什么|为何|如何|怎么).{0,12}(生成|导出).{0,12}(文件|文档|PDF|Word|Excel)", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(text, @"(生成|导出).{0,8}(文件|文档).{0,8}(功能|问题|失败|不行)", RegexOptions.IgnoreCase))
+            return false;
+
+        var hasAction = Regex.IsMatch(text, @"(请|帮我|需要|给我|把|将)?.{0,8}(生成|导出|制作|创建|整理成|转换成|转成|保存为|做成)", RegexOptions.IgnoreCase);
+        if (!hasAction) return false;
+
+        var formatMatch = Regex.Match(text, @"(?i)(pdf|docx?|word|xlsx?|excel|markdown|md|txt|csv|json)");
+        if (formatMatch.Success)
+        {
+            var token = formatMatch.Value.ToLowerInvariant();
+            (format, extension) = token switch
+            {
+                "pdf" => ("pdf", ".pdf"),
+                "doc" or "docx" or "word" => ("docx", ".docx"),
+                "xls" or "xlsx" or "excel" => ("xlsx", ".xlsx"),
+                "markdown" or "md" => ("markdown", ".md"),
+                "txt" => ("txt", ".txt"),
+                "csv" => ("csv", ".csv"),
+                "json" => ("json", ".json"),
+                _ => ("docx", ".docx")
+            };
+        }
+        else
+        {
+            if (!Regex.IsMatch(text, @"(文件|文档|报告|材料)", RegexOptions.IgnoreCase)) return false;
+            format = "docx";
+            extension = ".docx";
+        }
+
+        var fileNameMatch = Regex.Match(
+            text,
+            @"(?<name>[^\\/:*?""<>|\r\n]{1,80}\.(?:pdf|docx?|xlsx?|md|markdown|txt|csv|json))",
+            RegexOptions.IgnoreCase);
+        if (fileNameMatch.Success)
+        {
+            fileName = fileNameMatch.Groups["name"].Value.Trim(' ', '“', '”', '\'', '"');
+            fileName = Regex.Replace(fileName, @"\.doc$", ".docx", RegexOptions.IgnoreCase);
+            fileName = Regex.Replace(fileName, @"\.xls$", ".xlsx", RegexOptions.IgnoreCase);
+            fileName = Regex.Replace(fileName, @"\.markdown$", ".md", RegexOptions.IgnoreCase);
+        }
+        else
+        {
+            fileName = $"MiraiChat_{DateTime.Now:yyyyMMdd_HHmmss}{extension}";
+        }
+
+        return true;
+    }
+
+    private static string ExtractExportBody(string content)
+    {
+        var body = Regex.Replace(content, @"<thinking>[\s\S]*?</thinking>", string.Empty, RegexOptions.IgnoreCase);
+        body = Regex.Replace(body, @"</?answer>", string.Empty, RegexOptions.IgnoreCase);
+        body = Regex.Replace(body, @"\[下载 [^\]]+\]\([^)]+\)", string.Empty, RegexOptions.IgnoreCase);
+        return body.Trim();
+    }
+
+    private static void CollectExportedFileLink(
+        string toolName,
+        string result,
+        ICollection<ExportedFileLink> target)
+    {
+        if (!string.Equals(toolName, "export_file", StringComparison.Ordinal)) return;
+        try
+        {
+            using var document = JsonDocument.Parse(result);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("markdown", out var markdownElement) ||
+                markdownElement.ValueKind != JsonValueKind.String ||
+                !root.TryGetProperty("url", out var urlElement) ||
+                urlElement.ValueKind != JsonValueKind.String)
+                return;
+
+            var markdown = markdownElement.GetString();
+            var url = urlElement.GetString();
+            if (string.IsNullOrWhiteSpace(markdown) || string.IsNullOrWhiteSpace(url)) return;
+            if (target.Any(file => string.Equals(file.Url, url, StringComparison.Ordinal))) return;
+            target.Add(new ExportedFileLink(markdown, url));
+        }
+        catch (JsonException)
+        {
+            // 工具失败时返回普通文本，此时没有可追加的下载链接。
+        }
+    }
+
+    private static string AppendExportedFileLinks(string content, IReadOnlyCollection<ExportedFileLink> files)
+    {
+        var missing = files
+            .Where(file => !content.Contains(file.Url, StringComparison.Ordinal))
+            .Select(file => file.Markdown)
+            .ToList();
+        if (missing.Count == 0) return content;
+        return $"{content.TrimEnd()}\n\n{string.Join("\n", missing)}".Trim();
+    }
+
+    private sealed record ExportedFileLink(string Markdown, string Url);
+
     /// <summary>
     /// Agent 模式的 FC 循环。使用 _toolRegistry 执行工具，支持危险操作确认。
     /// </summary>
@@ -502,7 +1038,9 @@ public class ChatService : IChatService
 
         // 构建带语义匹配记忆的 system prompt
         var userQuery = history.LastOrDefault(m => m.Role == "user")?.Content ?? "";
-        var relevantMemories = await _memoryService.GetRelevantMemoriesAsync(userId, userQuery, maxCount: 5, ct: ct);
+        var relevantMemories = request is TemporaryChatRequest
+            ? new List<RelevantMemoryDto>()
+            : await _memoryService.GetRelevantMemoriesAsync(userId, userQuery, maxCount: 5, ct: ct);
         var memoryContext = "";
         if (relevantMemories.Count > 0)
         {
@@ -514,10 +1052,11 @@ public class ChatService : IChatService
                 }));
         }
 
-        var messages = BuildMessages(history, BuildSystemPrompt(skipConfirm) + memoryContext, request);
+        var messages = BuildMessages(history, BuildSystemPromptForRequest(request, skipConfirm) + memoryContext, request);
 
-        var tools = _toolRegistry.BuildToolDefinitions();
+        var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
+        var exportedFiles = new List<ExportedFileLink>();
 
         for (int round = 0; round < 20; round++)
         {
@@ -549,7 +1088,9 @@ public class ChatService : IChatService
 
             if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
 
-            if (finishReason == "stop" || finishReason == "length") return fullContent.ToString();
+            if (finishReason == "stop" || finishReason == "length")
+                return await EnsureRequestedExportAsync(
+                    userId, request, fullContent.ToString(), exportedFiles, callback, ct);
 
             if (finishReason == "tool_calls" && toolCalls.Count > 0)
             {
@@ -591,18 +1132,27 @@ public class ChatService : IChatService
                             bool confirmed = confirmCallback != null && await confirmCallback();
                             if (!confirmed)
                             {
-                                messages.Add(new { role = "tool", tool_call_id = tc.Id, content = "用户拒绝了此操作。请告知用户原因或寻找替代方案。" });
+                                const string cancelledResult = "用户拒绝了此操作。请告知用户原因或寻找替代方案。";
+                                messages.Add(new { role = "tool", tool_call_id = tc.Id, content = cancelledResult });
+                                await callback("tool_result", JsonSerializer.Serialize(new
+                                {
+                                    toolCallId = tc.Id,
+                                    name = tc.FunctionName,
+                                    result = cancelledResult
+                                }));
                                 continue;
                             }
                         }
                     }
 
-                    var result = await _toolRegistry.ExecuteAsync(userId, tc.FunctionName, tc.Arguments, ct);
+                    var result = await ExecuteToolWithProgressAsync(
+                        userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
+                    CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
 
                     await callback("tool_result", JsonSerializer.Serialize(new
                     {
                         toolCallId = tc.Id, name = tc.FunctionName,
-                        result = result.Length > 500 ? result[..500] + "..." : result
+                        result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
                     messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
@@ -611,7 +1161,8 @@ public class ChatService : IChatService
             else break;
         }
 
-        return fullContent.ToString();
+        return await EnsureRequestedExportAsync(
+            userId, request, fullContent.ToString(), exportedFiles, callback, ct);
     }
 
     /// <summary>
@@ -834,10 +1385,11 @@ public class ChatService : IChatService
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
 
-        var messages = BuildMessages(history, BuildSystemPrompt(), request);
+        var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
 
-        var tools = _toolRegistry.BuildToolDefinitions();
+        var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
+        var exportedFiles = new List<ExportedFileLink>();
 
         for (int round = 0; round < 20; round++)
         {
@@ -886,7 +1438,8 @@ public class ChatService : IChatService
 
             if (finishReason == "stop" || finishReason == "length")
             {
-                return fullContent.ToString();
+                return await EnsureRequestedExportAsync(
+                    userId, request, fullContent.ToString(), exportedFiles, callback, ct);
             }
 
             if (finishReason == "tool_calls" && toolCalls.Count > 0)
@@ -914,13 +1467,15 @@ public class ChatService : IChatService
                         id = tc.Id
                     }));
 
-                    var result = await _toolRegistry.ExecuteAsync(userId, tc.FunctionName, tc.Arguments, ct);
+                    var result = await ExecuteToolWithProgressAsync(
+                        userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
+                    CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
 
                     await callback("tool_result", JsonSerializer.Serialize(new
                     {
                         toolCallId = tc.Id,
                         name = tc.FunctionName,
-                        result = result.Length > 500 ? result[..500] + "..." : result
+                        result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
                     messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
@@ -932,7 +1487,8 @@ public class ChatService : IChatService
             }
         }
 
-        return fullContent.ToString();
+        return await EnsureRequestedExportAsync(
+            userId, request, fullContent.ToString(), exportedFiles, callback, ct);
     }
 
     /// <summary>
@@ -1078,8 +1634,10 @@ public class ChatService : IChatService
             throw new BusinessException("消息内容不能为空", 400);
 
         var session = await _db.ChatSessions
+            .Include(s => s.Project)
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
             ?? throw new BusinessException("对话不存在", 404);
+        request.ProjectInstructions = session.Project?.Instructions;
 
         var userMsg = new ChatMessage
         {
@@ -1132,9 +1690,10 @@ public class ChatService : IChatService
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
 
-        var messages = BuildMessages(history, BuildSystemPrompt(), request);
+        var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
 
-        var tools = _toolRegistry.BuildToolDefinitions();
+        var tools = BuildToolDefinitions(request);
+        var exportedFiles = new List<ExportedFileLink>();
         for (int round = 0; round < 20; round++)
         {
             var bodyJson = JsonSerializer.Serialize(new
@@ -1163,7 +1722,13 @@ public class ChatService : IChatService
 
             if (finishReason == "stop" || finishReason == "length")
             {
-                return msgEl.GetProperty("content").GetString() ?? string.Empty;
+                return await EnsureRequestedExportAsync(
+                    userId,
+                    request,
+                    msgEl.GetProperty("content").GetString() ?? string.Empty,
+                    exportedFiles,
+                    callback: null,
+                    ct);
             }
 
             if (finishReason == "tool_calls")
@@ -1195,14 +1760,17 @@ public class ChatService : IChatService
                     var toolCallId = tc.GetProperty("id").GetString()!;
                     var funcName = tc.GetProperty("function").GetProperty("name").GetString()!;
                     var argsJson = tc.GetProperty("function").GetProperty("arguments").GetString()!;
-                    var result = await _toolRegistry.ExecuteAsync(userId, funcName, argsJson, ct);
+                    var result = await ExecuteToolAsync(userId, funcName, argsJson, request, ct);
+                    CollectExportedFileLink(funcName, result, exportedFiles);
                     messages.Add(new { role = "tool", tool_call_id = toolCallId, content = result });
                 }
             }
             else
             {
                 if (msgEl.TryGetProperty("content", out var fallback) && fallback.ValueKind == JsonValueKind.String)
-                    return fallback.GetString() ?? string.Empty;
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fallback.GetString() ?? string.Empty,
+                        exportedFiles, callback: null, ct);
                 break;
             }
         }
@@ -1607,6 +2175,15 @@ public class ChatService : IChatService
 
     // ===== 系统提示 =====
 
+    private static string BuildSystemPromptForRequest(SendMessageRequest request, bool autoMode = false)
+    {
+        var systemPrompt = BuildSystemPrompt(autoMode);
+        if (string.IsNullOrWhiteSpace(request.ProjectInstructions))
+            return systemPrompt;
+
+        return $"{systemPrompt}\n\n【当前项目专属指令】\n{request.ProjectInstructions.Trim()}";
+    }
+
     private static string BuildSystemPrompt(bool autoMode = false)
     {
         var cstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
@@ -1735,6 +2312,9 @@ public class ChatService : IChatService
             - "本月"       → date_from = {now:yyyy-MM}-01，date_to = {today}
 
             【本地文件系统操作 & 自动化】
+            - 用户要求生成、导出或下载 PDF、Word、Excel、Markdown、JSON、TXT、CSV 文件时，优先调用 export_file。
+            - export_file 的 filename 必须带正确扩展名：PDF 用 .pdf，Word 用 .docx，Excel 用 .xlsx；不要用 write_file 伪造这些二进制文档。
+            - export_file 返回的 markdown 字段必须原样放进最终回复，确保用户能点击下载。
             - 读取文件：使用 read_file 工具读取文本文件内容。
             - 写入文件：使用 write_file 工具创建或覆盖文件。
             - 删除文件：使用 delete_file 工具删除文件或目录。
@@ -2100,17 +2680,78 @@ public class ChatService : IChatService
         Id = s.Id,
         Title = s.Title,
         IsArchived = s.IsArchived,
+        IsPinned = s.IsPinned,
+        ProjectId = s.ProjectId,
+        BranchedFromSessionId = s.BranchedFromSessionId,
+        BranchedFromMessageId = s.BranchedFromMessageId,
         CreatedAt = s.CreatedAt,
         UpdatedAt = s.UpdatedAt
     };
 
-        private static ChatMessageDto MapMessage(ChatMessage m) => new()
+    private static ChatMessageDto MapMessage(ChatMessage m) => new()
     {
         Id = m.Id,
         Role = m.Role,
         Content = m.Content,
         CreatedAt = m.CreatedAt
     };
+
+    private async Task<ChatSession> GetOwnedSessionAsync(int userId, int sessionId, CancellationToken ct) =>
+        await _db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+        ?? throw new BusinessException("对话不存在", 404);
+
+    private static ChatProjectDto MapProject(ChatProject project) => new()
+    {
+        Id = project.Id,
+        Name = project.Name,
+        Instructions = project.Instructions ?? string.Empty,
+        Color = project.Color,
+        Icon = project.Icon,
+        SessionCount = project.Sessions.Count(s => !s.IsDeleted),
+        CreatedAt = project.CreatedAt,
+        UpdatedAt = project.UpdatedAt
+    };
+
+    private static string BuildSearchSnippet(string content, string keyword)
+    {
+        var normalized = Regex.Replace(content, @"\s+", " ").Trim();
+        var index = normalized.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return normalized.Length > 120 ? normalized[..120] + "…" : normalized;
+        var start = Math.Max(0, index - 40);
+        var length = Math.Min(120, normalized.Length - start);
+        return (start > 0 ? "…" : "") + normalized.Substring(start, length) +
+            (start + length < normalized.Length ? "…" : "");
+    }
+
+    private static void ValidateProject(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new BusinessException("项目名称不能为空", 400);
+        if (name.Trim().Length > 100) throw new BusinessException("项目名称不能超过 100 个字符", 400);
+    }
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string NormalizeProjectColor(string? color)
+    {
+        if (color != null && Regex.IsMatch(color.Trim(), "^#[0-9a-fA-F]{6}$"))
+            return color.Trim().ToLowerInvariant();
+
+        var legacyColors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["teal"] = "#0f766e",
+            ["violet"] = "#7c3aed",
+            ["blue"] = "#2563eb",
+            ["amber"] = "#d97706",
+            ["rose"] = "#e11d48",
+            ["slate"] = "#475569"
+        };
+        return color != null && legacyColors.TryGetValue(color.Trim(), out var mapped)
+            ? mapped
+            : "#0f766e";
+    }
+
+    private static string NormalizeProjectIcon(string? icon) =>
+        string.IsNullOrWhiteSpace(icon) ? "◇" : icon.Trim()[..Math.Min(2, icon.Trim().Length)];
 }
 
 /// <summary>

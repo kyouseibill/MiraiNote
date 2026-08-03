@@ -24,7 +24,7 @@ var app = new CommandApp(registrar);
 app.Configure(config =>
 {
     config.SetApplicationName("mirainote");
-    config.SetApplicationVersion("1.0.0");
+    config.SetApplicationVersion("2.0.0");
 
     // ── 认证 ─────────────────────────────────────
     config.AddCommand<LoginCommand>("login")
@@ -47,12 +47,31 @@ app.Configure(config =>
             .WithExample(["worklog", "list", "--from", "2026-06-01", "--to", "2026-06-07"])
             .WithExample(["worklog", "list", "-k", "会议"]);
 
-        wl.AddCommand<WorkLogAddCommand>("add")
-            .WithDescription("新建工作记录（交互式）");
+        wl.AddCommand<WorkLogGetCommand>("get")
+            .WithDescription("按 ID 获取工作记录")
+            .WithExample(["worklog", "get", "42", "--json"]);
+
+        wl.AddCommand<WorkLogCreateCommand>("create")
+            .WithDescription("新建工作记录（支持参数或 JSON 输入）")
+            .WithExample(["worklog", "create", "--title", "完成 CLI 改造", "--status", "completed", "--json"]);
+
+        // 保留旧命令名，避免现有脚本失效。
+        wl.AddCommand<WorkLogCreateCommand>("add")
+            .WithDescription("新建工作记录（create 的兼容别名）");
+
+        wl.AddCommand<WorkLogUpdateCommand>("update")
+            .WithDescription("更新工作记录（只修改明确提供的字段）")
+            .WithExample(["worklog", "update", "42", "--status", "completed", "--json"]);
 
         wl.AddCommand<WorkLogDeleteCommand>("delete")
             .WithDescription("删除工作记录")
-            .WithExample(["worklog", "delete", "42"]);
+            .WithExample(["worklog", "delete", "42", "--yes", "--json"]);
+
+        wl.AddCommand<WorkLogCategoriesCommand>("categories")
+            .WithDescription("列出已有工作分类");
+
+        wl.AddCommand<WorkLogSchemaCommand>("schema")
+            .WithDescription("输出供 Codex/自动化调用的机器可读接口说明");
     });
 
     // ── 备忘 ──────────────────────────────────────

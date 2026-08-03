@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
 using MiraiNote.Shared.Agent;
@@ -16,22 +19,74 @@ public class ChatController : ControllerBase
     private readonly IChatService _service;
     private readonly ICurrentUserService _currentUser;
     private readonly ChatFileParserService _fileParser;
+    private readonly ILogger<ChatController> _logger;
 
     // 确认状态：key = sessionId，value = TaskCompletionSource
     private static readonly ConcurrentDictionary<int, TaskCompletionSource<bool>> _pendingConfirms = new();
+    private static readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _temporaryPendingConfirms = new();
 
-    public ChatController(IChatService service, ICurrentUserService currentUser, ChatFileParserService fileParser)
+    public ChatController(
+        IChatService service,
+        ICurrentUserService currentUser,
+        ChatFileParserService fileParser,
+        ILogger<ChatController> logger)
     {
         _service = service;
         _currentUser = currentUser;
         _fileParser = fileParser;
+        _logger = logger;
     }
 
     [HttpGet("sessions")]
-    public async Task<ActionResult<ApiResponse<List<ChatSessionDto>>>> GetSessions(CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<List<ChatSessionDto>>>> GetSessions(
+        [FromQuery] int? projectId,
+        CancellationToken ct)
     {
-        var result = await _service.GetSessionsAsync(_currentUser.UserId, ct);
+        var result = await _service.GetSessionsAsync(_currentUser.UserId, projectId, ct);
         return Ok(ApiResponse<List<ChatSessionDto>>.Ok(result));
+    }
+
+    [HttpGet("sessions/search")]
+    public async Task<ActionResult<ApiResponse<List<ChatSessionDto>>>> SearchSessions(
+        [FromQuery] string query,
+        [FromQuery] int? projectId,
+        CancellationToken ct)
+    {
+        var result = await _service.SearchSessionsAsync(_currentUser.UserId, query, projectId, ct);
+        return Ok(ApiResponse<List<ChatSessionDto>>.Ok(result));
+    }
+
+    [HttpGet("projects")]
+    public async Task<ActionResult<ApiResponse<List<ChatProjectDto>>>> GetProjects(CancellationToken ct)
+    {
+        var result = await _service.GetProjectsAsync(_currentUser.UserId, ct);
+        return Ok(ApiResponse<List<ChatProjectDto>>.Ok(result));
+    }
+
+    [HttpPost("projects")]
+    public async Task<ActionResult<ApiResponse<ChatProjectDto>>> CreateProject(
+        [FromBody] CreateChatProjectRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.CreateProjectAsync(_currentUser.UserId, request, ct);
+        return Ok(ApiResponse<ChatProjectDto>.Ok(result, "项目已创建"));
+    }
+
+    [HttpPut("projects/{projectId:int}")]
+    public async Task<ActionResult<ApiResponse<ChatProjectDto>>> UpdateProject(
+        int projectId,
+        [FromBody] UpdateChatProjectRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.UpdateProjectAsync(_currentUser.UserId, projectId, request, ct);
+        return Ok(ApiResponse<ChatProjectDto>.Ok(result, "项目已更新"));
+    }
+
+    [HttpDelete("projects/{projectId:int}")]
+    public async Task<ActionResult<ApiResponse>> DeleteProject(int projectId, CancellationToken ct)
+    {
+        await _service.DeleteProjectAsync(_currentUser.UserId, projectId, ct);
+        return Ok(ApiResponse.Ok("项目已删除"));
     }
 
     /// <summary>
@@ -91,7 +146,37 @@ public class ChatController : ControllerBase
         return Ok(ApiResponse.Ok("已还原"));
     }
 
-        [HttpPost("sessions/{sessionId:int}/messages")]
+    [HttpPost("sessions/{sessionId:int}/pin")]
+    public async Task<ActionResult<ApiResponse<ChatSessionDto>>> SetPinned(
+        int sessionId,
+        [FromBody] SetSessionPinnedRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.SetSessionPinnedAsync(_currentUser.UserId, sessionId, request.IsPinned, ct);
+        return Ok(ApiResponse<ChatSessionDto>.Ok(result));
+    }
+
+    [HttpPost("sessions/{sessionId:int}/project")]
+    public async Task<ActionResult<ApiResponse<ChatSessionDto>>> AssignProject(
+        int sessionId,
+        [FromBody] AssignSessionProjectRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.AssignSessionProjectAsync(_currentUser.UserId, sessionId, request.ProjectId, ct);
+        return Ok(ApiResponse<ChatSessionDto>.Ok(result));
+    }
+
+    [HttpPost("sessions/{sessionId:int}/branch")]
+    public async Task<ActionResult<ApiResponse<ChatSessionDetailDto>>> BranchSession(
+        int sessionId,
+        [FromBody] BranchSessionRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.BranchSessionAsync(_currentUser.UserId, sessionId, request, ct);
+        return Ok(ApiResponse<ChatSessionDetailDto>.Ok(result, "分支对话已创建"));
+    }
+
+    [HttpPost("sessions/{sessionId:int}/messages")]
     public async Task<ActionResult<ApiResponse<ChatMessageDto>>> SendMessage(
         int sessionId, [FromBody] SendMessageRequest request, CancellationToken ct)
     {
@@ -115,23 +200,32 @@ public class ChatController : ControllerBase
         [FromBody] SendMessageRequest request,
         CancellationToken ct)
     {
-        // 设置 SSE 响应头
-        Response.Headers["Content-Type"] = "text/event-stream";
-        Response.Headers["Cache-Control"] = "no-cache";
-        Response.Headers["Connection"] = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no"; // 禁用 Nginx 缓冲
-
         var userId = _currentUser.UserId;
 
-        await _service.SendMessageStreamAsync(
-            userId,
-            sessionId,
-            request,
-            async (eventType, data) =>
-            {
-                await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
-                await Response.Body.FlushAsync(ct);
-            },
+        await RunSseStreamAsync(
+            (callback, streamCt) => _service.SendMessageStreamAsync(
+                userId,
+                sessionId,
+                request,
+                callback,
+                streamCt),
+            ct);
+    }
+
+    /// <summary>
+    /// 临时聊天流式接口。历史由客户端携带，服务端不创建会话、不保存消息。
+    /// </summary>
+    [HttpPost("temporary/messages/stream")]
+    public async Task SendTemporaryMessageStream(
+        [FromBody] TemporaryChatRequest request,
+        CancellationToken ct)
+    {
+        await RunSseStreamAsync(
+            (callback, streamCt) => _service.SendTemporaryMessageStreamAsync(
+                _currentUser.UserId,
+                request,
+                callback,
+                streamCt),
             ct);
     }
 
@@ -146,40 +240,83 @@ public class ChatController : ControllerBase
         [FromBody] SendMessageRequest request,
         CancellationToken ct)
     {
-        Response.Headers["Content-Type"] = "text/event-stream";
-        Response.Headers["Cache-Control"] = "no-cache";
-        Response.Headers["Connection"] = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no";
-
         var userId = _currentUser.UserId;
 
         // 为本次 Agent 会话创建确认信号
-        var confirmTcs = new TaskCompletionSource<bool>();
+        var confirmTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingConfirms[sessionId] = confirmTcs;
 
         try
         {
-            await _service.SendMessageAgentStreamAsync(
-                userId,
-                sessionId,
-                request,
-                async (eventType, data) =>
-                {
-                    await Response.WriteAsync($"event: {eventType}\ndata: {data}\n\n", ct);
-                    await Response.Body.FlushAsync(ct);
-                },
-                async () =>
-                {
-                    // 等待前端确认（带超时 120s）
-                    var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(120_000));
-                    return completed == confirmTcs.Task && await confirmTcs.Task;
-                },
+            await RunSseStreamAsync(
+                (callback, streamCt) => _service.SendMessageAgentStreamAsync(
+                    userId,
+                    sessionId,
+                    request,
+                    callback,
+                    async () =>
+                    {
+                        // 等待前端确认（带超时 120s）
+                        var completed = await Task.WhenAny(
+                            confirmTcs.Task,
+                            Task.Delay(120_000, streamCt));
+                        return completed == confirmTcs.Task && await confirmTcs.Task;
+                    },
+                    streamCt),
                 ct);
         }
         finally
         {
             _pendingConfirms.TryRemove(sessionId, out _);
         }
+    }
+
+    /// <summary>
+    /// 临时 Agent 聊天流式接口。temporaryId 只用于本次危险操作确认，不会持久化。
+    /// </summary>
+    [HttpPost("temporary/{temporaryId}/messages/agent/stream")]
+    public async Task SendTemporaryMessageAgentStream(
+        string temporaryId,
+        [FromBody] TemporaryChatRequest request,
+        CancellationToken ct)
+    {
+        var confirmTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _temporaryPendingConfirms[temporaryId] = confirmTcs;
+
+        try
+        {
+            await RunSseStreamAsync(
+                (callback, streamCt) => _service.SendTemporaryMessageAgentStreamAsync(
+                    _currentUser.UserId,
+                    request,
+                    callback,
+                    async () =>
+                    {
+                        var completed = await Task.WhenAny(
+                            confirmTcs.Task,
+                            Task.Delay(120_000, streamCt));
+                        return completed == confirmTcs.Task && await confirmTcs.Task;
+                    },
+                    streamCt),
+                ct);
+        }
+        finally
+        {
+            _temporaryPendingConfirms.TryRemove(temporaryId, out _);
+        }
+    }
+
+    [HttpPost("temporary/{temporaryId}/confirm")]
+    public ActionResult ConfirmTemporaryToolCall(
+        string temporaryId,
+        [FromBody] AgentConfirmRequest request)
+    {
+        if (_temporaryPendingConfirms.TryGetValue(temporaryId, out var tcs))
+        {
+            tcs.TrySetResult(request.Confirmed);
+            return Ok(ApiResponse.Ok(request.Confirmed ? "已确认" : "已取消"));
+        }
+        return NotFound(ApiResponse.Fail("没有待确认的操作"));
     }
 
     /// <summary>
@@ -205,6 +342,136 @@ public class ChatController : ControllerBase
     public class AgentConfirmRequest
     {
         public bool Confirmed { get; set; }
+    }
+
+    private void ConfigureSseResponse()
+    {
+        Response.Headers["Content-Type"] = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache, no-transform";
+        Response.Headers["Connection"] = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+    }
+
+    private async Task RunSseStreamAsync(
+        Func<ChatStreamCallback, CancellationToken, Task> streamAction,
+        CancellationToken requestCt)
+    {
+        ConfigureSseResponse();
+
+        using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(requestCt);
+        using var writeGate = new SemaphoreSlim(1, 1);
+        var stopwatch = Stopwatch.StartNew();
+        var terminalSent = 0;
+
+        async Task WriteFrameAsync(string frame)
+        {
+            await writeGate.WaitAsync(streamCts.Token);
+            try
+            {
+                await Response.WriteAsync(frame, streamCts.Token);
+                await Response.Body.FlushAsync(streamCts.Token);
+            }
+            finally
+            {
+                writeGate.Release();
+            }
+        }
+
+        ChatStreamCallback callback = (eventType, data) =>
+        {
+            if (eventType is "done" or "error")
+                Interlocked.Exchange(ref terminalSent, 1);
+            return WriteFrameAsync($"event: {eventType}\ndata: {data}\n\n");
+        };
+
+        async Task SendHeartbeatsAsync()
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+                while (await timer.WaitForNextTickAsync(streamCts.Token))
+                {
+                    var elapsedSeconds = Math.Max(1, (int)stopwatch.Elapsed.TotalSeconds);
+                    await callback("heartbeat", JsonSerializer.Serialize(new
+                    {
+                        elapsedSeconds,
+                        message = $"任务仍在处理，连接正常（{elapsedSeconds} 秒）"
+                    }));
+                }
+            }
+            catch (OperationCanceledException) when (streamCts.IsCancellationRequested)
+            {
+                // 请求结束或用户主动停止。
+            }
+            catch (IOException)
+            {
+                // 客户端或中间代理已经断开，通知业务流程尽快停止。
+                streamCts.Cancel();
+            }
+        }
+
+        // 立即提交响应头，避免上游在 AI 返回首个 token 前把请求当成空闲连接。
+        await WriteFrameAsync(": connected\n\n");
+        var heartbeatTask = SendHeartbeatsAsync();
+
+        try
+        {
+            await streamAction(callback, streamCts.Token);
+        }
+        catch (OperationCanceledException) when (streamCts.IsCancellationRequested)
+        {
+            // 用户停止、浏览器离开或心跳检测到连接已断开。
+        }
+        catch (IOException) when (requestCt.IsCancellationRequested || streamCts.IsCancellationRequested)
+        {
+            // 响应连接已关闭，无需再向已断开的客户端写错误消息。
+        }
+        catch (BusinessException ex)
+        {
+            _logger.LogWarning("聊天流业务异常 ({StatusCode}): {Message}", ex.StatusCode, ex.Message);
+            if (Volatile.Read(ref terminalSent) == 0)
+                await TryWriteStreamErrorAsync(callback, ex.Message, streamCts.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "聊天流执行失败 {Path}", HttpContext.Request.Path);
+            if (Volatile.Read(ref terminalSent) == 0)
+            {
+                var message = ex switch
+                {
+                    HttpRequestException => "AI 服务连接中断，请稍后重试",
+                    TaskCanceledException => "AI 服务响应超时，请稍后重试",
+                    JsonException => "AI 服务返回了无法解析的内容，请重试",
+                    _ => "任务执行失败，请稍后重试"
+                };
+                await TryWriteStreamErrorAsync(callback, message, streamCts.Token);
+            }
+        }
+        finally
+        {
+            streamCts.Cancel();
+            await heartbeatTask;
+        }
+    }
+
+    private static async Task TryWriteStreamErrorAsync(
+        ChatStreamCallback callback,
+        string message,
+        CancellationToken ct)
+    {
+        try
+        {
+            await callback("error", JsonSerializer.Serialize(new { message }));
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // 客户端已断开，无法继续发送错误事件。
+        }
+        catch (IOException)
+        {
+            // 客户端已断开，无法继续发送错误事件。
+        }
     }
 
     /// <summary>

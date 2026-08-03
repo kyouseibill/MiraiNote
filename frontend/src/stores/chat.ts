@@ -1,16 +1,29 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ChatSession, ChatSessionDetail, ChatMessage, ChatAttachmentContent } from '@/types/chat'
+import type {
+  ChatSession,
+  ChatSessionDetail,
+  ChatMessage,
+  ChatAttachmentContent,
+  ChatProject,
+  ChatProjectPayload,
+  BranchSessionPayload,
+} from '@/types/chat'
 import { chatApi } from '@/api/chat'
-import { agentApi, type AgentPlanData } from '@/api/agent'
+import { agentApi } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
 
 export const useChatStore = defineStore('chat', () => {
   const toast = useToast()
   const sessions = ref<ChatSession[]>([])
   const currentSession = ref<ChatSessionDetail | null>(null)
+  const isTemporary = ref(false)
+  const temporaryId = ref(createTemporaryId())
   const loading = ref(false)
   const sending = ref(false)
+  const projects = ref<ChatProject[]>([])
+  const selectedProjectId = ref<number | null>(null)
+  let activeAbortController: AbortController | null = null
 
   /**
    * 当前 AI 回复中用于流式显示的临时消息对象。
@@ -21,18 +34,20 @@ export const useChatStore = defineStore('chat', () => {
   // 当前正在进行的工具调用描述
   const currentToolCall = ref<string>('')
 
-  // Agent 特有状态
-  const agentPlan = ref<AgentPlanData | null>(null)
-
   // Agent 控制开关
-  const enablePlanner = ref(true)
   const autoMode = ref(true)
 
   // 流式回复所属的会话 ID（用于防止切换会话时内容显示到错误会话）
   const streamSessionId = ref<number | null>(null)
 
   // 并行工具调用列表
-  const toolCalls = ref<{ id: string; name: string; label: string }[]>([])
+  const toolCalls = ref<{
+    id: string
+    name: string
+    label: string
+    detail?: string
+    elapsedSeconds?: number
+  }[]>([])
 
   // 上下文用量
   const contextUsage = ref<{ estimatedTokens: number; maxTokens: number; percentUsed: number; messageCount: number } | null>(null)
@@ -40,6 +55,8 @@ export const useChatStore = defineStore('chat', () => {
   // 危险操作确认
   const pendingConfirm = ref<{ toolName: string; riskLevel: string; arguments: string } | null>(null)
   let pendingConfirmSessionId: number | null = null
+  let pendingConfirmTemporaryId: string | null = null
+  let nextTemporaryMessageId = -1_000_000
 
   // 待发送的附件列表（用户选择文件后上传解析，随下次发送一起提交给 AI）
   const pendingAttachments = ref<ChatAttachmentContent[]>([])
@@ -49,13 +66,14 @@ export const useChatStore = defineStore('chat', () => {
   async function fetchSessions() {
     loading.value = true
     try {
-      sessions.value = await chatApi.getSessions()
+      sessions.value = await chatApi.getSessions(selectedProjectId.value)
     } finally {
       loading.value = false
     }
   }
 
   async function openSession(sessionId: number) {
+    isTemporary.value = false
     const cached = sessionDetailsCache.get(sessionId)
     if (cached) {
       loading.value = false
@@ -88,12 +106,118 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function createSession(title?: string) {
-    const session = await chatApi.createSession({ title })
+    isTemporary.value = false
+    const session = await chatApi.createSession({ title, projectId: selectedProjectId.value })
     sessions.value.unshift(session)
     const detail: ChatSessionDetail = { ...session, messages: [] }
     sessionDetailsCache.set(session.id, detail)
     currentSession.value = detail
     return session
+  }
+
+  async function searchSessions(query: string) {
+    const normalized = query.trim()
+    if (!normalized) {
+      await fetchSessions()
+      return
+    }
+    loading.value = true
+    try {
+      sessions.value = await chatApi.searchSessions(normalized, selectedProjectId.value)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function selectProject(projectId: number | null) {
+    selectedProjectId.value = projectId
+    currentSession.value = null
+    await fetchSessions()
+  }
+
+  async function fetchProjects() {
+    projects.value = await chatApi.getProjects()
+  }
+
+  function startTemporarySession() {
+    const now = new Date().toISOString()
+    isTemporary.value = true
+    temporaryId.value = createTemporaryId()
+    nextTemporaryMessageId = -1_000_000
+    currentSession.value = {
+      id: 0,
+      title: '临时聊天',
+      isArchived: false,
+      isPinned: false,
+      projectId: null,
+      branchedFromSessionId: null,
+      branchedFromMessageId: null,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    }
+    streamMessage.value = null
+    streamSessionId.value = null
+    currentToolCall.value = ''
+    toolCalls.value = []
+    contextUsage.value = null
+    pendingConfirm.value = null
+    pendingConfirmSessionId = null
+    pendingConfirmTemporaryId = null
+    pendingAttachments.value = []
+  }
+
+  function replaceSessionSummary(updated: ChatSession) {
+    const index = sessions.value.findIndex((session) => session.id === updated.id)
+    if (index >= 0) sessions.value[index] = updated
+  }
+
+  async function setSessionPinned(sessionId: number, isPinned: boolean) {
+    const updated = await chatApi.setPinned(sessionId, isPinned)
+    replaceSessionSummary(updated)
+    await fetchSessions()
+  }
+
+  async function assignSessionProject(sessionId: number, projectId: number | null) {
+    const updated = await chatApi.assignProject(sessionId, projectId)
+    const cached = sessionDetailsCache.get(sessionId)
+    if (cached) cached.projectId = updated.projectId
+    if (currentSession.value?.id === sessionId) currentSession.value.projectId = updated.projectId
+    await Promise.all([fetchSessions(), fetchProjects()])
+  }
+
+  async function branchSession(payload: BranchSessionPayload = {}) {
+    if (!currentSession.value || isTemporary.value) return null
+    const detail = await chatApi.branchSession(currentSession.value.id, payload)
+    isTemporary.value = false
+    sessionDetailsCache.set(detail.id, detail)
+    currentSession.value = detail
+    await fetchSessions()
+    return detail
+  }
+
+  async function createProject(payload: ChatProjectPayload) {
+    const project = await chatApi.createProject(payload)
+    projects.value.push(project)
+    return project
+  }
+
+  async function updateProject(projectId: number, payload: ChatProjectPayload) {
+    const project = await chatApi.updateProject(projectId, payload)
+    const index = projects.value.findIndex((item) => item.id === projectId)
+    if (index >= 0) projects.value[index] = project
+    return project
+  }
+
+  async function deleteProject(projectId: number) {
+    await chatApi.deleteProject(projectId)
+    projects.value = projects.value.filter((item) => item.id !== projectId)
+    if (selectedProjectId.value === projectId) await selectProject(null)
+  }
+
+  function stopGeneration() {
+    activeAbortController?.abort()
+    activeAbortController = null
   }
 
   async function deleteSession(sessionId: number) {
@@ -162,9 +286,14 @@ export const useChatStore = defineStore('chat', () => {
     if (!currentSession.value) return
     const targetSession = currentSession.value
     const sessionId = targetSession.id
+    const temporary = isTemporary.value
+    const temporaryHistory = temporary
+      ? targetSession.messages.map(({ role, content }) => ({ role, content }))
+      : []
 
     sending.value = true
     currentToolCall.value = ''
+    toolCalls.value = []
     streamSessionId.value = sessionId
 
     // 1. 添加临时用户消息
@@ -192,13 +321,25 @@ export const useChatStore = defineStore('chat', () => {
     }
     streamMessage.value = activeStreamMessage
     let streamedContent = ''
+    const exportedFiles: ExportedFileLink[] = []
+    const abortController = new AbortController()
+    activeAbortController = abortController
 
     // 3. 用 SSE 向服务器发送请求
     try {
-      await chatApi.sendMessageStream(
-        sessionId,
-        { content, attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined },
-        (event) => {
+      const payload = {
+        content,
+        attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+      }
+      const sendStream = temporary
+        ? chatApi.sendTemporaryMessageStream(
+            { ...payload, history: temporaryHistory },
+            (event) => handleEvent(event),
+            abortController.signal,
+          )
+        : chatApi.sendMessageStream(sessionId, payload, (event) => handleEvent(event), abortController.signal)
+
+      function handleEvent(event: { type: string; data: any }) {
         switch (event.type) {
           case 'user_msg':
             persistedUserMessage = true
@@ -219,22 +360,46 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
-          case 'tool_call':
-            // 显示工具调用提示
-            currentToolCall.value = `🔧 正在${getToolLabel(event.data.name)}…`
+          case 'tool_call': {
+            const label = getToolLabel(event.data.name)
+            currentToolCall.value = `🔧 正在${label}…`
+            toolCalls.value.push({
+              id: event.data.id || event.data.name,
+              name: event.data.name,
+              label,
+              detail: '正在启动…',
+            })
+            break
+          }
+
+          case 'tool_progress': {
+            updateToolProgress(event.data)
+            currentToolCall.value = String(event.data?.message || '任务仍在处理中…')
+            break
+          }
+
+          case 'heartbeat':
+            if (!streamedContent && toolCalls.value.length === 0) {
+              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
+            }
             break
 
           case 'tool_result':
             // 工具执行完成，清除提示
             currentToolCall.value = ''
+            collectExportedFile(event.data, exportedFiles)
+            removeCompletedToolCall(event.data)
             break
 
           case 'done':
             // done 自带完整正文。即使临时渲染对象被刷新/替换，也能可靠落入消息列表。
             const finalMsg: ChatMessage = {
-              id: event.data.messageId,
+              id: temporary ? nextTemporaryMessageId-- : event.data.messageId,
               role: 'assistant',
-              content: streamedContent || String(event.data?.content ?? ''),
+              content: appendExportedFileLinks(
+                preferCompleteContent(streamedContent, String(event.data?.content ?? '')),
+                exportedFiles,
+              ),
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
             }
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
@@ -247,12 +412,14 @@ export const useChatStore = defineStore('chat', () => {
               streamMessage.value = null
             }
             // 更新会话列表（标题可能已更改）
-            const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
-            if (sessionIdx >= 0) {
-              sessions.value[sessionIdx].title = event.data.title
+            if (!temporary) {
+              const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
+              if (sessionIdx >= 0) {
+                sessions.value[sessionIdx].title = event.data.title
+              }
+              targetSession.title = event.data.title
+              sessionDetailsCache.set(sessionId, targetSession)
             }
-            targetSession.title = event.data.title
-            sessionDetailsCache.set(sessionId, targetSession)
             break
 
           case 'error':
@@ -264,27 +431,34 @@ export const useChatStore = defineStore('chat', () => {
             toast.error(event.data?.message || '对话出错，请重试')
             break
         }
-      })
-    } catch (e) {
-      // 网络错误或流中断：清除 streamMessage 占位（不在 messages 中）
+      }
+      await sendStream
+    } catch (e: any) {
+      const wasExecutingTool = toolCalls.value.length > 0
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
       }
       shouldRestoreAttachments = !persistedUserMessage
-      toast.error('网络连接失败，请检查后端服务是否正常运行')
+      if (e?.name !== 'AbortError') {
+        toast.error(wasExecutingTool
+          ? '执行连接意外中断，任务已停止，请重试'
+          : '对话连接意外中断，请重试；已发送的用户消息仍会保留')
+      }
     } finally {
       if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
         pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
       }
       sending.value = false
       currentToolCall.value = ''
+      toolCalls.value = []
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
       }
       if (streamSessionId.value === sessionId) {
         streamSessionId.value = null
       }
-      sessionDetailsCache.set(sessionId, targetSession)
+      if (activeAbortController === abortController) activeAbortController = null
+      if (!temporary) sessionDetailsCache.set(sessionId, targetSession)
       // 兜底：若流式过程中 currentSession 被其他逻辑替换为同一会话的不同对象，
       // 这里强制恢复为包含完整回复内容的 targetSession，避免界面显示空白。
       if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
@@ -305,17 +479,20 @@ export const useChatStore = defineStore('chat', () => {
 
   /**
    * Agent 模式流式发送消息。
-   * 包含 Plan → Execute → Reflect 完整流程。
+   * 执行工具调用并流式返回结果。
    */
   async function sendAgentMessageStream(content: string) {
     if (!currentSession.value) return
     const targetSession = currentSession.value
     const sessionId = targetSession.id
+    const temporary = isTemporary.value
+    const temporaryHistory = temporary
+      ? targetSession.messages.map(({ role, content }) => ({ role, content }))
+      : []
 
     sending.value = true
     currentToolCall.value = ''
     toolCalls.value = []
-    agentPlan.value = null
     contextUsage.value = null
     pendingConfirm.value = null
     streamSessionId.value = sessionId
@@ -344,18 +521,20 @@ export const useChatStore = defineStore('chat', () => {
     }
     streamMessage.value = activeStreamMessage
     let streamedContent = ''
+    const exportedFiles: ExportedFileLink[] = []
+    const abortController = new AbortController()
+    activeAbortController = abortController
 
     try {
-      await agentApi.sendAgentMessageStream(
-        sessionId,
-        {
+      const payload = {
           content,
-          enablePlanner: enablePlanner.value,
+          // 执行计划只用于展示，不参与工具执行；关闭可减少一次额外模型调用。
+          enablePlanner: false,
           enableReflector: false,
           skipConfirmation: autoMode.value,
           attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
-        },
-        (event) => {
+      }
+      const onEvent = (event: { type: string; data: any }) => {
         switch (event.type) {
           case 'user_msg':
             persistedUserMessage = true
@@ -365,10 +544,6 @@ export const useChatStore = defineStore('chat', () => {
             if (userIdx >= 0) {
               targetSession.messages[userIdx].id = event.data.id
             }
-            break
-
-          case 'plan':
-            agentPlan.value = event.data as AgentPlanData
             break
 
           case 'token':
@@ -385,24 +560,35 @@ export const useChatStore = defineStore('chat', () => {
               id: event.data.id || event.data.name,
               name: event.data.name,
               label,
+              detail: '正在启动…',
             })
             break
           }
 
+          case 'tool_progress':
+            updateToolProgress(event.data)
+            currentToolCall.value = String(event.data?.message || '任务仍在处理中…')
+            break
+
+          case 'heartbeat':
+            if (!streamedContent && toolCalls.value.length === 0) {
+              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
+            }
+            break
+
           case 'tool_result':
             currentToolCall.value = ''
-            // 移除对应的 tool call 指示器
-            if (event.data.toolCallId || event.data.name) {
-              const id = event.data.toolCallId || event.data.name
-              toolCalls.value = toolCalls.value.filter(t => t.id !== id && t.name !== id)
-            } else {
-              toolCalls.value = []
-            }
+            collectExportedFile(event.data, exportedFiles)
+            removeCompletedToolCall(event.data)
             break
 
           case 'confirm':
             // 暂停流，等待用户确认
-            pendingConfirmSessionId = sessionId
+            if (temporary) {
+              pendingConfirmTemporaryId = temporaryId.value
+            } else {
+              pendingConfirmSessionId = sessionId
+            }
             pendingConfirm.value = {
               toolName: event.data.toolName,
               riskLevel: event.data.riskLevel,
@@ -416,9 +602,12 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'done':
             const finalMsg: ChatMessage = {
-              id: event.data.messageId,
+              id: temporary ? nextTemporaryMessageId-- : event.data.messageId,
               role: 'assistant',
-              content: streamedContent || String(event.data?.content ?? ''),
+              content: appendExportedFileLinks(
+                preferCompleteContent(streamedContent, String(event.data?.content ?? '')),
+                exportedFiles,
+              ),
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
             }
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
@@ -430,12 +619,14 @@ export const useChatStore = defineStore('chat', () => {
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
             }
-            const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
-            if (sessionIdx >= 0) {
-              sessions.value[sessionIdx].title = event.data.title
+            if (!temporary) {
+              const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId)
+              if (sessionIdx >= 0) {
+                sessions.value[sessionIdx].title = event.data.title
+              }
+              targetSession.title = event.data.title
+              sessionDetailsCache.set(sessionId, targetSession)
             }
-            targetSession.title = event.data.title
-            sessionDetailsCache.set(sessionId, targetSession)
             break
 
           case 'error':
@@ -446,13 +637,28 @@ export const useChatStore = defineStore('chat', () => {
             toast.error(event.data?.message || '对话出错，请重试')
             break
         }
-      })
-    } catch (e) {
+      }
+      if (temporary) {
+        await agentApi.sendTemporaryAgentMessageStream(
+          temporaryId.value,
+          { ...payload, history: temporaryHistory },
+          onEvent,
+          abortController.signal,
+        )
+      } else {
+        await agentApi.sendAgentMessageStream(sessionId, payload, onEvent, abortController.signal)
+      }
+    } catch (e: any) {
+      const wasExecutingTool = toolCalls.value.length > 0
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
       }
       shouldRestoreAttachments = !persistedUserMessage
-      toast.error('网络连接失败')
+      if (e?.name !== 'AbortError') {
+        toast.error(wasExecutingTool
+          ? '执行连接意外中断，任务已停止，请重试'
+          : 'Agent 连接意外中断，请重试')
+      }
     } finally {
       if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
         pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
@@ -466,7 +672,8 @@ export const useChatStore = defineStore('chat', () => {
       if (streamSessionId.value === sessionId) {
         streamSessionId.value = null
       }
-      sessionDetailsCache.set(sessionId, targetSession)
+      if (activeAbortController === abortController) activeAbortController = null
+      if (!temporary) sessionDetailsCache.set(sessionId, targetSession)
       if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
         currentSession.value = targetSession
       }
@@ -476,15 +683,62 @@ export const useChatStore = defineStore('chat', () => {
   /** 用户确认/取消危险操作 */
   async function confirmToolCall(confirmed: boolean) {
     const sid = pendingConfirmSessionId
+    const tempId = pendingConfirmTemporaryId
     pendingConfirm.value = null
     pendingConfirmSessionId = null
-    if (sid != null) {
+    pendingConfirmTemporaryId = null
+    if (tempId != null) {
+      try {
+        await agentApi.confirmTemporaryToolCall(tempId, confirmed)
+      } catch {
+        // 忽略网络错误
+      }
+    } else if (sid != null) {
       try {
         await agentApi.confirmToolCall(sid, confirmed)
       } catch {
         // 忽略网络错误
       }
     }
+  }
+
+  function updateToolProgress(data: any) {
+    const id = String(data?.id || data?.toolCallId || data?.name || '')
+    const name = String(data?.name || '')
+    const index = toolCalls.value.findIndex((tool) =>
+      (id && tool.id === id) || (name && tool.name === name),
+    )
+    const detail = String(data?.message || '任务仍在处理中…')
+    const elapsedSeconds = Number(data?.elapsedSeconds || 0)
+
+    if (index >= 0) {
+      toolCalls.value[index] = {
+        ...toolCalls.value[index],
+        detail,
+        elapsedSeconds,
+      }
+      return
+    }
+
+    toolCalls.value.push({
+      id: id || name,
+      name,
+      label: getToolLabel(name),
+      detail,
+      elapsedSeconds,
+    })
+  }
+
+  function removeCompletedToolCall(data: any) {
+    const id = String(data?.toolCallId || '')
+    const name = String(data?.name || '')
+    if (!id && !name) {
+      toolCalls.value = []
+      return
+    }
+    toolCalls.value = toolCalls.value.filter((tool) =>
+      !((id && tool.id === id) || (name && tool.name === name)),
+    )
   }
 
   /** 工具名称 → 中文描述 */
@@ -529,15 +783,16 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     sessions,
+    projects,
+    selectedProjectId,
     currentSession,
+    isTemporary,
     loading,
     sending,
     streamMessage,
     streamSessionId,
     currentToolCall,
     toolCalls,
-    agentPlan,
-    enablePlanner,
     autoMode,
     contextUsage,
     pendingConfirm,
@@ -545,8 +800,19 @@ export const useChatStore = defineStore('chat', () => {
     archivedSessions,
     archivedLoading,
     fetchSessions,
+    searchSessions,
+    selectProject,
+    fetchProjects,
     openSession,
     createSession,
+    startTemporarySession,
+    setSessionPinned,
+    assignSessionProject,
+    branchSession,
+    createProject,
+    updateProject,
+    deleteProject,
+    stopGeneration,
     deleteSession,
     archiveSession,
     fetchArchivedSessions,
@@ -558,3 +824,46 @@ export const useChatStore = defineStore('chat', () => {
     updateTitle,
   }
 })
+
+function createTemporaryId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+interface ExportedFileLink {
+  fileName: string
+  url: string
+  markdown: string
+}
+
+function collectExportedFile(data: any, target: ExportedFileLink[]) {
+  if (data?.name !== 'export_file' || typeof data?.result !== 'string') return
+  try {
+    const parsed = JSON.parse(data.result)
+    if (typeof parsed?.url !== 'string' || typeof parsed?.markdown !== 'string') return
+    if (target.some((file) => file.url === parsed.url)) return
+    target.push({
+      fileName: String(parsed.fileName || '导出文件'),
+      url: parsed.url,
+      markdown: parsed.markdown,
+    })
+  } catch {
+    // 旧版或失败消息不是 JSON，不追加下载链接。
+  }
+}
+
+function appendExportedFileLinks(content: string, files: ExportedFileLink[]): string {
+  const missingLinks = files.filter((file) => !content.includes(file.url))
+  if (missingLinks.length === 0) return content
+  const links = missingLinks.map((file) => file.markdown).join('\n')
+  return `${content.trimEnd()}\n\n${links}`.trim()
+}
+
+function preferCompleteContent(streamed: string, completed: string): string {
+  if (!completed) return streamed
+  if (!streamed) return completed
+  if (completed.includes(streamed)) return completed
+  if (streamed.includes(completed)) return streamed
+  return completed.length >= streamed.length ? completed : streamed
+}

@@ -1,11 +1,13 @@
 import { getAccessToken, API_BASE_URL } from './auth'
-import { consumeSseResponse } from './sse'
+import { consumeSseResponseUntilTerminal } from './sse'
 
 export type AgentSseEventType =
   | 'user_msg'
   | 'token'
   | 'tool_call'
+  | 'tool_progress'
   | 'tool_result'
+  | 'heartbeat'
   | 'plan'
   | 'reflection'
   | 'confirm'
@@ -56,6 +58,10 @@ export interface AgentMessagePayload {
   }[]
 }
 
+export interface TemporaryAgentMessagePayload extends AgentMessagePayload {
+  history: { role: 'user' | 'assistant'; content: string }[]
+}
+
 export const agentApi = {
   /**
    * Agent 模式流式发送消息（含 Plan → Execute → Reflect → Confirm）。
@@ -85,15 +91,58 @@ export const agentApi = {
       return
     }
 
-    await consumeSseResponse(response, (event) => {
+    await consumeSseResponseUntilTerminal(response, (event) => {
       onEvent({ type: event.type as AgentSseEventType, data: event.data })
+    }, signal)
+  },
+
+  /** 无状态临时 Agent 聊天。temporaryId 仅用于流内的操作确认。 */
+  sendTemporaryAgentMessageStream: async (
+    temporaryId: string,
+    payload: TemporaryAgentMessagePayload,
+    onEvent: AgentSseCallback,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const token = getAccessToken()
+    const url = `${API_BASE_URL}/chat/temporary/${encodeURIComponent(temporaryId)}/messages/agent/stream`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
     })
+
+    if (!response.ok) {
+      onEvent({ type: 'error', data: { message: `HTTP ${response.status}` } })
+      return
+    }
+
+    await consumeSseResponseUntilTerminal(response, (event) => {
+      onEvent({ type: event.type as AgentSseEventType, data: event.data })
+    }, signal)
   },
 
   /** 确认/取消危险工具调用 */
   confirmToolCall: async (sessionId: number, confirmed: boolean): Promise<void> => {
     const token = getAccessToken()
     await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}/confirm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ confirmed }),
+      credentials: 'include',
+    })
+  },
+
+  confirmTemporaryToolCall: async (temporaryId: string, confirmed: boolean): Promise<void> => {
+    const token = getAccessToken()
+    await fetch(`${API_BASE_URL}/chat/temporary/${encodeURIComponent(temporaryId)}/confirm`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

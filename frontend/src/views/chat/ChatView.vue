@@ -5,6 +5,8 @@ import { useToast } from '@/composables/useToast'
 import { renderMarkdown } from '@/composables/useMarkdown'
 import { chatApi } from '@/api/chat'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
+import { staticUrl } from '@/composables/useStaticUrl'
+import type { ChatMessage, ChatProject } from '@/types/chat'
 
 const store = useChatStore()
 const toast = useToast()
@@ -92,6 +94,160 @@ const renameTitle = ref('')
 const showArchiveManager = ref(false)
 const showSessionList = ref(false)
 const restoringId = ref<number | null>(null)
+const searchQuery = ref('')
+const showProjectManager = ref(false)
+const editingProjectId = ref<number | null>(null)
+const projectForm = reactive({ name: '', instructions: '', color: '#0f766e', icon: '◇' })
+const showArtifacts = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+const groupedSessions = computed(() => {
+  const groups = new Map<string, typeof store.sessions>()
+  for (const session of store.sessions) {
+    const label = session.isPinned ? '已置顶' : sessionDateGroup(session.updatedAt)
+    if (!groups.has(label)) groups.set(label, [])
+    groups.get(label)!.push(session)
+  }
+  return Array.from(groups, ([label, sessions]) => ({ label, sessions }))
+})
+
+interface ConversationArtifact {
+  name: string
+  url: string
+  extension: string
+  messageId: number
+  createdAt: string
+}
+
+const artifacts = computed<ConversationArtifact[]>(() => {
+  const results: ConversationArtifact[] = []
+  const seen = new Set<string>()
+  for (const message of store.currentSession?.messages ?? []) {
+    const markdownLink = /\[([^\]]+)\]\(([^)]+\/exports\/[^)]+)\)/g
+    let match: RegExpExecArray | null
+    while ((match = markdownLink.exec(message.content)) !== null) {
+      const url = match[2]
+      if (seen.has(url)) continue
+      seen.add(url)
+      const name = match[1] || decodeURIComponent(url.split('/').pop() || '导出文件')
+      results.push({ name, url, extension: fileExtension(name), messageId: message.id, createdAt: message.createdAt })
+    }
+  }
+  return results.reverse()
+})
+
+function sessionDateGroup(iso: string): string {
+  const date = new Date(iso)
+  const today = new Date()
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const days = Math.floor((startToday.getTime() - startDate.getTime()) / 86_400_000)
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 7) return '最近 7 天'
+  if (date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth()) return '本月'
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`
+}
+
+async function changeProject(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  searchQuery.value = ''
+  await store.selectProject(value ? Number(value) : null)
+  if (store.sessions.length > 0) await selectSession(store.sessions[0].id)
+}
+
+function resetProjectForm() {
+  editingProjectId.value = null
+  Object.assign(projectForm, { name: '', instructions: '', color: '#0f766e', icon: '◇' })
+}
+
+function editProject(project: ChatProject) {
+  editingProjectId.value = project.id
+  Object.assign(projectForm, {
+    name: project.name,
+    instructions: project.instructions,
+    color: project.color,
+    icon: project.icon,
+  })
+}
+
+async function saveProject() {
+  if (!projectForm.name.trim()) return
+  const payload = {
+    name: projectForm.name.trim(),
+    instructions: projectForm.instructions.trim(),
+    color: projectForm.color,
+    icon: projectForm.icon.trim() || '◇',
+  }
+  if (editingProjectId.value == null) {
+    const project = await store.createProject(payload)
+    await store.selectProject(project.id)
+  } else {
+    await store.updateProject(editingProjectId.value, payload)
+  }
+  resetProjectForm()
+  toast.success('项目已保存')
+}
+
+async function removeProject(project: ChatProject) {
+  if (!confirm(`删除项目“${project.name}”？项目内对话不会删除，将移回全部对话。`)) return
+  await store.deleteProject(project.id)
+  resetProjectForm()
+  toast.success('项目已删除')
+}
+
+async function removeEditingProject() {
+  const project = store.projects.find((item) => item.id === editingProjectId.value)
+  if (project) await removeProject(project)
+}
+
+async function togglePinned(sessionId: number, isPinned: boolean) {
+  await store.setSessionPinned(sessionId, !isPinned)
+  if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
+  menuOpenId.value = null
+}
+
+async function moveSession(sessionId: number, event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  await store.assignSessionProject(sessionId, value ? Number(value) : null)
+  if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
+  menuOpenId.value = null
+}
+
+async function branchFromMessage(message: ChatMessage) {
+  if (store.isTemporary || message.id <= 0) return
+  await store.branchSession({ messageId: message.id, title: `${store.currentSession?.title || '对话'} · 分支` })
+  toast.success('已创建分支对话')
+}
+
+async function editUserMessage(message: ChatMessage) {
+  if (store.isTemporary || message.role !== 'user') return
+  const edited = prompt('编辑消息并创建新分支', message.content)?.trim()
+  if (!edited || edited === message.content) return
+  const messages = store.currentSession?.messages ?? []
+  const index = messages.findIndex((item) => item.id === message.id)
+  const previousId = index > 0 && messages[index - 1].id > 0 ? messages[index - 1].id : null
+  await store.branchSession({ messageId: previousId, title: `${store.currentSession?.title || '对话'} · 编辑` })
+  inputContent.value = edited
+  await send()
+}
+
+async function retryAssistantMessage(message: ChatMessage) {
+  if (store.isTemporary || message.role !== 'assistant') return
+  const messages = store.currentSession?.messages ?? []
+  const index = messages.findIndex((item) => item.id === message.id)
+  let userMessage: ChatMessage | undefined
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      userMessage = messages[i]
+      break
+    }
+  }
+  if (!userMessage || userMessage.id <= 0) return
+  await store.branchSession({ messageId: userMessage.id, title: `${store.currentSession?.title || '对话'} · 重试` })
+  inputContent.value = '请重新回答上一条消息，并给出更准确、完整的结果。'
+  await send()
+}
 
 // 会话条目的单一入口“…”菜单（编辑/归档/删除）
 const menuOpenId = ref<number | null>(null)
@@ -138,6 +294,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('click', closeSessionMenu)
   stopInputResize()
+  if (searchTimer) clearTimeout(searchTimer)
+  store.stopGeneration()
 })
 
 const ACCEPTED_TYPES = [
@@ -376,6 +534,14 @@ async function newSession() {
   }
 }
 
+function newTemporarySession() {
+  store.startTemporarySession()
+  inputDrafts.delete(0)
+  newSessionDraft.value = ''
+  showSessionList.value = false
+  scrollToBottom()
+}
+
 async function selectSession(id: number) {
   try {
     await store.openSession(id)
@@ -481,8 +647,13 @@ watch(() => store.currentSession?.messages.length, () => {
   scrollToBottom()
 })
 
+watch(searchQuery, (value) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => store.searchSessions(value), 250)
+})
+
 onMounted(async () => {
-  await store.fetchSessions()
+  await Promise.all([store.fetchProjects(), store.fetchSessions()])
   if (store.sessions.length > 0) {
     await selectSession(store.sessions[0].id)
   }
@@ -532,26 +703,62 @@ onMounted(async () => {
       :class="showSessionList ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="border-b border-slate-100 px-4 py-4">
-        <p class="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Conversations</p>
+        <div class="mb-3 flex items-center justify-between">
+          <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Projects</p>
+          <button class="text-xs text-teal-700 hover:text-teal-900" @click="showProjectManager = true">管理</button>
+        </div>
+        <select
+          class="mb-3 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-teal-400"
+          :value="store.selectedProjectId ?? ''"
+          @change="changeProject"
+        >
+          <option value="">全部对话</option>
+          <option v-for="project in store.projects" :key="project.id" :value="project.id">
+            {{ project.icon }} {{ project.name }} ({{ project.sessionCount }})
+          </option>
+        </select>
         <button
           class="h-10 w-full rounded-xl bg-teal-700 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800"
+          :disabled="store.sending"
           @click="newSession"
         >
           + 新对话
         </button>
+        <button
+          class="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-50"
+          :class="{ 'border-violet-300 bg-violet-50 text-violet-700': store.isTemporary }"
+          :disabled="store.sending"
+          title="聊天内容不会保存，也不会出现在对话列表中"
+          @click="newTemporarySession"
+        >
+          <span aria-hidden="true">◌</span>
+          临时聊天
+        </button>
+        <div class="relative mt-3">
+          <span class="pointer-events-none absolute left-3 top-2.5 text-xs text-slate-400">⌕</span>
+          <input
+            v-model="searchQuery"
+            class="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-8 pr-3 text-xs text-slate-700 outline-none focus:border-teal-400 focus:bg-white"
+            placeholder="搜索标题和消息内容"
+          />
+        </div>
       </div>
       <div class="flex-1 overflow-y-auto">
         <div v-if="store.sessions.length === 0" class="px-4 py-6 text-xs text-gray-400 text-center">
           暂无对话，点击“新对话”开始
         </div>
-        <ul class="py-1">
-          <li
-            v-for="s in store.sessions"
-            :key="s.id"
-            class="group px-3 py-2 cursor-pointer hover:bg-gray-100 rounded-lg mx-1 my-0.5 transition"
-            :class="{ 'bg-teal-50': store.currentSession?.id === s.id }"
-            @click="selectSession(s.id)"
-          >
+        <div class="py-1">
+          <template v-for="group in groupedSessions" :key="group.label">
+            <div class="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              {{ group.label }}
+            </div>
+            <div
+              v-for="s in group.sessions"
+              :key="s.id"
+              class="group mx-1 my-0.5 cursor-pointer rounded-lg px-3 py-2 transition hover:bg-gray-100"
+              :class="{ 'bg-teal-50': store.currentSession?.id === s.id }"
+              @click="selectSession(s.id)"
+            >
             <div class="flex items-center justify-between gap-1">
               <div v-if="renamingId === s.id" class="flex-1 flex gap-1">
                 <input
@@ -572,7 +779,11 @@ onMounted(async () => {
                 </button>
               </div>
               <div v-else class="flex-1 min-w-0">
-                <div class="text-sm text-gray-700 truncate">{{ s.title }}</div>
+                <div class="flex items-center gap-1 text-sm text-gray-700">
+                  <span v-if="s.isPinned" class="text-amber-500" title="已置顶">◆</span>
+                  <span class="truncate">{{ s.title }}</span>
+                </div>
+                <div v-if="s.matchSnippet" class="mt-0.5 line-clamp-2 text-[10px] leading-4 text-teal-700">{{ s.matchSnippet }}</div>
                 <div class="text-xs text-gray-400 mt-0.5">{{ fmtSessionDate(s.createdAt) }}</div>
               </div>
               <div class="relative shrink-0">
@@ -586,7 +797,7 @@ onMounted(async () => {
                 </button>
                 <div
                   v-if="menuOpenId === s.id"
-                  class="absolute right-0 top-8 z-20 w-32 bg-white rounded-lg shadow-lg border border-gray-100 py-1"
+                  class="absolute right-0 top-8 z-20 w-44 bg-white rounded-lg shadow-lg border border-gray-100 py-1"
                   @click.stop
                 >
                   <button
@@ -595,6 +806,23 @@ onMounted(async () => {
                   >
                     <span class="w-4 text-center">✎</span> 编辑
                   </button>
+                  <button
+                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-amber-50 hover:text-amber-700"
+                    @click="togglePinned(s.id, s.isPinned)"
+                  >
+                    <span class="w-4 text-center">◆</span> {{ s.isPinned ? '取消置顶' : '置顶' }}
+                  </button>
+                  <div class="border-y border-slate-100 px-3 py-2">
+                    <label class="mb-1 block text-[10px] text-slate-400">移动到项目</label>
+                    <select
+                      class="h-7 w-full rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
+                      :value="s.projectId ?? ''"
+                      @change="moveSession(s.id, $event)"
+                    >
+                      <option value="">无项目</option>
+                      <option v-for="project in store.projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                    </select>
+                  </div>
                   <button
                     class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-amber-50 hover:text-amber-600"
                     @click="archiveSession(s.id, $event); menuOpenId = null"
@@ -610,8 +838,9 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
-          </li>
-        </ul>
+            </div>
+          </template>
+        </div>
       </div>
       <div class="border-t border-slate-100 px-4 py-3">
         <button
@@ -635,17 +864,32 @@ onMounted(async () => {
               ☰
             </button>
             <span class="truncate text-sm font-semibold text-slate-800">
-            {{ store.currentSession?.title ?? 'Mirai Chat' }}
+              {{ store.currentSession?.title ?? 'Mirai Chat' }}
+            </span>
+            <span
+              v-if="store.isTemporary"
+              class="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200"
+            >
+              不保存
             </span>
           </div>
-          <span
-            v-if="store.contextUsage"
-            class="px-1.5 py-0.5 rounded text-[10px]"
-            :class="store.contextUsage.percentUsed > 40 ? 'bg-yellow-50 text-yellow-700' : 'bg-gray-100 text-gray-400'"
-            :title="`${store.contextUsage.estimatedTokens}/${store.contextUsage.maxTokens} tokens, ${store.contextUsage.messageCount} 条消息`"
-          >
-            {{ store.contextUsage.percentUsed }}%
-          </span>
+          <div class="flex shrink-0 items-center gap-2">
+            <button
+              class="rounded-lg border px-2.5 py-1.5 text-xs transition"
+              :class="showArtifacts ? 'border-teal-300 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-500 hover:border-teal-300'"
+              @click="showArtifacts = !showArtifacts"
+            >
+              文件 {{ artifacts.length ? `(${artifacts.length})` : '' }}
+            </button>
+            <span
+              v-if="store.contextUsage"
+              class="px-1.5 py-0.5 rounded text-[10px]"
+              :class="store.contextUsage.percentUsed > 40 ? 'bg-yellow-50 text-yellow-700' : 'bg-gray-100 text-gray-400'"
+              :title="`${store.contextUsage.estimatedTokens}/${store.contextUsage.maxTokens} tokens, ${store.contextUsage.messageCount} 条消息`"
+            >
+              {{ store.contextUsage.percentUsed }}%
+            </span>
+          </div>
         </div>
       </div>
 
@@ -653,35 +897,27 @@ onMounted(async () => {
         ref="messagesContainer"
         class="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-4 py-5 sm:px-6 lg:px-10"
       >
+        <div
+          v-if="store.isTemporary"
+          class="mx-auto flex max-w-2xl items-start gap-2 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-3 text-xs text-violet-700"
+        >
+          <span class="mt-px" aria-hidden="true">◌</span>
+          <span>这是临时聊天。关闭或切换对话后内容将丢失，不会保存，也不会出现在左侧对话列表中。</span>
+        </div>
+
         <div v-if="store.loading" class="text-center text-gray-400 text-sm">加载中...</div>
 
         <div
-          v-if="store.agentPlan"
-          class="max-w-[70%] rounded-2xl px-4 py-3 bg-teal-50 border border-teal-200 text-sm"
-        >
-          <p class="font-medium text-teal-800 mb-2">执行计划：{{ store.agentPlan.goal }}</p>
-          <ol class="list-decimal list-inside space-y-1 text-teal-700">
-            <li v-for="(step, i) in (store.agentPlan?.steps ?? [])" :key="i">
-              {{ step.action }}
-              <span class="text-xs text-gray-400">({{ (step.tools ?? []).join(', ') }})</span>
-            </li>
-          </ol>
-          <div v-if="(store.agentPlan?.risks ?? []).length" class="mt-2 pt-2 border-t border-teal-200">
-            <p class="text-xs text-yellow-600">{{ (store.agentPlan?.risks ?? []).join('；') }}</p>
-          </div>
-        </div>
-
-        <div
-          v-else-if="!store.currentSession || store.currentSession.messages.length === 0"
+          v-if="!store.currentSession || store.currentSession.messages.length === 0"
           class="mx-auto mt-20 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white/70 px-8 py-12 text-center text-sm text-slate-400"
         >
-          开始对话吧
+          {{ store.isTemporary ? '开始一段临时聊天吧' : '开始对话吧' }}
         </div>
 
         <div
           v-for="msg in store.currentSession?.messages"
           :key="msg.id"
-          class="flex flex-col"
+          class="group/message flex flex-col"
           :class="msg.role === 'user' ? 'items-end' : 'items-start'"
         >
           <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(msg.createdAt) }}</span>
@@ -702,6 +938,25 @@ onMounted(async () => {
               </details>
               <div v-html="safeMarkdown(splitAssistantContent(msg.content).answer)" />
             </template>
+          </div>
+          <div
+            v-if="!store.isTemporary && msg.id > 0"
+            class="mt-1 flex items-center gap-1 px-1 opacity-0 transition group-hover/message:opacity-100"
+          >
+            <button
+              v-if="msg.role === 'user'"
+              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
+              @click="editUserMessage(msg)"
+            >编辑</button>
+            <button
+              v-if="msg.role === 'assistant'"
+              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
+              @click="retryAssistantMessage(msg)"
+            >重试</button>
+            <button
+              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
+              @click="branchFromMessage(msg)"
+            >从这里分支</button>
           </div>
         </div>
 
@@ -724,10 +979,15 @@ onMounted(async () => {
             <div
               v-for="tc in store.toolCalls"
               :key="tc.id"
-              class="flex items-center gap-2 text-xs text-gray-400 animate-pulse"
+              class="flex items-start gap-2 rounded-lg border border-teal-100 bg-teal-50/70 px-3 py-2 text-xs text-slate-500"
             >
-              <span class="inline-block w-2 h-2 rounded-full bg-teal-400 animate-pulse"></span>
-              <span>{{ tc.label }}</span>
+              <span class="mt-1 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-teal-500"></span>
+              <span class="min-w-0">
+                <span class="block font-medium text-teal-700">{{ tc.label }}</span>
+                <span class="mt-0.5 block text-[10px] leading-4 text-slate-500">
+                  {{ tc.detail || '正在处理，请稍候…' }}
+                </span>
+              </span>
             </div>
           </div>
           <div
@@ -837,14 +1097,129 @@ onMounted(async () => {
             @paste="handlePaste"
           />
           <button
-            class="shrink-0 h-10 px-5 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-50"
-            :disabled="store.sending || (!inputContent.trim() && store.pendingAttachments.length === 0)"
+            v-if="store.sending"
+            class="h-10 shrink-0 rounded-xl bg-slate-800 px-4 text-sm text-white hover:bg-slate-900"
+            @click="store.stopGeneration"
+          >
+            ■ 停止
+          </button>
+          <button
+            v-else
+            class="h-10 shrink-0 rounded-xl bg-teal-600 px-5 text-sm text-white hover:bg-teal-700 disabled:opacity-50"
+            :disabled="!inputContent.trim() && store.pendingAttachments.length === 0"
             @click="send"
           >
             发送
           </button>
         </div>
       </div>
+
+      <Teleport to="body">
+        <aside
+          v-if="showArtifacts"
+          class="fixed bottom-0 right-0 top-[72px] z-40 flex w-80 max-w-full flex-col border-l border-slate-200 bg-white shadow-2xl"
+        >
+          <div class="flex items-center justify-between border-b border-slate-100 px-4 py-4">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-800">对话文件</h3>
+              <p class="mt-0.5 text-[10px] text-slate-400">生成的 PDF、Word、Excel 等文件</p>
+            </div>
+            <button class="text-slate-400 hover:text-slate-700" aria-label="关闭文件面板" @click="showArtifacts = false">✕</button>
+          </div>
+          <div class="flex-1 space-y-3 overflow-y-auto p-4">
+            <div v-if="artifacts.length === 0" class="mt-16 text-center text-xs text-slate-400">
+              当前对话还没有生成文件
+            </div>
+            <article v-for="artifact in artifacts" :key="artifact.url" class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+              <div class="flex items-center gap-3 p-3">
+                <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[10px] font-bold uppercase text-teal-700 shadow-sm">
+                  {{ artifact.extension.replace('.', '') || 'FILE' }}
+                </span>
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-xs font-medium text-slate-700" :title="artifact.name">{{ artifact.name }}</p>
+                  <p class="mt-0.5 text-[10px] text-slate-400">{{ fmtMsgTime(artifact.createdAt) }}</p>
+                </div>
+                <a
+                  :href="staticUrl(artifact.url)"
+                  target="_blank"
+                  download
+                  class="rounded-lg bg-teal-700 px-2.5 py-1.5 text-[10px] font-medium text-white hover:bg-teal-800"
+                >下载</a>
+              </div>
+              <iframe
+                v-if="artifact.extension === '.pdf'"
+                :src="staticUrl(artifact.url)"
+                class="h-56 w-full border-0 border-t border-slate-200 bg-white"
+                title="PDF 预览"
+              />
+            </article>
+          </div>
+        </aside>
+      </Teleport>
+
+      <Teleport to="body">
+        <div
+          v-if="showProjectManager"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          @click.self="showProjectManager = false"
+        >
+          <div class="flex max-h-[85vh] w-[760px] max-w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="w-64 shrink-0 overflow-y-auto border-r border-slate-100 bg-slate-50 p-4">
+              <div class="mb-3 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-slate-800">项目空间</h3>
+                <button class="text-xs text-teal-700" @click="resetProjectForm">+ 新建</button>
+              </div>
+              <button
+                v-for="project in store.projects"
+                :key="project.id"
+                class="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white"
+                :class="editingProjectId === project.id ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'"
+                @click="editProject(project)"
+              >
+                <span>{{ project.icon }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
+                <span class="text-[10px] text-slate-400">{{ project.sessionCount }}</span>
+              </button>
+              <p v-if="store.projects.length === 0" class="py-8 text-center text-xs text-slate-400">还没有项目</p>
+            </div>
+            <div class="min-w-0 flex-1 overflow-y-auto p-6">
+              <div class="mb-5 flex items-center justify-between">
+                <div>
+                  <h3 class="text-base font-semibold text-slate-800">{{ editingProjectId ? '编辑项目' : '新建项目' }}</h3>
+                  <p class="mt-1 text-xs text-slate-400">项目指令会自动加入该项目下每次普通聊天的上下文。</p>
+                </div>
+                <button class="text-slate-400 hover:text-slate-700" @click="showProjectManager = false">✕</button>
+              </div>
+              <div class="grid grid-cols-[72px_1fr] gap-3">
+                <input v-model="projectForm.icon" maxlength="10" class="h-10 rounded-lg border border-slate-200 px-3 text-center" placeholder="图标" />
+                <input v-model="projectForm.name" maxlength="100" class="h-10 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-teal-400" placeholder="项目名称" />
+              </div>
+              <label class="mt-4 block text-xs font-medium text-slate-600">项目颜色</label>
+              <input v-model="projectForm.color" type="color" class="mt-2 h-9 w-20 rounded border border-slate-200 bg-white p-1" />
+              <label class="mt-4 block text-xs font-medium text-slate-600">项目专属指令</label>
+              <textarea
+                v-model="projectForm.instructions"
+                maxlength="4000"
+                class="mt-2 h-44 w-full resize-none rounded-xl border border-slate-200 p-3 text-sm leading-relaxed outline-none focus:border-teal-400"
+                placeholder="例如：你是本项目的产品顾问；回答优先使用中文；涉及方案时先给结论，再列风险和下一步。"
+              />
+              <div class="mt-5 flex items-center justify-between">
+                <button
+                  v-if="editingProjectId"
+                  class="text-xs text-red-500 hover:text-red-700"
+                  @click="removeEditingProject"
+                >删除项目</button>
+                <span v-else />
+                <button
+                  class="rounded-lg bg-teal-700 px-5 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+                  :disabled="!projectForm.name.trim()"
+                  @click="saveProject"
+                >保存项目</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
       <Teleport to="body">
         <div
