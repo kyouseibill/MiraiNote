@@ -23,6 +23,19 @@ public class ChatSession : BaseEntity
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>所属项目；为空表示普通未归类对话。</summary>
+    public int? ProjectId { get; set; }
+
+    [ForeignKey(nameof(ProjectId))]
+    public ChatProject? Project { get; set; }
+
+    /// <summary>是否固定在会话列表顶部。</summary>
+    public bool IsPinned { get; set; }
+
+    /// <summary>创建分支时记录来源会话和分支点。</summary>
+    public int? BranchedFromSessionId { get; set; }
+    public int? BranchedFromMessageId { get; set; }
+
     /// <summary>是否已归档。归档会话默认不在列表展示。</summary>
     public bool IsArchived { get; set; } = false;
 

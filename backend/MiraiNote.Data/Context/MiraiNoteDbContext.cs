@@ -23,6 +23,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<WeeklyReportReference> WeeklyReportReferences => Set<WeeklyReportReference>();
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<ChatProject> ChatProjects => Set<ChatProject>();
     public DbSet<AgentMemory> AgentMemories => Set<AgentMemory>();
     public DbSet<ScheduledTask> ScheduledTasks => Set<ScheduledTask>();
 
@@ -135,9 +136,27 @@ public class MiraiNoteDbContext : DbContext
             .HasIndex(s => new { s.UserId, s.IsArchived, s.UpdatedAt });
 
         modelBuilder.Entity<ChatSession>()
+            .HasIndex(s => new { s.UserId, s.ProjectId, s.IsPinned, s.UpdatedAt });
+
+        modelBuilder.Entity<ChatSession>()
             .HasOne(s => s.User)
             .WithMany()
             .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<ChatSession>()
+            .HasOne(s => s.Project)
+            .WithMany(p => p.Sessions)
+            .HasForeignKey(s => s.ProjectId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ChatProject>()
+            .HasIndex(p => new { p.UserId, p.Name });
+
+        modelBuilder.Entity<ChatProject>()
+            .HasOne(p => p.User)
+            .WithMany()
+            .HasForeignKey(p => p.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<ChatMessage>()

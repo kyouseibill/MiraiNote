@@ -62,6 +62,8 @@ MiraiNote 的 AI 能力不止于"被动响应"——通过 Agent 功能，系统
 - 基于 DeepSeek API 的对话界面
 - 支持多轮对话，保留上下文
 - 对话历史持久化保存
+- 支持临时聊天模式：上下文仅保留在当前页面，不保存会话或消息，不出现在历史列表中
+- 支持从对话生成并下载真实的 PDF、Word（DOCX）、Excel（XLSX）及常用文本文件
 - 支持创建、编辑、删除多个对话会话
 - 会话类型（SessionType）：`general`（普通对话）/ `report_assistant`（周报撰写助手）
 
@@ -391,6 +393,8 @@ EmbeddingJson  NVARCHAR(MAX)   NOT NULL   -- 向量数组（JSON 存储，初期
 | PUT | /api/v1/chat/sessions/{sessionId} | 更新会话标题 |
 | DELETE | /api/v1/chat/sessions/{sessionId} | 删除对话会话 |
 | POST | /api/v1/chat/sessions/{sessionId}/messages | 发送消息（调用 AI） |
+| POST | /api/v1/chat/temporary/messages/stream | 临时聊天流式消息（无状态、不持久化） |
+| POST | /api/v1/chat/temporary/{temporaryId}/messages/agent/stream | 临时 Agent 聊天流式消息（无状态、不持久化） |
 
 #### 文件上传接口
 | 方法 | 路径 | 说明 |

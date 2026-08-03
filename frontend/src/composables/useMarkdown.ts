@@ -14,11 +14,15 @@ export function renderMarkdown(md: string | null | undefined): string {
   if (!md) return ''
   const raw = marked.parse(md, { renderer, async: false }) as string
   const sanitized = DOMPurify.sanitize(raw)
-  return rewriteStaticImageSources(sanitized)
+  return rewriteStaticAssetUrls(sanitized)
 }
 
-function rewriteStaticImageSources(html: string): string {
-  return html.replace(/(<img\b[^>]*\bsrc=")(\/[^"]+)(")/gi, (_, prefix, src, suffix) => {
-    return `${prefix}${staticUrl(src)}${suffix}`
-  })
+function rewriteStaticAssetUrls(html: string): string {
+  return html
+    .replace(/(<img\b[^>]*\bsrc=")(\/[^"]+)(")/gi, (_, prefix, src, suffix) => {
+      return `${prefix}${staticUrl(src)}${suffix}`
+    })
+    .replace(/(<a\b[^>]*\bhref=")(\/[^"]+)(")/gi, (_, prefix, href, suffix) => {
+      return `${prefix}${staticUrl(href)}${suffix}`
+    })
 }

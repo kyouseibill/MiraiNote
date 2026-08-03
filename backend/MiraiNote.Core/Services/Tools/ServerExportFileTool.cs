@@ -1,32 +1,54 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using ClosedXML.Excel;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using MiraiNote.Shared.Agent;
+using PdfSharp.Drawing;
+using PdfSharp.Fonts;
+using PdfSharp.Pdf;
+using W = DocumentFormat.OpenXml.Wordprocessing;
 
 namespace MiraiNote.Core.Services.Tools;
 
 /// <summary>
-/// 文件导出工具。将内容保存到 uploads 目录，返回可访问的文件 URL。
+/// 文件导出工具。根据扩展名生成真实的文档文件，并返回可访问的下载链接。
 /// </summary>
 public class ServerExportFileTool : IServerAgentTool
 {
+    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".markdown", ".json", ".txt", ".csv"
+    };
+
+    private static readonly object PdfFontLock = new();
+    private static bool _pdfFontConfigured;
+    private const string PdfFontFamily = "MiraiExportSans";
+
     private readonly UploadOptions _uploadOptions;
     private readonly IHostEnvironment _hostEnv;
 
     public string Name => "export_file";
     public ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public string Description =>
-        "将内容导出为文件并保存。支持 Markdown、JSON、TXT、CSV 等格式。" +
-        "文件保存后返回下载路径，用户可通过链接访问。" +
-        "适用于导出周报、备忘列表、数据备份等场景。";
+        "将内容导出为可下载文件。支持真正的 PDF（.pdf）、Word（.docx）、Excel（.xlsx），" +
+        "以及 Markdown（.md）、JSON（.json）、TXT（.txt）、CSV（.csv）。" +
+        "filename 必须使用目标格式对应的扩展名；Word 使用 .docx，不支持旧版 .doc。" +
+        "content 可使用 Markdown；导出 Excel 时优先传入 Markdown 表格、制表符分隔数据或逐行文本。" +
+        "工具返回 markdown 下载链接，最终回复必须原样包含该链接。";
 
     public ToolParameterSchema Parameters => new()
     {
         Properties = new()
         {
-            ["filename"] = ToolParameterProperty.String("文件名（必填，如 weekly_report_2026-06-17.md），含扩展名"),
-            ["content"] = ToolParameterProperty.String("文件内容（必填）"),
-            ["format"] = ToolParameterProperty.Enum("文件格式（仅标识，不影响实际写入）", new() { "markdown", "json", "txt", "csv" })
+            ["filename"] = ToolParameterProperty.String("文件名（必填，扩展名决定真实格式，如 report.pdf、report.docx、data.xlsx）"),
+            ["content"] = ToolParameterProperty.String("要写入文件的完整内容（必填，可使用 Markdown）"),
+            ["format"] = ToolParameterProperty.Enum(
+                "文件格式；filename 没有扩展名时用它补全扩展名",
+                new() { "pdf", "docx", "xlsx", "markdown", "json", "txt", "csv" })
         },
         Required = new() { "filename", "content" }
     };
@@ -37,57 +59,391 @@ public class ServerExportFileTool : IServerAgentTool
         _hostEnv = hostEnv;
     }
 
-    // IAgentTool 兼容
     Task<string> IAgentTool.ExecuteAsync(string argumentsJson, CancellationToken ct)
         => ExecuteAsync(0, argumentsJson, ct);
 
     public Task<string> ExecuteAsync(int userId, string argumentsJson, CancellationToken ct = default)
     {
-        var args = JsonDocument.Parse(argumentsJson).RootElement;
+        using var doc = JsonDocument.Parse(argumentsJson);
+        var args = doc.RootElement;
         if (!ToolArgHelper.TryGetString(args, "filename", out var filename))
             return Task.FromResult("导出失败：未提供 filename。");
         if (!ToolArgHelper.TryGetString(args, "content", out var content))
             return Task.FromResult("导出失败：未提供 content。");
 
-        // 路径遍历防护：移除危险字符
-        var safeName = filename
-            .Replace("/", "_")
-            .Replace("\\", "_")
-            .Replace("..", "_")
-            .Replace(":", "_");
+        ToolArgHelper.TryGetString(args, "format", out var format);
+        var safeName = NormalizeFileName(filename, format);
+        if (string.IsNullOrWhiteSpace(safeName))
+            return Task.FromResult("导出失败：文件名无效。");
+
+        var extension = Path.GetExtension(safeName).ToLowerInvariant();
+        if (!TextExtensions.Contains(extension) && extension is not ".pdf" and not ".docx" and not ".xlsx")
+        {
+            return Task.FromResult(
+                $"导出失败：不支持扩展名 {extension}。支持 pdf、docx、xlsx、md、json、txt、csv。");
+        }
 
         try
         {
-            // 确定物理存储路径
-            string physicalDir;
-            if (!string.IsNullOrWhiteSpace(_uploadOptions.PhysicalPath))
+            ct.ThrowIfCancellationRequested();
+            var physicalDir = Path.Combine(ResolveUploadRoot(), "agent", userId.ToString(), "exports");
+            Directory.CreateDirectory(physicalDir);
+            // 每次导出使用独立物理文件，避免后续同名导出覆盖历史对话中的下载内容。
+            var storedName = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{safeName}";
+            var filePath = Path.Combine(physicalDir, storedName);
+
+            switch (extension)
             {
-                physicalDir = _uploadOptions.PhysicalPath;
+                case ".pdf":
+                    WritePdf(filePath, content, ct);
+                    break;
+                case ".docx":
+                    WriteDocx(filePath, content, ct);
+                    break;
+                case ".xlsx":
+                    WriteExcel(filePath, content, ct);
+                    break;
+                default:
+                    File.WriteAllText(filePath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    break;
             }
-            else
+
+            var relativeUrl = $"/{_uploadOptions.BasePath.Trim('/')}/agent/{userId}/exports/{Uri.EscapeDataString(storedName)}";
+            var markdown = $"[下载 {safeName}]({relativeUrl})";
+            var result = JsonSerializer.Serialize(new
             {
-                var webRoot = string.IsNullOrWhiteSpace(_hostEnv.ContentRootPath)
-                    ? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")
-                    : Path.Combine(_hostEnv.ContentRootPath, "wwwroot");
-                physicalDir = Path.Combine(webRoot, _uploadOptions.BasePath);
-            }
-
-            if (!Directory.Exists(physicalDir))
-                Directory.CreateDirectory(physicalDir);
-
-            var filePath = Path.Combine(physicalDir, safeName);
-            File.WriteAllText(filePath, content, System.Text.Encoding.UTF8);
-
-            var relativeUrl = $"/{_uploadOptions.BasePath.TrimStart('/')}/{safeName}";
-            return Task.FromResult($"文件已成功导出：{safeName}（{content.Length} 字符）。\n可通过相对路径访问：{relativeUrl}");
+                fileName = safeName,
+                fileType = extension.TrimStart('.'),
+                sizeBytes = new FileInfo(filePath).Length,
+                url = relativeUrl,
+                markdown,
+                message = "文件已生成。请在最终回复中原样包含 markdown 字段，供用户下载。"
+            });
+            return Task.FromResult(result);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (UnauthorizedAccessException)
         {
-            return Task.FromResult($"导出失败：没有写入权限。");
+            return Task.FromResult("导出失败：没有写入权限。");
         }
         catch (Exception ex)
         {
             return Task.FromResult($"导出失败：{ex.Message}");
         }
+    }
+
+    private string ResolveUploadRoot()
+    {
+        if (!string.IsNullOrWhiteSpace(_uploadOptions.PhysicalPath))
+            return _uploadOptions.PhysicalPath;
+
+        var webRoot = string.IsNullOrWhiteSpace(_hostEnv.ContentRootPath)
+            ? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")
+            : Path.Combine(_hostEnv.ContentRootPath, "wwwroot");
+        return Path.Combine(webRoot, _uploadOptions.BasePath);
+    }
+
+    private static string NormalizeFileName(string filename, string? format)
+    {
+        var name = Path.GetFileName(filename.Replace('\\', '/')).Trim();
+        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
+        name = string.Concat(name.Select(ch => invalid.Contains(ch) || ch == ':' ? '_' : ch));
+        name = name.Replace("..", "_");
+
+        if (!string.IsNullOrWhiteSpace(Path.GetExtension(name)))
+            return name;
+
+        var extension = format?.Trim().ToLowerInvariant() switch
+        {
+            "pdf" => ".pdf",
+            "docx" or "word" => ".docx",
+            "xlsx" or "excel" => ".xlsx",
+            "markdown" or "md" => ".md",
+            "json" => ".json",
+            "csv" => ".csv",
+            _ => ".txt"
+        };
+        return name + extension;
+    }
+
+    private static void WriteDocx(string filePath, string content, CancellationToken ct)
+    {
+        if (File.Exists(filePath)) File.Delete(filePath);
+        using var document = WordprocessingDocument.Create(filePath, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        var body = new W.Body();
+        mainPart.Document = new W.Document(body);
+
+        foreach (var sourceLine in NormalizeLines(content))
+        {
+            ct.ThrowIfCancellationRequested();
+            var (text, headingLevel, isList) = ParseMarkdownLine(sourceLine);
+            var paragraph = new W.Paragraph();
+            var paragraphProperties = new W.ParagraphProperties(
+                new W.SpacingBetweenLines
+                {
+                    After = headingLevel > 0 ? "160" : "80",
+                    Line = "300",
+                    LineRule = W.LineSpacingRuleValues.Auto
+                });
+            paragraph.Append(paragraphProperties);
+
+            if (string.IsNullOrEmpty(text))
+            {
+                body.Append(paragraph);
+                continue;
+            }
+
+            if (isList) text = "• " + text;
+            var fontSize = headingLevel switch { 1 => 32, 2 => 28, 3 => 24, _ => 22 };
+            var runProperties = new W.RunProperties(
+                new W.RunFonts { Ascii = "Aptos", HighAnsi = "Aptos", EastAsia = "Microsoft YaHei" },
+                new W.FontSize { Val = fontSize.ToString() },
+                new W.FontSizeComplexScript { Val = fontSize.ToString() });
+            if (headingLevel > 0) runProperties.Append(new W.Bold());
+
+            paragraph.Append(new W.Run(
+                runProperties,
+                new W.Text(CleanInlineMarkdown(text)) { Space = SpaceProcessingModeValues.Preserve }));
+            body.Append(paragraph);
+        }
+
+        body.Append(new W.SectionProperties(
+            new W.PageSize { Width = 11906, Height = 16838 },
+            new W.PageMargin { Top = 1134, Right = 1134, Bottom = 1134, Left = 1134 }));
+        mainPart.Document.Save();
+    }
+
+    private static void WriteExcel(string filePath, string content, CancellationToken ct)
+    {
+        using var workbook = new XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("导出内容");
+        var rows = ParseTabularContent(content);
+
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            ct.ThrowIfCancellationRequested();
+            for (var columnIndex = 0; columnIndex < rows[rowIndex].Count; columnIndex++)
+                worksheet.Cell(rowIndex + 1, columnIndex + 1).SetValue(rows[rowIndex][columnIndex]);
+        }
+
+        var used = worksheet.RangeUsed();
+        if (used != null)
+        {
+            if (rows.Count > 1 && rows[0].Count > 1)
+            {
+                used.FirstRow().Style.Font.Bold = true;
+                used.FirstRow().Style.Fill.BackgroundColor = XLColor.FromHtml("#E6F4F1");
+                worksheet.SheetView.FreezeRows(1);
+                used.SetAutoFilter();
+            }
+            used.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+            used.Style.Alignment.WrapText = true;
+            worksheet.Columns(used.RangeAddress.FirstAddress.ColumnNumber, used.RangeAddress.LastAddress.ColumnNumber)
+                .AdjustToContents();
+            foreach (var column in worksheet.ColumnsUsed())
+                if (column.Width > 60) column.Width = 60;
+        }
+
+        workbook.SaveAs(filePath);
+    }
+
+    private static List<List<string>> ParseTabularContent(string content)
+    {
+        var lines = NormalizeLines(content).Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+        var hasMarkdownTable = lines.Count >= 2 &&
+            lines.Any(line => Regex.IsMatch(line.Trim(), @"^\|?\s*:?-{3,}"));
+        var hasTabs = lines.Any(line => line.Contains('\t'));
+
+        var rows = new List<List<string>>();
+        foreach (var line in lines)
+        {
+            if (hasMarkdownTable)
+            {
+                if (Regex.IsMatch(line.Trim(), @"^\|?\s*:?-{3,}")) continue;
+                rows.Add(line.Trim().Trim('|').Split('|').Select(cell => CleanInlineMarkdown(cell.Trim())).ToList());
+            }
+            else if (hasTabs)
+            {
+                rows.Add(line.Split('\t').Select(cell => cell.Trim()).ToList());
+            }
+            else
+            {
+                rows.Add(new List<string> { CleanInlineMarkdown(line) });
+            }
+        }
+
+        return rows.Count > 0 ? rows : new List<List<string>> { new() { string.Empty } };
+    }
+
+    private static void WritePdf(string filePath, string content, CancellationToken ct)
+    {
+        EnsurePdfFontResolver();
+        using var document = new PdfDocument();
+        document.Info.Title = FirstMeaningfulLine(content) ?? "Mirai Chat 导出文件";
+
+        PdfPage? page = null;
+        XGraphics? graphics = null;
+        const double margin = 52;
+        double y = margin;
+
+        void NewPage()
+        {
+            graphics?.Dispose();
+            page = document.AddPage();
+            page.Size = PdfSharp.PageSize.A4;
+            graphics = XGraphics.FromPdfPage(page);
+            y = margin;
+        }
+
+        NewPage();
+        foreach (var sourceLine in NormalizeLines(content))
+        {
+            ct.ThrowIfCancellationRequested();
+            var (text, headingLevel, isList) = ParseMarkdownLine(sourceLine);
+            if (isList) text = "• " + text;
+            text = CleanInlineMarkdown(text);
+
+            var size = headingLevel switch { 1 => 18d, 2 => 15d, 3 => 13d, _ => 10.5d };
+            var style = headingLevel > 0 ? XFontStyleEx.Bold : XFontStyleEx.Regular;
+            var font = new XFont(PdfFontFamily, size, style);
+            var lineHeight = size * 1.65;
+
+            if (string.IsNullOrEmpty(text))
+            {
+                y += lineHeight * 0.65;
+                continue;
+            }
+
+            foreach (var wrappedLine in WrapPdfLine(graphics!, font, text, page!.Width.Point - margin * 2))
+            {
+                if (y + lineHeight > page.Height.Point - margin)
+                    NewPage();
+                graphics!.DrawString(wrappedLine, font, XBrushes.Black, new XPoint(margin, y));
+                y += lineHeight;
+            }
+            if (headingLevel > 0) y += size * 0.35;
+        }
+
+        graphics?.Dispose();
+        document.Save(filePath);
+    }
+
+    private static IEnumerable<string> WrapPdfLine(XGraphics graphics, XFont font, string text, double maxWidth)
+    {
+        var remaining = text;
+        while (remaining.Length > 0)
+        {
+            if (graphics.MeasureString(remaining, font).Width <= maxWidth)
+            {
+                yield return remaining;
+                yield break;
+            }
+
+            var low = 1;
+            var high = remaining.Length;
+            while (low < high)
+            {
+                var mid = (low + high + 1) / 2;
+                if (graphics.MeasureString(remaining[..mid], font).Width <= maxWidth) low = mid;
+                else high = mid - 1;
+            }
+
+            var take = Math.Max(1, low);
+            var breakAt = remaining.LastIndexOfAny(new[] { ' ', '\t', '，', '。', '、', '；', '：' }, take - 1, take);
+            if (breakAt > take / 2) take = breakAt + 1;
+            yield return remaining[..take].TrimEnd();
+            remaining = remaining[take..].TrimStart();
+        }
+    }
+
+    private static void EnsurePdfFontResolver()
+    {
+        if (_pdfFontConfigured) return;
+        lock (PdfFontLock)
+        {
+            if (_pdfFontConfigured) return;
+            var (regular, bold) = FindPdfFonts();
+            if (regular == null)
+                throw new InvalidOperationException("服务器未安装可用于生成 PDF 的字体。");
+            GlobalFontSettings.FontResolver = new ExportFontResolver(regular, bold);
+            _pdfFontConfigured = true;
+        }
+    }
+
+    private static (string? Regular, string? Bold) FindPdfFonts()
+    {
+        var windowsFonts = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+        var candidates = new (string Regular, string? Bold)[]
+        {
+            (Path.Combine(windowsFonts, "NotoSansSC-VF.ttf"), null),
+            (Path.Combine(windowsFonts, "Deng.ttf"), Path.Combine(windowsFonts, "Dengb.ttf")),
+            (Path.Combine(windowsFonts, "simhei.ttf"), null),
+            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+            ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"),
+            ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", null),
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            ("/System/Library/Fonts/PingFang.ttc", null)
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!File.Exists(candidate.Regular)) continue;
+            return (candidate.Regular, candidate.Bold != null && File.Exists(candidate.Bold) ? candidate.Bold : null);
+        }
+        return (null, null);
+    }
+
+    private static IEnumerable<string> NormalizeLines(string content) =>
+        content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+
+    private static (string Text, int HeadingLevel, bool IsList) ParseMarkdownLine(string line)
+    {
+        var heading = Regex.Match(line, @"^\s*(#{1,6})\s+(.+)$");
+        if (heading.Success)
+            return (heading.Groups[2].Value.Trim(), Math.Min(3, heading.Groups[1].Value.Length), false);
+
+        var bullet = Regex.Match(line, @"^\s*[-*+]\s+(.+)$");
+        if (bullet.Success) return (bullet.Groups[1].Value, 0, true);
+        return (line, 0, false);
+    }
+
+    private static string CleanInlineMarkdown(string text)
+    {
+        var cleaned = Regex.Replace(text, @"!\[([^\]]*)\]\(([^)]+)\)", "$1 ($2)");
+        cleaned = Regex.Replace(cleaned, @"\[([^\]]+)\]\(([^)]+)\)", "$1 ($2)");
+        cleaned = Regex.Replace(cleaned, @"(\*\*|__|~~|`)", string.Empty);
+        return cleaned.Replace("<thinking>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("</thinking>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("<answer>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("</answer>", string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? FirstMeaningfulLine(string content) =>
+        NormalizeLines(content)
+            .Select(line => ParseMarkdownLine(line).Text.Trim())
+            .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
+
+    private sealed class ExportFontResolver : IFontResolver
+    {
+        private readonly string _regularPath;
+        private readonly string? _boldPath;
+
+        public ExportFontResolver(string regularPath, string? boldPath)
+        {
+            _regularPath = regularPath;
+            _boldPath = boldPath;
+        }
+
+        public FontResolverInfo ResolveTypeface(string familyName, bool bold, bool italic) =>
+            new(bold && _boldPath != null ? "mirai-export-bold" : "mirai-export-regular",
+                mustSimulateBold: bold && _boldPath == null,
+                mustSimulateItalic: italic);
+
+        public byte[]? GetFont(string faceName) =>
+            File.ReadAllBytes(faceName == "mirai-export-bold" && _boldPath != null ? _boldPath : _regularPath);
     }
 }

@@ -5,15 +5,21 @@ import type {
   ChatMessage,
   CreateSessionPayload,
   SendMessagePayload,
+  TemporarySendMessagePayload,
   ChatAttachmentResponse,
+  ChatProject,
+  ChatProjectPayload,
+  BranchSessionPayload,
 } from '@/types/chat'
-import { consumeSseResponse } from './sse'
+import { consumeSseResponseUntilTerminal } from './sse'
 
 export type SseEventType =
   | 'user_msg'
   | 'token'
   | 'tool_call'
+  | 'tool_progress'
   | 'tool_result'
+  | 'heartbeat'
   | 'done'
   | 'error'
 
@@ -25,13 +31,40 @@ export interface SseEvent {
 export type SseCallback = (event: SseEvent) => void
 
 export const chatApi = {
-  getSessions: () => unwrap<ChatSession[]>(http.get('/chat/sessions')),
+  getSessions: (projectId?: number | null) => unwrap<ChatSession[]>(http.get('/chat/sessions', {
+    params: projectId == null ? undefined : { projectId },
+  })),
+
+  searchSessions: (query: string, projectId?: number | null) =>
+    unwrap<ChatSession[]>(http.get('/chat/sessions/search', {
+      params: { query, ...(projectId == null ? {} : { projectId }) },
+    })),
 
   getSession: (sessionId: number) =>
     unwrap<ChatSessionDetail>(http.get(`/chat/sessions/${sessionId}`)),
 
   createSession: (payload: CreateSessionPayload = {}) =>
     unwrap<ChatSession>(http.post('/chat/sessions', payload)),
+
+  setPinned: (sessionId: number, isPinned: boolean) =>
+    unwrap<ChatSession>(http.post(`/chat/sessions/${sessionId}/pin`, { isPinned })),
+
+  assignProject: (sessionId: number, projectId: number | null) =>
+    unwrap<ChatSession>(http.post(`/chat/sessions/${sessionId}/project`, { projectId })),
+
+  branchSession: (sessionId: number, payload: BranchSessionPayload = {}) =>
+    unwrap<ChatSessionDetail>(http.post(`/chat/sessions/${sessionId}/branch`, payload)),
+
+  getProjects: () => unwrap<ChatProject[]>(http.get('/chat/projects')),
+
+  createProject: (payload: ChatProjectPayload) =>
+    unwrap<ChatProject>(http.post('/chat/projects', payload)),
+
+  updateProject: (projectId: number, payload: ChatProjectPayload) =>
+    unwrap<ChatProject>(http.put(`/chat/projects/${projectId}`, payload)),
+
+  deleteProject: (projectId: number) =>
+    unwrap<null>(http.delete(`/chat/projects/${projectId}`)),
 
   updateTitle: (sessionId: number, title: string) =>
     unwrap<ChatSession>(http.put(`/chat/sessions/${sessionId}`, { title })),
@@ -95,8 +128,36 @@ export const chatApi = {
       return
     }
 
-    await consumeSseResponse(response, (event) => {
+    await consumeSseResponseUntilTerminal(response, (event) => {
       onEvent({ type: event.type as SseEventType, data: event.data })
+    }, signal)
+  },
+
+  /** 无状态临时聊天：上下文随请求发送，服务端不创建会话或保存消息。 */
+  sendTemporaryMessageStream: async (
+    payload: TemporarySendMessagePayload,
+    onEvent: SseCallback,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const token = getAccessToken()
+    const response = await fetch(`${API_BASE_URL}/chat/temporary/messages/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
     })
+
+    if (!response.ok) {
+      onEvent({ type: 'error', data: { message: `HTTP ${response.status}: ${response.statusText}` } })
+      return
+    }
+
+    await consumeSseResponseUntilTerminal(response, (event) => {
+      onEvent({ type: event.type as SseEventType, data: event.data })
+    }, signal)
   },
 }

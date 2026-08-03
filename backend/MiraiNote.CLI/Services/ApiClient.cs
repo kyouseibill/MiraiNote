@@ -17,6 +17,7 @@ public record AuthTokens(string AccessToken, DateTime AccessTokenExpiresAt, Auth
 public record WorkLogDto(
     int Id, string Title, string? Purpose, string? Content,
     string? Tags, string? Category, DateTime LogDate, byte Status,
+    string? StatusRemark,
     DateTime CreatedAt, DateTime UpdatedAt);
 
 public record MemoDto(
@@ -81,7 +82,8 @@ public class ApiClient
 
     public async Task<PagedResult<WorkLogDto>> GetWorkLogsAsync(
         string? keyword = null, DateTime? dateFrom = null, DateTime? dateTo = null,
-        string? category = null, byte? status = null, int page = 1, int pageSize = 20)
+        string? category = null, string? tag = null, byte? status = null,
+        int page = 1, int pageSize = 20)
     {
         var qs = BuildQs(new Dictionary<string, string?>
         {
@@ -89,12 +91,19 @@ public class ApiClient
             ["dateFrom"] = dateFrom?.ToString("yyyy-MM-dd"),
             ["dateTo"]   = dateTo?.ToString("yyyy-MM-dd"),
             ["category"] = category,
+            ["tag"]      = tag,
             ["status"]   = status?.ToString(),
             ["page"]     = page.ToString(),
             ["pageSize"] = pageSize.ToString()
         });
         return await GetAsync<PagedResult<WorkLogDto>>($"/api/v1/worklogs{qs}");
     }
+
+    public async Task<WorkLogDto> GetWorkLogAsync(int id)
+        => await GetAsync<WorkLogDto>($"/api/v1/worklogs/{id}");
+
+    public async Task<List<string>> GetWorkLogCategoriesAsync()
+        => await GetAsync<List<string>>("/api/v1/worklogs/categories");
 
     public async Task<WorkLogDto> CreateWorkLogAsync(object payload)
         => await PostAsync<WorkLogDto>("/api/v1/worklogs", payload);
