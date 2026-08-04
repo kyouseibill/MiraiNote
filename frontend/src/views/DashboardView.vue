@@ -1,35 +1,80 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  IconArrowRight,
+  IconBulb,
+  IconFileText,
+  IconLoader2,
+  IconPlus,
+} from '@tabler/icons-vue'
+import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
-const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
+const toast = useToast()
 
 const loading = ref(true)
+const quickCapture = ref('')
+const capturing = ref(false)
 const workMemos = ref<Memo[]>([])
 const lifeMemos = ref<Memo[]>([])
 const recentLogs = ref<WorkLog[]>([])
+const isDesignPreview = computed(() => import.meta.env.DEV && route.query.designPreview === '1')
 
-// 今日日期字符串
-const today = new Date()
-const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+const now = new Date()
+const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]
+const dateLabel = `${now.getMonth() + 1}月${now.getDate()}日 · ${weekday}`
 
-// 本周起始（周一）
+const previewWorkMemos: Memo[] = [
+  {
+    id: -1, section: 'work', content: '完成 MiraiNote 用户体验优化方案', remindAt: `${todayStr}T11:00:00`,
+    remindMethods: 0, emailReminderSent: false, popupAcknowledged: false, remindedAt: null,
+    priority: 3, isPinned: true, isDone: false, isArchived: false, createdAt: `${todayStr}T08:12:00`, updatedAt: `${todayStr}T08:12:00`,
+  },
+  {
+    id: -2, section: 'work', content: '与设计团队评审新版原型', remindAt: `${todayStr}T15:30:00`,
+    remindMethods: 0, emailReminderSent: false, popupAcknowledged: false, remindedAt: null,
+    priority: 2, isPinned: false, isDone: false, isArchived: false, createdAt: `${todayStr}T08:30:00`, updatedAt: `${todayStr}T08:30:00`,
+  },
+]
+
+const previewLifeMemos: Memo[] = [
+  {
+    id: -3, section: 'life', content: '整理本周阅读笔记并输出摘要', remindAt: `${todayStr}T20:00:00`,
+    remindMethods: 0, emailReminderSent: false, popupAcknowledged: false, remindedAt: null,
+    priority: 2, isPinned: false, isDone: false, isArchived: false, createdAt: `${todayStr}T09:10:00`, updatedAt: `${todayStr}T09:10:00`,
+  },
+  {
+    id: -4, section: 'life', content: '周末阅读：《纳瓦尔宝典》摘录', remindAt: null,
+    remindMethods: 0, emailReminderSent: false, popupAcknowledged: false, remindedAt: null,
+    priority: 1, isPinned: false, isDone: false, isArchived: false,
+    createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+  },
+]
+
+const previewLogs: WorkLog[] = [
+  { id: -1, title: 'MiraiNote 用户体验优化方案', purpose: null, content: null, tags: null, category: '工作', logDate: `${todayStr}T10:24:00`, status: 1, statusRemark: null, createdAt: `${todayStr}T10:24:00`, updatedAt: `${todayStr}T10:24:00` },
+  { id: -2, title: '下周项目推进计划', purpose: null, content: null, tags: null, category: '工作', logDate: `${todayStr}T09:16:00`, status: 0, statusRemark: null, createdAt: `${todayStr}T09:16:00`, updatedAt: `${todayStr}T09:16:00` },
+  { id: -3, title: '设计系统颜色规范更新', purpose: null, content: null, tags: null, category: '工作', logDate: `${todayStr}T07:35:00`, status: 0, statusRemark: null, createdAt: `${todayStr}T07:35:00`, updatedAt: `${todayStr}T07:35:00` },
+]
+
 function weekStart(): string {
-  const d = new Date(today)
+  const d = new Date(now)
   const day = d.getDay() === 0 ? 7 : d.getDay()
   d.setDate(d.getDate() - (day - 1))
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-// 按 remindAt 升序排列，无 remindAt 的置底；已到期的排最前
 function sortByRemind(list: Memo[]): Memo[] {
   return [...list].sort((a, b) => {
+    if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1
     if (!a.remindAt && !b.remindAt) return 0
     if (!a.remindAt) return 1
     if (!b.remindAt) return -1
@@ -37,52 +82,52 @@ function sortByRemind(list: Memo[]): Memo[] {
   })
 }
 
-const overdueCount = computed(() =>
-  [...workMemos.value, ...lifeMemos.value].filter(
-    (m) => m.remindAt && new Date(m.remindAt) < today && !m.isDone,
-  ).length,
-)
+const focusItems = computed(() => sortByRemind([...workMemos.value, ...lifeMemos.value]).slice(0, 3))
 
-// UTC ISO 字符串 → 本地日期字符串（yyyy-MM-dd）
-function isoToLocalDateStr(iso: string): string {
+const recentEntries = computed(() => {
+  const logs = recentLogs.value.map((item) => ({
+    id: `log-${item.id}`,
+    title: item.title,
+    kind: '工作',
+    section: 'work' as const,
+    date: item.createdAt || item.logDate,
+  }))
+  const life = lifeMemos.value.slice(0, 2).map((item) => ({
+    id: `memo-${item.id}`,
+    title: item.content,
+    kind: '生活',
+    section: 'life' as const,
+    date: item.updatedAt || item.createdAt,
+  }))
+  return [...logs, ...life]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5)
+})
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return '今天'
   const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  if (Number.isNaN(d.getTime())) return '今天'
+  const day = d.toDateString() === now.toDateString() ? '今天' : `${d.getMonth() + 1}/${d.getDate()}`
+  return `${day} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const upcomingTodayCount = computed(() =>
-  [...workMemos.value, ...lifeMemos.value].filter((m) => {
-    if (!m.remindAt || m.isDone) return false
-    return isoToLocalDateStr(m.remindAt) === todayStr
-  }).length,
-)
-
-const sortedWorkMemos = computed(() => sortByRemind(workMemos.value).slice(0, 6))
-const sortedLifeMemos = computed(() => sortByRemind(lifeMemos.value).slice(0, 4))
-
-function isOverdue(m: Memo): boolean {
-  return !!m.remindAt && new Date(m.remindAt) < today && !m.isDone
+function focusTime(item: Memo): string {
+  if (!item.remindAt) return '今天'
+  const d = new Date(item.remindAt)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前`
 }
-function isToday(m: Memo): boolean {
-  return !!m.remindAt && isoToLocalDateStr(m.remindAt) === todayStr
-}
-
-function fmtRemind(iso: string): string {
-  const d = new Date(iso)
-  const dd = d.getDate()
-  const mm = d.getMonth() + 1
-  const hh = String(d.getHours()).padStart(2, '0')
-  const min = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}/${dd} ${hh}:${min}`
-}
-function fmtDate(iso: string): string {
-  return iso ? iso.slice(5, 10).replace('-', '/') : ''
-}
-
-const priorityLabel = ['', '低', '中', '高']
-const priorityColor = ['', 'text-gray-400', 'text-amber-500', 'text-red-500']
 
 async function load() {
   loading.value = true
+  if (isDesignPreview.value) {
+    workMemos.value = previewWorkMemos
+    lifeMemos.value = previewLifeMemos
+    recentLogs.value = previewLogs
+    loading.value = false
+    return
+  }
+
   try {
     const [wm, lm, wl] = await Promise.all([
       memoApi.list({ section: 'work', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
@@ -92,244 +137,172 @@ async function load() {
     workMemos.value = wm.items
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
-  } catch {
-    // 错误已由全局拦截器处理
   } finally {
     loading.value = false
   }
+}
+
+async function createQuickMemo() {
+  const content = quickCapture.value.trim()
+  if (!content || capturing.value) return
+  capturing.value = true
+  try {
+    if (isDesignPreview.value) {
+      workMemos.value = [
+        {
+          ...previewWorkMemos[0],
+          id: -Date.now(),
+          content,
+          remindAt: null,
+          isPinned: false,
+          priority: 2,
+        },
+        ...workMemos.value,
+      ]
+    } else {
+      const created = await memoApi.create({ section: 'work', content, priority: 2 })
+      workMemos.value = [created, ...workMemos.value]
+    }
+    quickCapture.value = ''
+    toast.success('已记录到工作备忘')
+  } finally {
+    capturing.value = false
+  }
+}
+
+async function toggleMemo(item: Memo) {
+  const next = !item.isDone
+  if (isDesignPreview.value || item.id < 0) {
+    item.isDone = next
+    return
+  }
+  const updated = await memoApi.patchStatus(item.id, { isDone: next })
+  const target = item.section === 'life' ? lifeMemos : workMemos
+  const index = target.value.findIndex((memo) => memo.id === item.id)
+  if (index >= 0) target.value[index] = updated
 }
 
 onMounted(load)
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-
-    <section class="relative overflow-hidden rounded-[28px] bg-slate-950 px-6 py-7 text-white shadow-panel sm:px-8 sm:py-8">
-      <div class="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-teal-400/15 blur-3xl" />
-      <div class="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-teal-300">Today overview</p>
-          <h2 class="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">欢迎回来，{{ auth.user?.username }}</h2>
-          <p class="mt-2 text-sm text-slate-400">{{ todayStr.replace(/-/g, ' / ') }} · 梳理今天，稳步推进</p>
-        </div>
-        <button
-          class="inline-flex h-11 items-center justify-center rounded-xl bg-teal-500 px-5 text-sm font-semibold text-white shadow-lg shadow-teal-950/30 transition hover:bg-teal-400"
-          @click="router.push('/work/logs')"
-        >
-          <span class="mr-2 text-lg leading-none">＋</span> 新建工作记录
-        </button>
-      </div>
-    </section>
-
-    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
-      <div
-        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md sm:p-5"
-        @click="router.push('/work/logs')"
-      >
-        <div class="mb-4 h-1 w-8 rounded-full bg-teal-500" />
-        <p class="text-xs font-medium text-slate-500">本周工作记录</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ recentLogs.length }}</p>
-        <p class="mt-1 text-xs text-slate-400">近 7 天</p>
-      </div>
-      <div
-        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md sm:p-5"
-        @click="router.push('/work/memos')"
-      >
-        <div class="mb-4 h-1 w-8 rounded-full bg-sky-500" />
-        <p class="text-xs font-medium text-slate-500">待办工作备忘</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ workMemos.length }}</p>
-        <p class="mt-1 text-xs text-slate-400">未完成</p>
-      </div>
-      <div
-        class="surface-card group cursor-pointer p-4 transition duration-200 hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-md sm:p-5"
-        @click="router.push('/life/memos')"
-      >
-        <div class="mb-4 h-1 w-8 rounded-full bg-rose-400" />
-        <p class="text-xs font-medium text-slate-500">待办生活备忘</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{{ lifeMemos.length }}</p>
-        <p class="mt-1 text-xs text-slate-400">未完成</p>
-      </div>
-      <div
-        class="surface-card p-4 sm:p-5"
-        :class="overdueCount > 0 ? '!border-red-200 !bg-red-50/70' : ''"
-      >
-        <div class="mb-4 h-1 w-8 rounded-full" :class="overdueCount > 0 ? 'bg-red-500' : 'bg-amber-400'" />
-        <p class="text-xs font-medium" :class="overdueCount > 0 ? 'text-red-600' : 'text-slate-500'">今日到期</p>
-        <p class="mt-2 text-3xl font-semibold tracking-tight" :class="overdueCount > 0 ? 'text-red-700' : 'text-slate-900'">
-          {{ upcomingTodayCount + overdueCount }}
-        </p>
-        <p class="mt-1 text-xs" :class="overdueCount > 0 ? 'text-red-500' : 'text-slate-400'">
-          {{ overdueCount > 0 ? `${overdueCount} 条已逾期` : '今天到期' }}
-        </p>
-      </div>
-    </div>
-
-    <!-- 加载中 -->
-    <div v-if="loading" class="py-16 text-center text-gray-400 text-sm">加载中…</div>
-
-    <template v-else>
-      <!-- 主内容区：左右两列 -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        <!-- 工作备忘 -->
-        <div class="surface-card overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="text-sm font-semibold text-slate-900">工作备忘</h3>
-            <button
-              class="text-xs text-teal-600 hover:underline"
-              @click="router.push('/work/memos')"
-            >
-              全部 →
-            </button>
+  <div class="mx-auto w-full max-w-[1160px] px-6 py-12 sm:px-10 lg:px-14 lg:pb-16 lg:pt-[120px]">
+    <div class="grid gap-12 xl:grid-cols-[minmax(0,1fr)_300px] xl:gap-16">
+      <section class="min-w-0 xl:pr-2">
+        <header>
+          <div class="flex items-center gap-3 font-serif text-[15px] text-[#4a4945]">
+            <span class="h-[9px] w-[9px] shrink-0 rounded-full bg-[#b4493f]" />
+            <span>{{ dateLabel }}</span>
           </div>
-          <ul v-if="sortedWorkMemos.length" class="divide-y divide-gray-50">
-            <li
-              v-for="m in sortedWorkMemos"
-              :key="m.id"
-              class="px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
-              @click="router.push('/work/memos')"
-            >
-              <div class="flex items-start gap-2">
-                <span
-                  class="mt-0.5 shrink-0 text-xs font-medium"
-                  :class="priorityColor[m.priority]"
-                  title="优先级"
-                >{{ priorityLabel[m.priority] }}</span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm text-gray-800 line-clamp-2">{{ m.content }}</p>
-                  <div class="mt-1 flex items-center gap-2 flex-wrap">
-                    <span v-if="m.remindAt" class="text-xs" :class="isOverdue(m) ? 'text-red-500 font-medium' : isToday(m) ? 'text-amber-600' : 'text-gray-400'">
-                      🔔 {{ fmtRemind(m.remindAt) }}{{ isOverdue(m) ? ' 已逾期' : '' }}
-                    </span>
-                    <span v-if="m.isPinned" class="text-xs text-teal-500">📌 已置顶</span>
-                  </div>
-                </div>
-              </div>
-            </li>
-          </ul>
-          <div v-else class="px-4 py-8 text-center text-sm text-gray-400">
-            暂无待办工作备忘
-          </div>
-        </div>
+          <h1 class="mt-4 font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]">
+            今天，安静地推进
+          </h1>
+        </header>
 
-        <!-- 最近工作记录 -->
-        <div class="surface-card overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="text-sm font-semibold text-slate-900">本周工作记录</h3>
-            <button
-              class="text-xs text-teal-600 hover:underline"
-              @click="router.push('/work/logs')"
-            >
-              全部 →
-            </button>
+        <form class="mt-12 flex h-[52px] w-full" @submit.prevent="createQuickMemo">
+          <div class="relative min-w-0 flex-1">
+            <input
+              v-model="quickCapture"
+              type="text"
+              class="h-full w-full rounded-l-[5px] rounded-r-none border border-r-0 border-[#d8d3ca] bg-white/60 px-4 pr-24 text-[13px] text-[#34322f] shadow-none placeholder:text-[#aaa59d] focus:z-10"
+              placeholder="记录此刻…"
+              aria-label="快速记录"
+            />
+            <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-[#a29d95]">⌘ + Enter</span>
           </div>
-          <ul v-if="recentLogs.length" class="divide-y divide-gray-50">
-            <li
-              v-for="log in recentLogs"
-              :key="log.id"
-              class="px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
-              @click="router.push('/work/logs')"
-            >
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-mono text-gray-400 shrink-0">{{ fmtDate(log.logDate) }}</span>
-                <span v-if="log.category" class="text-xs px-1.5 py-0.5 rounded bg-teal-50 text-teal-600 shrink-0">{{ log.category }}</span>
-                <p class="text-sm text-gray-800 font-medium truncate">{{ log.title }}</p>
-              </div>
-              <p v-if="log.purpose" class="mt-0.5 ml-16 text-xs text-gray-400 truncate">{{ log.purpose }}</p>
-            </li>
-          </ul>
-          <div v-else class="px-4 py-8 text-center text-sm text-gray-400">
-            本周还没有工作记录，
-            <button class="text-teal-600 hover:underline" @click="router.push('/work/logs')">去记录一条</button>
-          </div>
-        </div>
+          <button
+            type="submit"
+            class="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-r-[5px] bg-[#4c6178] text-white transition hover:bg-[#384b60] disabled:opacity-50"
+            :disabled="capturing"
+            aria-label="添加记录"
+          >
+            <IconLoader2 v-if="capturing" :size="19" :stroke-width="1.5" class="animate-spin" />
+            <IconPlus v-else :size="22" :stroke-width="1.4" />
+          </button>
+        </form>
 
-        <!-- 生活备忘 -->
-        <div class="surface-card overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <h3 class="text-sm font-semibold text-slate-900">生活备忘</h3>
-            <button
-              class="text-xs text-rose-500 hover:underline"
-              @click="router.push('/life/memos')"
-            >
-              全部 →
-            </button>
-          </div>
-          <ul v-if="sortedLifeMemos.length" class="divide-y divide-gray-50">
-            <li
-              v-for="m in sortedLifeMemos"
-              :key="m.id"
-              class="px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
-              @click="router.push('/life/memos')"
-            >
-              <div class="flex items-start gap-2">
-                <span class="mt-0.5 shrink-0 text-xs font-medium" :class="priorityColor[m.priority]">
-                  {{ priorityLabel[m.priority] }}
+        <div class="mt-24">
+          <h2 class="font-serif text-[17px] font-medium tracking-[0.04em] text-[#2f2d29]">今日焦点</h2>
+          <div class="mt-5 border-y border-[#e1dcd4]">
+            <div v-if="loading" class="flex h-40 items-center justify-center text-[12px] text-[#99938b]">
+              <IconLoader2 :size="18" :stroke-width="1.4" class="mr-2 animate-spin" />
+              正在整理今天
+            </div>
+            <template v-else-if="focusItems.length">
+              <label
+                v-for="item in focusItems"
+                :key="item.id"
+                class="group grid min-h-[64px] cursor-pointer grid-cols-[18px_minmax(0,1fr)_62px_72px] items-center gap-3 border-b border-[#e8e3dc] py-3 last:border-b-0 lg:grid-cols-[18px_minmax(0,280px)_70px_minmax(84px,1fr)] lg:gap-4"
+              >
+                <input
+                  type="checkbox"
+                  class="h-[18px] w-[18px] shrink-0 rounded-[4px] border-[#a9a49c]"
+                  :checked="item.isDone"
+                  @change="toggleMemo(item)"
+                />
+                <span class="min-w-0 truncate text-[13px] text-[#3e3b37] group-hover:text-[#384b60]" :class="item.isDone ? 'line-through opacity-45' : ''">
+                  {{ item.content }}
                 </span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm text-gray-800 line-clamp-2">{{ m.content }}</p>
-                  <span v-if="m.remindAt" class="text-xs mt-0.5 inline-block" :class="isOverdue(m) ? 'text-red-500 font-medium' : isToday(m) ? 'text-amber-600' : 'text-gray-400'">
-                    🔔 {{ fmtRemind(m.remindAt) }}{{ isOverdue(m) ? ' 已逾期' : '' }}
-                  </span>
-                </div>
-              </div>
-            </li>
-          </ul>
-          <div v-else class="px-4 py-8 text-center text-sm text-gray-400">
-            暂无待办生活备忘
+                <span class="flex shrink-0 items-center gap-2 text-[11px] text-[#979189]">
+                  <span class="h-[5px] w-[5px] rounded-full" :class="item.section === 'life' ? 'bg-[#b4493f]' : 'bg-[#4c6178]'" />
+                  {{ item.section === 'life' ? '生活' : '工作' }}
+                </span>
+                <span class="text-right text-[11px] tabular-nums text-[#7f7a72]">{{ focusTime(item) }}</span>
+              </label>
+            </template>
+            <div v-else class="flex h-36 flex-col items-center justify-center text-[12px] text-[#99938b]">
+              <p>今天还没有待办</p>
+              <button class="mt-3 text-[#4c6178] hover:underline" @click="router.push('/work/memos')">添加第一条备忘</button>
+            </div>
           </div>
+          <button class="mt-7 inline-flex items-center gap-2 text-[12px] text-[#4c6178] hover:text-[#384b60]" @click="router.push('/work/memos')">
+            查看全部记录
+            <IconArrowRight :size="15" :stroke-width="1.4" />
+          </button>
         </div>
+      </section>
 
-        <!-- 快捷导航 -->
-        <div class="surface-card p-4">
-          <h3 class="mb-3 text-sm font-semibold text-slate-900">快捷入口</h3>
-          <div class="grid grid-cols-2 gap-3">
+      <aside class="border-t border-[#e1dcd4] pt-10 xl:border-l xl:border-t-0 xl:pl-12 xl:pt-14">
+        <section>
+          <h2 class="font-serif text-[16px] font-medium tracking-[0.04em] text-[#2f2d29]">最近记录</h2>
+          <div class="mt-7 space-y-7">
             <button
-              class="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-700 hover:bg-teal-100 transition text-left"
-              @click="router.push('/work/logs')"
+              v-for="entry in recentEntries"
+              :key="entry.id"
+              class="group flex min-h-[44px] w-full items-start gap-3 text-left"
+              @click="router.push(entry.section === 'life' ? '/life/memos' : '/work/logs')"
             >
-              <span class="text-base">📝</span>
-              <div>
-                <p class="font-medium text-xs">工作记录</p>
-                <p class="text-xs text-teal-400 mt-0.5">记录今日工作</p>
-              </div>
-            </button>
-            <button
-              class="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-700 hover:bg-teal-100 transition text-left"
-              @click="router.push('/work/memos')"
-            >
-              <span class="text-base">📌</span>
-              <div>
-                <p class="font-medium text-xs">工作备忘</p>
-                <p class="text-xs text-teal-400 mt-0.5">添加提醒事项</p>
-              </div>
-            </button>
-            <button
-              class="flex items-center gap-2 rounded-lg border border-rose-100 bg-rose-50 px-3 py-3 text-sm text-rose-700 hover:bg-rose-100 transition text-left"
-              @click="router.push('/life/logs')"
-            >
-              <span class="text-base">🌅</span>
-              <div>
-                <p class="font-medium text-xs">生活记录</p>
-                <p class="text-xs text-rose-400 mt-0.5">记录今日心情</p>
-              </div>
-            </button>
-            <button
-              class="flex items-center gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-3 text-sm text-amber-700 hover:bg-amber-100 transition text-left"
-              @click="router.push('/work/reports')"
-            >
-              <span class="text-base">✨</span>
-              <div>
-                <p class="font-medium text-xs">写周报</p>
-                <p class="text-xs text-amber-400 mt-0.5">一键生成周报</p>
-              </div>
+              <IconFileText :size="18" :stroke-width="1.35" class="mt-0.5 shrink-0 text-[#69717a]" />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-serif text-[13px] text-[#3b3935] group-hover:text-[#384b60]">{{ entry.title }}</span>
+                <span class="mt-1.5 flex items-center gap-2 text-[10px] text-[#99938b]">
+                  {{ fmtTime(entry.date) }}
+                  <span class="h-[4px] w-[4px] rounded-full" :class="entry.section === 'life' ? 'bg-[#b4493f]' : 'bg-[#4c6178]'" />
+                  {{ entry.kind }}
+                </span>
+              </span>
             </button>
           </div>
-        </div>
+          <button class="mt-7 inline-flex items-center gap-2 text-[12px] text-[#4c6178] hover:text-[#384b60]" @click="router.push('/work/logs')">
+            查看全部记录
+            <IconArrowRight :size="15" :stroke-width="1.4" />
+          </button>
+        </section>
 
-      </div>
-    </template>
-
+        <section class="mt-10 border-t border-[#e1dcd4] pt-9">
+          <div class="flex items-center gap-3">
+            <IconBulb :size="19" :stroke-width="1.35" class="text-[#69717a]" />
+            <h2 class="font-serif text-[16px] font-medium tracking-[0.04em] text-[#2f2d29]">Mirai 建议</h2>
+          </div>
+          <p class="mt-6 text-[12px] leading-7 text-[#66615a]">
+            为重要任务预留 90 分钟专注时间，今天的深度工作会更有成效。
+          </p>
+          <button class="mt-6 inline-flex items-center gap-2 text-[12px] text-[#4c6178] hover:text-[#384b60]" @click="router.push('/chat')">
+            专注时间建议
+            <IconArrowRight :size="15" :stroke-width="1.4" />
+          </button>
+        </section>
+      </aside>
+    </div>
   </div>
 </template>

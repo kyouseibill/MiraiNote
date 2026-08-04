@@ -2,6 +2,10 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+import '@fontsource/noto-sans-sc/400.css'
+import '@fontsource/noto-sans-sc/500.css'
+import '@fontsource/noto-serif-sc/400.css'
+import '@fontsource/noto-serif-sc/500.css'
 import './assets/main.css'
 
 const app = createApp(App)

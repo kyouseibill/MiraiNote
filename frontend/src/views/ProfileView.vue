@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useRouter } from 'vue-router'
+import { IconLogout } from '@tabler/icons-vue'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -56,6 +57,13 @@ function fmtDate(iso: string | null): string {
     hour: '2-digit', minute: '2-digit',
   })
 }
+
+async function handleLogout() {
+  if (!confirm('确定要退出登录吗？')) return
+  await auth.logout()
+  toast.success('已退出登录')
+  router.replace({ name: 'login' })
+}
 </script>
 
 <template>
@@ -78,13 +86,20 @@ function fmtDate(iso: string | null): string {
             class="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium"
           >管理员</span>
           <span
-            class="text-xs px-2 py-0.5 rounded-full"
+            class="inline-flex items-center leading-none text-xs px-2.5 py-1 rounded-full"
             :class="auth.user?.isEmailVerified
               ? 'bg-green-100 text-green-700'
               : 'bg-amber-100 text-amber-700'"
           >
             {{ auth.user?.isEmailVerified ? '邮箱已验证' : '邮箱未验证' }}
           </span>
+          <button
+            class="ml-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#ddd8cf] px-3 text-[12px] leading-none text-[#716c65] transition hover:border-[#c7a59f] hover:text-[#973a33]"
+            @click="handleLogout"
+          >
+            <IconLogout :size="15" :stroke-width="1.5" />
+            退出
+          </button>
         </div>
       </div>
 

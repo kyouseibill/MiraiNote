@@ -99,6 +99,29 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
+  // 本地设计预览：仅在 Vite 开发环境生效，便于在无后端时进行视觉回归检查。
+  if (
+    import.meta.env.DEV
+    && ['dashboard', 'life-logs'].includes(String(to.name))
+    && to.query.designPreview === '1'
+    && !auth.isAuthenticated
+  ) {
+    auth.setAuth({
+      accessToken: 'design-preview',
+      accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      user: {
+        id: -1,
+        username: 'Alex',
+        email: 'preview@mirainote.local',
+        isAdmin: false,
+        isEmailVerified: true,
+        isActive: true,
+        lastLoginAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    })
+  }
+
   // 首次进入应用且未认证：尝试静默刷新
   if (!auth.isAuthenticated && !(window as any).__mn_refresh_tried) {
     ;(window as any).__mn_refresh_tried = true
