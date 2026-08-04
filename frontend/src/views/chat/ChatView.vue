@@ -303,7 +303,6 @@ const ACCEPTED_TYPES = [
   '.txt', '.md', '.csv', '.json', '.xml', '.html', '.yaml', '.yml',
   '.ts', '.js', '.tsx', '.jsx', '.py', '.cs', '.java', '.go', '.rs',
   '.sql', '.sh', '.bat', '.ps1', '.vue', '.css', '.log',
-  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.tif', '.avif',
 ].join(',')
 
 const LOCAL_TEXT_EXTENSIONS = new Set([
@@ -333,16 +332,7 @@ async function uploadFiles(files: File[]) {
 
     try {
       if (isImageFile(file)) {
-        const dataUrl = await readFileAsDataUrl(file)
-        const mimeType = file.type || imageMimeType(file.name)
-        store.pendingAttachments.push({
-          fileName: file.name || `clipboard-${Date.now()}.${mimeType.split('/')[1] || 'png'}`,
-          fileType: '图片',
-          textContent: `[图片文件: ${file.name || 'clipboard image'}]`,
-          mimeType,
-          dataUrl,
-          isImage: true,
-        })
+        toast.warning('当前模型不支持图片解析，请上传 PDF、Word、Excel 或文本文件')
         continue
       }
 
@@ -390,15 +380,6 @@ function readFileAsText(file: File): Promise<string> {
   })
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'))
-    reader.readAsDataURL(file)
-  })
-}
-
 function isLocalTextFile(file: File): boolean {
   if (file.type.startsWith('text/')) return true
   return LOCAL_TEXT_EXTENSIONS.has(fileExtension(file.name))
@@ -426,23 +407,6 @@ function textMimeType(fileName: string): string {
     '.yml': 'application/yaml',
   }
   return map[ext] ?? 'text/plain'
-}
-
-function imageMimeType(fileName: string): string {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    bmp: 'image/bmp',
-    svg: 'image/svg+xml',
-    tiff: 'image/tiff',
-    tif: 'image/tiff',
-    avif: 'image/avif',
-  }
-  return map[ext ?? ''] ?? 'image/png'
 }
 
 function formatUploadError(err: any): string {
@@ -1049,7 +1013,7 @@ onMounted(async () => {
           <button
             class="shrink-0 h-10 w-10 rounded-xl border border-gray-200 text-gray-400 hover:text-teal-600 hover:border-teal-300 flex items-center justify-center transition"
             :disabled="store.sending"
-            title="上传文件（支持 PDF / Word / Excel / 文本 / 图片）"
+            title="上传文件（支持 PDF / Word / Excel / 文本；当前模型不支持图片解析）"
             aria-label="上传文件"
             @click="triggerFileInput"
           >

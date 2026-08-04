@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useLifeLogStore } from '@/stores/lifeLog'
 import { lifeLogApi } from '@/api/lifeLog'
 import { useToast } from '@/composables/useToast'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { LifeLog, CreateLifeLogPayload } from '@/types/lifeLog'
+import {
+  IconArrowsMaximize,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCircleMinus,
+  IconCirclePlus,
+  IconDownload,
+  IconRotateClockwise,
+  IconX,
+} from '@tabler/icons-vue'
 
 const store = useLifeLogStore()
 const toast = useToast()
+const route = useRoute()
 
 const keyword = ref('')
 const selectedMood = ref('')
@@ -22,6 +34,35 @@ const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 // 展开详情的记录 ID
 const expandedId = ref<number | null>(null)
+
+// 图片查看器
+const viewerOpen = ref(false)
+const viewerImages = ref<string[]>([])
+const viewerIndex = ref(0)
+const viewerScale = ref(1)
+const viewerRotation = ref(0)
+
+const viewerImageUrl = computed(() => {
+  const path = viewerImages.value[viewerIndex.value]
+  return path ? staticUrl(path) : ''
+})
+const isDesignPreview = computed(() => import.meta.env.DEV && route.query.designPreview === '1')
+
+const previewImagePaths = Array.from(
+  { length: 5 },
+  (_, index) => `${window.location.origin}/design-preview/life-viewer-${index + 1}.webp`,
+)
+
+const previewLifeLog: LifeLog = {
+  id: -1,
+  content: '沿着海岸慢慢走，风很轻。电车从身旁经过，远处的海面像一张安静铺开的纸。',
+  mood: '平静',
+  imagePath: previewImagePaths[0],
+  imagePaths: previewImagePaths,
+  logDate: '2026-08-03T18:20:00',
+  createdAt: '2026-08-03T18:20:00',
+  updatedAt: '2026-08-03T18:20:00',
+}
 
 const MOODS = ['开心', '平静', '疲惫', '难过', '兴奋', '焦虑', '感恩']
 
@@ -174,6 +215,79 @@ function getImagePaths(item: Pick<LifeLog, 'imagePath' | 'imagePaths'>): string[
   return item.imagePath ? [item.imagePath] : []
 }
 
+function resetViewerTransform() {
+  viewerScale.value = 1
+  viewerRotation.value = 0
+}
+
+function openViewer(images: string[], index = 0) {
+  if (images.length === 0) return
+  viewerImages.value = images
+  viewerIndex.value = Math.min(Math.max(index, 0), images.length - 1)
+  resetViewerTransform()
+  viewerOpen.value = true
+  document.body.style.overflow = 'hidden'
+}
+
+function closeViewer() {
+  viewerOpen.value = false
+  viewerImages.value = []
+  resetViewerTransform()
+  document.body.style.overflow = ''
+}
+
+function selectViewerImage(index: number) {
+  if (index < 0 || index >= viewerImages.value.length) return
+  viewerIndex.value = index
+  resetViewerTransform()
+}
+
+function showPreviousImage() {
+  const count = viewerImages.value.length
+  if (count <= 1) return
+  selectViewerImage((viewerIndex.value - 1 + count) % count)
+}
+
+function showNextImage() {
+  const count = viewerImages.value.length
+  if (count <= 1) return
+  selectViewerImage((viewerIndex.value + 1) % count)
+}
+
+function zoomViewer(delta: number) {
+  viewerScale.value = Math.min(3, Math.max(0.5, Number((viewerScale.value + delta).toFixed(2))))
+}
+
+function rotateViewer() {
+  viewerRotation.value = (viewerRotation.value + 90) % 360
+}
+
+async function downloadViewerImage() {
+  if (!viewerImageUrl.value) return
+  const filename = decodeURIComponent(viewerImageUrl.value.split('/').pop()?.split('?')[0] || `life-photo-${viewerIndex.value + 1}.jpg`)
+  try {
+    const response = await fetch(viewerImageUrl.value)
+    if (!response.ok) throw new Error('download failed')
+    const blobUrl = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(blobUrl)
+  } catch {
+    window.open(viewerImageUrl.value, '_blank', 'noopener,noreferrer')
+  }
+}
+
+function handleViewerKeydown(event: KeyboardEvent) {
+  if (!viewerOpen.value) return
+  if (event.key === 'Escape') closeViewer()
+  if (event.key === 'ArrowLeft') showPreviousImage()
+  if (event.key === 'ArrowRight') showNextImage()
+  if (event.key === '+' || event.key === '=') zoomViewer(0.25)
+  if (event.key === '-') zoomViewer(-0.25)
+}
+
 async function submit() {
   if (!form.content.trim()) {
     toast.error('请填写内容')
@@ -215,8 +329,23 @@ async function remove(item: LifeLog) {
 }
 
 onMounted(() => {
+  window.addEventListener('keydown', handleViewerKeydown)
+  if (isDesignPreview.value) {
+    selectedMonth.value = '2026-08'
+    store.items = [previewLifeLog]
+    store.total = 1
+    store.page = 1
+    expandedId.value = previewLifeLog.id
+    openViewer(previewImagePaths, 2)
+    return
+  }
   selectedMonth.value = currentMonth()
   load(1)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleViewerKeydown)
+  document.body.style.overflow = ''
 })
 </script>
 
@@ -344,9 +473,10 @@ onMounted(() => {
                   v-for="(path, imageIndex) in getImagePaths(item)"
                   :key="path"
                   :src="staticUrl(path)"
-                  class="aspect-square w-full rounded-xl border border-slate-100 object-cover"
+                  class="aspect-square w-full cursor-zoom-in rounded-xl border border-slate-100 object-cover transition duration-200 hover:border-slate-300 hover:opacity-95"
                   :alt="`生活照片 ${imageIndex + 1}`"
                   loading="lazy"
+                  @click="openViewer(getImagePaths(item), imageIndex)"
                 />
               </div>
             </div>
@@ -383,12 +513,12 @@ onMounted(() => {
               class="h-20 w-20 cursor-pointer rounded-xl border border-slate-100 object-cover sm:h-24 sm:w-24"
               :alt="`生活照片 ${imageIndex + 1}`"
               loading="lazy"
-              @click="toggleExpand(item.id)"
+              @click="openViewer(getImagePaths(item), imageIndex)"
             />
             <button
               v-if="getImagePaths(item).length > 4"
               class="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-600 sm:h-24 sm:w-24"
-              @click="toggleExpand(item.id)"
+              @click="openViewer(getImagePaths(item), 4)"
             >
               +{{ getImagePaths(item).length - 4 }}
             </button>
@@ -433,6 +563,146 @@ onMounted(() => {
       </div>
     </div>
   </div>
+
+  <!-- 图片查看器 -->
+  <Teleport to="body">
+    <div
+      v-if="viewerOpen"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-[#171716]/85 p-2 backdrop-blur-[2px] sm:p-5"
+      role="dialog"
+      aria-modal="true"
+      aria-label="生活照片查看器"
+      @click.self="closeViewer"
+    >
+      <div class="relative flex h-[min(92vh,900px)] w-[min(94vw,1180px)] flex-col overflow-hidden rounded-lg border border-white/10 bg-[#242321] shadow-2xl">
+        <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pb-4 pt-16 sm:px-14 sm:pb-6 sm:pt-20">
+          <div class="absolute right-3 top-3 z-20 flex items-center overflow-hidden rounded-md border border-white/15 bg-[#2d2c29]/95 text-white shadow-lg sm:right-5 sm:top-5">
+            <button
+              type="button"
+              class="flex h-10 w-10 items-center justify-center border-r border-white/10 text-white/75 transition hover:bg-white/10 hover:text-white"
+              title="适应屏幕"
+              aria-label="适应屏幕"
+              @click="resetViewerTransform"
+            >
+              <IconArrowsMaximize :size="17" :stroke-width="1.5" />
+            </button>
+            <button
+              type="button"
+              class="flex h-10 w-10 items-center justify-center border-r border-white/10 text-white/75 transition hover:bg-white/10 hover:text-white"
+              title="缩小"
+              aria-label="缩小图片"
+              @click="zoomViewer(-0.25)"
+            >
+              <IconCircleMinus :size="17" :stroke-width="1.5" />
+            </button>
+            <span class="flex h-10 min-w-14 items-center justify-center border-r border-white/10 px-2 text-[11px] tabular-nums text-white/70">
+              {{ Math.round(viewerScale * 100) }}%
+            </span>
+            <button
+              type="button"
+              class="flex h-10 w-10 items-center justify-center border-r border-white/10 text-white/75 transition hover:bg-white/10 hover:text-white"
+              title="放大"
+              aria-label="放大图片"
+              @click="zoomViewer(0.25)"
+            >
+              <IconCirclePlus :size="17" :stroke-width="1.5" />
+            </button>
+            <button
+              type="button"
+              class="hidden h-10 w-10 items-center justify-center border-r border-white/10 text-white/75 transition hover:bg-white/10 hover:text-white sm:flex"
+              title="顺时针旋转"
+              aria-label="顺时针旋转图片"
+              @click="rotateViewer"
+            >
+              <IconRotateClockwise :size="17" :stroke-width="1.5" />
+            </button>
+            <button
+              type="button"
+              class="hidden h-10 w-10 items-center justify-center border-r border-white/10 text-white/75 transition hover:bg-white/10 hover:text-white sm:flex"
+              title="下载原图"
+              aria-label="下载原图"
+              @click="downloadViewerImage"
+            >
+              <IconDownload :size="17" :stroke-width="1.5" />
+            </button>
+            <button
+              type="button"
+              class="flex h-10 w-10 items-center justify-center text-white/75 transition hover:bg-white/10 hover:text-white"
+              title="关闭"
+              aria-label="关闭图片查看器"
+              @click="closeViewer"
+            >
+              <IconX :size="18" :stroke-width="1.5" />
+            </button>
+          </div>
+
+          <button
+            v-if="viewerImages.length > 1"
+            type="button"
+            class="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/20 text-white/70 transition hover:bg-white/10 hover:text-white sm:left-4 sm:h-11 sm:w-11"
+            title="上一张"
+            aria-label="上一张图片"
+            @click="showPreviousImage"
+          >
+            <IconChevronLeft :size="21" :stroke-width="1.4" />
+          </button>
+
+          <img
+            :src="viewerImageUrl"
+            :alt="`生活照片 ${viewerIndex + 1}`"
+            class="max-h-full max-w-full select-none object-contain transition-transform duration-200 ease-out"
+            :style="{ transform: `scale(${viewerScale}) rotate(${viewerRotation}deg)` }"
+            draggable="false"
+          />
+
+          <button
+            v-if="viewerImages.length > 1"
+            type="button"
+            class="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/20 text-white/70 transition hover:bg-white/10 hover:text-white sm:right-4 sm:h-11 sm:w-11"
+            title="下一张"
+            aria-label="下一张图片"
+            @click="showNextImage"
+          >
+            <IconChevronRight :size="21" :stroke-width="1.4" />
+          </button>
+        </div>
+
+        <div class="shrink-0 border-t border-[#ddd8cf] bg-[#f8f6f0] px-4 py-3 sm:px-8 sm:py-4">
+          <div
+            v-if="viewerImages.length > 1"
+            class="mx-auto flex max-w-full items-center justify-start gap-2 overflow-x-auto pb-1 sm:justify-center sm:gap-3"
+          >
+            <button
+              v-for="(path, imageIndex) in viewerImages"
+              :key="path"
+              type="button"
+              class="relative h-14 w-14 shrink-0 overflow-visible rounded-md border bg-white p-0.5 transition sm:h-20 sm:w-20"
+              :class="imageIndex === viewerIndex
+                ? 'border-[#4c6178] shadow-[0_0_0_1px_rgba(76,97,120,0.15)]'
+                : 'border-[#ddd8cf] opacity-70 hover:border-[#9ca8b4] hover:opacity-100'"
+              :aria-label="`查看第 ${imageIndex + 1} 张图片`"
+              @click="selectViewerImage(imageIndex)"
+            >
+              <img
+                :src="staticUrl(path)"
+                :alt="`缩略图 ${imageIndex + 1}`"
+                class="h-full w-full rounded-[4px] object-cover"
+                loading="lazy"
+              />
+              <span
+                v-if="imageIndex === viewerIndex"
+                class="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-[#f8f6f0] bg-[#b4493f]"
+                aria-hidden="true"
+              />
+            </button>
+          </div>
+          <p class="mt-2 text-center text-[11px] tabular-nums tracking-[0.12em] text-[#7f7a72]">
+            {{ viewerIndex + 1 }} / {{ viewerImages.length }}
+          </p>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 侧边抽屉 -->
   <Teleport to="body">
