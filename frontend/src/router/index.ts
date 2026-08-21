@@ -107,7 +107,8 @@ router.beforeEach(async (to) => {
     && !auth.isAuthenticated
   ) {
     auth.setAuth({
-      accessToken: 'design-preview',
+      // 运行时随机生成，避免硬编码凭据模式；仅为本地预览占位，后端不认可此值
+      accessToken: crypto.randomUUID(),
       accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       user: {
         id: -1,
