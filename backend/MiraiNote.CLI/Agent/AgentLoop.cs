@@ -354,48 +354,52 @@ public class AgentLoop
             if (choices.GetArrayLength() == 0) continue;
             var choice = choices[0];
 
+            // 先完整处理 delta 内容，再判断 finish_reason：
+            // 最后一个 content chunk 可能同时携带 finish_reason，若先 break 会丢弃该块正文。
+            if (choice.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object)
+            {
+                if (delta.TryGetProperty("content", out var contentEl) &&
+                    contentEl.ValueKind == JsonValueKind.String)
+                {
+                    var token = contentEl.GetString();
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        content.Append(token);
+                        if (onToken != null) await onToken(token);
+                    }
+                }
+
+                if (delta.TryGetProperty("tool_calls", out var tcDeltaEl) &&
+                    tcDeltaEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var tcEl in tcDeltaEl.EnumerateArray())
+                    {
+                        var index = tcEl.GetProperty("index").GetInt32();
+                        if (!toolCalls.ContainsKey(index))
+                            toolCalls[index] = new ToolCallDelta();
+
+                        var tc = toolCalls[index];
+                        if (tcEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+                            tc.Id = idEl.GetString()!;
+                        if (tcEl.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
+                            tc.Type = typeEl.GetString()!;
+                        if (tcEl.TryGetProperty("function", out var funcEl))
+                        {
+                            if (funcEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+                                tc.FunctionName = nameEl.GetString()!;
+                            if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
+                                tc.Arguments += argsEl.GetString();
+                        }
+                    }
+                }
+            }
+
+            // 检查 finish_reason（在处理完 delta 之后）
             if (choice.TryGetProperty("finish_reason", out var frEl) &&
                 frEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(frEl.GetString()))
             {
                 finishReason = frEl.GetString()!;
                 if (finishReason == "stop" || finishReason == "length") break;
-            }
-
-            var delta = choice.GetProperty("delta");
-
-            if (delta.TryGetProperty("content", out var contentEl) &&
-                contentEl.ValueKind == JsonValueKind.String)
-            {
-                var token = contentEl.GetString();
-                if (!string.IsNullOrEmpty(token))
-                {
-                    content.Append(token);
-                    if (onToken != null) await onToken(token);
-                }
-            }
-
-            if (delta.TryGetProperty("tool_calls", out var tcDeltaEl) &&
-                tcDeltaEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var tcEl in tcDeltaEl.EnumerateArray())
-                {
-                    var index = tcEl.GetProperty("index").GetInt32();
-                    if (!toolCalls.ContainsKey(index))
-                        toolCalls[index] = new ToolCallDelta();
-
-                    var tc = toolCalls[index];
-                    if (tcEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
-                        tc.Id = idEl.GetString()!;
-                    if (tcEl.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
-                        tc.Type = typeEl.GetString()!;
-                    if (tcEl.TryGetProperty("function", out var funcEl))
-                    {
-                        if (funcEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
-                            tc.FunctionName = nameEl.GetString()!;
-                        if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
-                            tc.Arguments += argsEl.GetString();
-                    }
-                }
             }
         }
 

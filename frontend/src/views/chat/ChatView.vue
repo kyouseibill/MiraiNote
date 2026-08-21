@@ -30,11 +30,21 @@ function renderUserContent(content: string | null | undefined): string {
   return String(content ?? '').replace(/\n/g, '<br>')
 }
 
+// 全局剥离思考块（兼容 <think> 变体；未闭合的思考块剥到末尾）
+function stripThinkingBlocks(text: string): string {
+  return text.replace(/<(?:thinking|think)>[\s\S]*?(?:<\/(?:thinking|think)>|$)/gi, '')
+}
+
+// 清理残留的思考/答案标签
+function stripResidualTags(text: string): string {
+  return text.replace(/<\/?(?:thinking|think|answer)>/gi, '').trim()
+}
+
 function splitAssistantContent(content: string | null | undefined, allowOpenThinking = false): { thinking: string; answer: string } {
   const raw = String(content ?? '')
-  const hasClosedThinking = /<thinking>[\s\S]*?<\/thinking>/i.test(raw)
+  const hasClosedThinking = /<(?:thinking|think)>[\s\S]*?<\/(?:thinking|think)>/i.test(raw)
   if (!hasClosedThinking && allowOpenThinking) {
-    const openThinkingMatch = raw.match(/<thinking>([\s\S]*)$/i)
+    const openThinkingMatch = raw.match(/<(?:thinking|think)>([\s\S]*)$/i)
     if (openThinkingMatch) {
       return { thinking: openThinkingMatch[1].trim(), answer: '' }
     }
@@ -43,29 +53,28 @@ function splitAssistantContent(content: string | null | undefined, allowOpenThin
   if (!hasClosedThinking) {
     return {
       thinking: '',
-      answer: raw.replace(/<\/?thinking>/gi, '').replace(/<\/?answer>/gi, '').trim(),
+      answer: stripResidualTags(raw),
     }
   }
 
-  const thinkingMatch = raw.match(/<thinking>([\s\S]*?)<\/thinking>/i)
-  const answerMatch = raw.match(/<answer>([\s\S]*?)(?:<\/answer>|$)/i)
-
-  if (!thinkingMatch) {
-    return {
-      thinking: '',
-      answer: raw.replace(/<\/?answer>/gi, '').trim(),
-    }
+  // 多轮工具调用会产生多个思考块，全部合并展示；
+  // 末尾未闭合的思考块（流式进行中）也一并纳入。
+  const thinkingParts: string[] = []
+  let afterClosed = 0
+  for (const m of raw.matchAll(/<(?:thinking|think)>([\s\S]*?)<\/(?:thinking|think)>/gi)) {
+    const part = m[1].trim()
+    if (part) thinkingParts.push(part)
+    afterClosed = (m.index ?? 0) + m[0].length
   }
+  const openTail = raw.slice(afterClosed).match(/<(?:thinking|think)>([\s\S]*)$/i)
+  if (openTail && openTail[1].trim()) thinkingParts.push(openTail[1].trim())
+  const thinking = thinkingParts.join('\n\n---\n\n')
 
-  const thinking = thinkingMatch[1].trim()
-  const answer = answerMatch
-    ? answerMatch[1].trim()
-    : raw
-        .replace(/<thinking>[\s\S]*?<\/thinking>/i, '')
-        .replace(/<\/?answer>/gi, '')
-        .trim()
+  // 正文 = 剥离所有思考块与残留标签后的剩余文本，
+  // 这样混入正文的 thinking 标签/思考文字不会泄漏（含多轮拼接的情况）。
+  const answer = stripResidualTags(stripThinkingBlocks(raw))
 
-  return { thinking, answer: answer || thinking }
+  return { thinking, answer }
 }
 
 const inputDrafts = reactive(new Map<number, string>())
