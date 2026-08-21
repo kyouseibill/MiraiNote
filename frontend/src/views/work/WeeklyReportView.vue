@@ -70,8 +70,9 @@ async function generate() {
     editingContent.value = report.content
     isEditing.value = false
     toast.success('周报生成成功')
-  } catch {
-    // 拦截器已 toast
+  } catch (e) {
+    // 流式请求不走 axios 拦截器，这里手动 toast（含"正在生成中"等业务错误）
+    toast.error(e instanceof Error && e.message ? e.message : '周报生成失败')
   }
 }
 
@@ -208,7 +209,17 @@ onMounted(async () => {
 
       <!-- 右侧：周报预览/编辑 -->
       <div class="flex-1 min-w-0">
-        <div v-if="!selectedReport" class="text-center text-gray-400 text-sm py-20">
+        <!-- 生成中：流式预览 -->
+        <div v-if="store.generating" class="surface-card h-full flex flex-col">
+          <div class="flex items-center justify-between px-6 py-4 border-b">
+            <span class="font-medium text-gray-800">AI 生成中…</span>
+            <span class="text-xs text-gray-400">生成完成后自动保存</span>
+          </div>
+          <div class="flex-1 overflow-y-auto p-6">
+            <pre class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans">{{ store.streamingContent || '正在等待 AI 输出…' }}</pre>
+          </div>
+        </div>
+        <div v-else-if="!selectedReport" class="text-center text-gray-400 text-sm py-20">
           点击「一键生成」开始生成周报
         </div>
         <div v-else class="surface-card h-full flex flex-col">

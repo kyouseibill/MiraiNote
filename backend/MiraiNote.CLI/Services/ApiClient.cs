@@ -55,6 +55,8 @@ public class ApiClient
     {
         _store = store;
         _http  = new HttpClient();
+        // AI 生成（如周报）为长耗时同步请求，默认 100s 会超时；CLI 无取消机制，放宽到 10 分钟
+        _http.Timeout = TimeSpan.FromMinutes(10);
     }
 
     // ===== 认证 =====

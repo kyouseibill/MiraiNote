@@ -346,7 +346,7 @@ public class ChatController : ControllerBase
 
     private void ConfigureSseResponse()
     {
-        Response.Headers["Content-Type"] = "text/event-stream";
+        Response.Headers["Content-Type"] = "text/event-stream; charset=utf-8";
         Response.Headers["Cache-Control"] = "no-cache, no-transform";
         Response.Headers["Connection"] = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no";

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
 using MiraiNote.Data.Context;
@@ -117,6 +118,7 @@ public class ChatService : IChatService
     private readonly IAgentReflectorService _reflectorService;
     private readonly IAgentMemoryService _memoryService;
     private readonly ServerAgentToolRegistry _toolRegistry;
+    private readonly ILogger<ChatService> _logger;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
     {
@@ -172,7 +174,8 @@ public class ChatService : IChatService
         Tools.ServerFileListTool listFiles,
         Tools.ServerShellTool runShell,
         Tools.ServerScheduleTaskTool scheduleTask,
-        Tools.ServerListScheduledTasksTool listScheduledTasks)
+        Tools.ServerListScheduledTasksTool listScheduledTasks,
+        ILogger<ChatService> logger)
     {
         _db = db;
         _deepSeekOptions = deepSeekOptions.Value;
@@ -186,6 +189,7 @@ public class ChatService : IChatService
         _reflectorService = reflectorService;
         _memoryService = memoryService;
         _toolRegistry = toolRegistry;
+        _logger = logger;
 
         // 注册所有工具
         foreach (var t in new IServerAgentTool[] {
@@ -1536,121 +1540,165 @@ public class ChatService : IChatService
         var finishReason = "";
         var hasReasoningContent = false;
         var reasoningClosed = false;
-        var answerStarted = false;
 
         using var reader = new StreamReader(responseStream);
 
-        while (!reader.EndOfStream)
+        // HttpClient.Timeout 已设为无限，这里用空闲超时兜底：
+        // 超过时限仍收不到新行（连接卡死）则中断；收到任意新行即重置计时。
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(TimeSpan.FromMinutes(5));
+
+        while (await reader.ReadLineAsync(idleCts.Token) is { } line)
         {
-            var line = await reader.ReadLineAsync(ct);
+            idleCts.CancelAfter(TimeSpan.FromMinutes(5));
             if (string.IsNullOrEmpty(line)) continue;
 
-            // SSE 格式：data: {...}
-            if (!line.StartsWith("data: ")) continue;
+            // SSE 格式：data: {...}（容忍 "data:" 后无空格或多余空格）
+            if (!line.StartsWith("data:")) continue;
 
-            var json = line[6..]; // 去掉 "data: "
+            var json = line[5..].TrimStart(); // 去掉 "data:" 及多余空白
             if (json == "[DONE]") break;
 
-            using var doc = JsonDocument.Parse(json);
-            var choices = doc.RootElement.GetProperty("choices")[0];
-
-            // 检查 finish_reason
-            if (choices.TryGetProperty("finish_reason", out var frEl) &&
-                frEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(frEl.GetString()))
+            JsonDocument doc;
+            try
             {
-                finishReason = frEl.GetString()!;
-                // 继续读取剩余流，因为 tool_calls 可能在 finish_reason 之前就已发送完毕
-                if (finishReason == "stop" || finishReason == "length")
-                {
-                    // 停止后不再有新的内容
-                    break;
-                }
+                doc = JsonDocument.Parse(json);
+            }
+            catch (JsonException ex)
+            {
+                // 跳过坏帧，避免单帧异常终止整个流
+                _logger.LogDebug(ex, "DeepSeek 流式返回无法解析的帧：{Frame}",
+                    json[..Math.Min(200, json.Length)]);
+                continue;
             }
 
-            var delta = choices.GetProperty("delta");
-
-            // DeepSeek reasoning models may stream internal reasoning separately.
-            // Expose it as a collapsible, user-facing thinking block.
-            if (delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
-                reasoningEl.ValueKind == JsonValueKind.String)
+            using (doc)
             {
-                var token = reasoningEl.GetString();
-                if (!string.IsNullOrEmpty(token))
+                // usage-only chunk 等帧可能没有 choices 或为空数组
+                if (!doc.RootElement.TryGetProperty("choices", out var choicesEl) ||
+                    choicesEl.ValueKind != JsonValueKind.Array ||
+                    choicesEl.GetArrayLength() == 0)
                 {
-                    if (!hasReasoningContent)
+                    continue;
+                }
+
+                var choice = choicesEl[0];
+
+                // 先完整处理 delta（reasoning_content / content / tool_calls），
+                // 再判断 finish_reason：DeepSeek 最后一个 content chunk 可能同时
+                // 携带 finish_reason，若先 break 会丢弃该块的正文。
+                if (choice.TryGetProperty("delta", out var delta) &&
+                    delta.ValueKind == JsonValueKind.Object)
+                {
+                    // DeepSeek reasoning models may stream internal reasoning separately.
+                    // Expose it as a collapsible, user-facing thinking block.
+                    if (delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
+                        reasoningEl.ValueKind == JsonValueKind.String)
                     {
-                        hasReasoningContent = true;
-                        assistantContent.Append("<thinking>\n");
-                        await callback("token", JsonSerializer.Serialize(new { content = "<thinking>\n" }));
+                        var token = reasoningEl.GetString();
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            if (!hasReasoningContent)
+                            {
+                                hasReasoningContent = true;
+                                assistantContent.Append("<thinking>\n");
+                                await callback("token", JsonSerializer.Serialize(new { content = "<thinking>\n" }));
+                            }
+
+                            assistantContent.Append(token);
+                            await callback("token", JsonSerializer.Serialize(new { content = token }));
+                        }
                     }
 
-                    assistantContent.Append(token);
-                    await callback("token", JsonSerializer.Serialize(new { content = token }));
-                }
-            }
-
-            // 常规文本 token
-            if (delta.TryGetProperty("content", out var contentEl) &&
-                contentEl.ValueKind == JsonValueKind.String)
-            {
-                var token = contentEl.GetString();
-                if (!string.IsNullOrEmpty(token))
-                {
-                    if (hasReasoningContent && !reasoningClosed)
+                    // 常规文本 token
+                    if (delta.TryGetProperty("content", out var contentEl) &&
+                        contentEl.ValueKind == JsonValueKind.String)
                     {
-                        reasoningClosed = true;
-                        answerStarted = true;
-                        var separator = "\n</thinking>\n<answer>\n";
-                        assistantContent.Append(separator);
-                        await callback("token", JsonSerializer.Serialize(new { content = separator }));
+                        var token = contentEl.GetString();
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            if (hasReasoningContent && !reasoningClosed)
+                            {
+                                reasoningClosed = true;
+                                var separator = "\n</thinking>\n<answer>\n";
+                                assistantContent.Append(separator);
+                                await callback("token", JsonSerializer.Serialize(new { content = separator }));
+                            }
+
+                            assistantContent.Append(token);
+                            await callback("token", JsonSerializer.Serialize(new { content = token }));
+                        }
                     }
 
-                    assistantContent.Append(token);
-                    await callback("token", JsonSerializer.Serialize(new { content = token }));
-                }
-            }
-
-            // 流式工具调用（tool_calls delta）
-            if (delta.TryGetProperty("tool_calls", out var tcDeltaEl) &&
-                tcDeltaEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var tcEl in tcDeltaEl.EnumerateArray())
-                {
-                    var index = tcEl.GetProperty("index").GetInt32();
-
-                    if (!toolCalls.ContainsKey(index))
-                        toolCalls[index] = new ToolCallInfo();
-
-                    var tc = toolCalls[index];
-
-                    if (tcEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
-                        tc.Id = idEl.GetString()!;
-
-                    if (tcEl.TryGetProperty("function", out var funcEl))
+                    // 流式工具调用（tool_calls delta）
+                    if (delta.TryGetProperty("tool_calls", out var tcDeltaEl) &&
+                        tcDeltaEl.ValueKind == JsonValueKind.Array)
                     {
-                        if (funcEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
-                            tc.FunctionName = nameEl.GetString()!;
+                        foreach (var tcEl in tcDeltaEl.EnumerateArray())
+                        {
+                            var index = tcEl.GetProperty("index").GetInt32();
 
-                        if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
-                            tc.Arguments += argsEl.GetString(); // 流式参数是增量拼凑的
+                            if (!toolCalls.ContainsKey(index))
+                                toolCalls[index] = new ToolCallInfo();
+
+                            var tc = toolCalls[index];
+
+                            if (tcEl.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+                                tc.Id = idEl.GetString()!;
+
+                            if (tcEl.TryGetProperty("function", out var funcEl))
+                            {
+                                if (funcEl.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+                                    tc.FunctionName = nameEl.GetString()!;
+
+                                if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
+                                    tc.Arguments += argsEl.GetString(); // 流式参数是增量拼凑的
+                            }
+                        }
+                    }
+                }
+
+                // 检查 finish_reason（在处理完 delta 之后）。
+                // tool_calls 结束原因继续读取剩余流，stop/length 则终止。
+                if (choice.TryGetProperty("finish_reason", out var frEl) &&
+                    frEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(frEl.GetString()))
+                {
+                    finishReason = frEl.GetString()!;
+                    if (finishReason == "stop" || finishReason == "length")
+                    {
+                        // 停止后不再有新的内容
+                        break;
                     }
                 }
             }
         }
 
-        if (hasReasoningContent && !reasoningClosed)
+        // 每轮流结束：把模型直接写在 content 里的 <think> 变体归一化为 <thinking>
+        // （流式分块可能把标签切开，无法逐 token 处理），保证落库与 done 事件内容干净。
+        var content = Regex.Replace(assistantContent.ToString(), "<think>", "<thinking>", RegexOptions.IgnoreCase);
+        content = Regex.Replace(content, "</think>", "</thinking>", RegexOptions.IgnoreCase);
+
+        // 补齐未闭合的 <thinking>：reasoning_content 来源未输出正文，
+        // 或模型写在 content 里的 <thinking> 被 length 截断。
+        var thinkingOpens = Regex.Matches(content, "<thinking>", RegexOptions.IgnoreCase).Count;
+        var thinkingCloses = Regex.Matches(content, "</thinking>", RegexOptions.IgnoreCase).Count;
+        if (thinkingOpens > thinkingCloses)
         {
-            assistantContent.Append("\n</thinking>");
+            content += "\n</thinking>";
             await callback("token", JsonSerializer.Serialize(new { content = "\n</thinking>" }));
         }
-        else if (answerStarted)
+
+        // 补齐未闭合的 <answer>（被 length 截断时）。
+        var answerOpens = Regex.Matches(content, "<answer>", RegexOptions.IgnoreCase).Count;
+        var answerCloses = Regex.Matches(content, "</answer>", RegexOptions.IgnoreCase).Count;
+        if (answerOpens > answerCloses)
         {
-            assistantContent.Append("\n</answer>");
+            content += "\n</answer>";
             await callback("token", JsonSerializer.Serialize(new { content = "\n</answer>" }));
         }
 
         return (
-            assistantContent.ToString(),
+            content,
             toolCalls.Values.Where(t => !string.IsNullOrEmpty(t.Id)).ToList(),
             finishReason
         );

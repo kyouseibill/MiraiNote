@@ -30,6 +30,10 @@ public class DeepSeekOptions
     public int ContextWindowTokens { get; set; } = 1_000_000;
     /// <summary>单个聊天附件提取后最多保留的文本字符数，用于长 PDF/Word/Excel 分析。</summary>
     public int MaxAttachmentTextChars { get; set; } = 800_000;
+    /// <summary>周报生成时 LLM 输出的 max_tokens 上限（保守值，过大会超出模型上限导致 400）。</summary>
+    public int WeeklyReportMaxOutputTokens { get; set; } = 8192;
+    /// <summary>周报生成时参考文件文本注入 prompt 的总字符数上限（所有参考文件合计）。</summary>
+    public int WeeklyReportMaxReferenceChars { get; set; } = 60_000;
 }
 
 /// <summary>
