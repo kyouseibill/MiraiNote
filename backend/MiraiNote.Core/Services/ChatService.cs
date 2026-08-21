@@ -1678,6 +1678,10 @@ public class ChatService : IChatService
         var content = Regex.Replace(assistantContent.ToString(), "<think>", "<thinking>", RegexOptions.IgnoreCase);
         content = Regex.Replace(content, "</think>", "</thinking>", RegexOptions.IgnoreCase);
 
+        // 剥离模型泄漏到正文里的内部工具调用标记（如 </｜｜DSML｜｜tool_calls>，
+        // 全角/半角竖线变体）：模型偶发不走 tool_calls 通道而把协议标记写进 content。
+        content = Regex.Replace(content, @"<\/?[|｜]{1,2}\s*DSML\s*[|｜]{1,2}\w*>", "", RegexOptions.IgnoreCase);
+
         // 补齐未闭合的 <thinking>：reasoning_content 来源未输出正文，
         // 或模型写在 content 里的 <thinking> 被 length 截断。
         var thinkingOpens = Regex.Matches(content, "<thinking>", RegexOptions.IgnoreCase).Count;

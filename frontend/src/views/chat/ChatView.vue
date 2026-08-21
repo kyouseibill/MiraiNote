@@ -35,9 +35,12 @@ function stripThinkingBlocks(text: string): string {
   return text.replace(/<(?:thinking|think)>[\s\S]*?(?:<\/(?:thinking|think)>|$)/gi, '')
 }
 
-// 清理残留的思考/答案标签
+// 清理残留的思考/答案标签，以及模型泄漏的内部工具调用标记（｜｜DSML｜｜，全角/半角竖线变体）
 function stripResidualTags(text: string): string {
-  return text.replace(/<\/?(?:thinking|think|answer)>/gi, '').trim()
+  return text
+    .replace(/<\/?[|｜]{1,2}\s*DSML\s*[|｜]{1,2}\w*>/gi, '')
+    .replace(/<\/?(?:thinking|think|answer)>/gi, '')
+    .trim()
 }
 
 function splitAssistantContent(content: string | null | undefined, allowOpenThinking = false): { thinking: string; answer: string } {
@@ -62,12 +65,12 @@ function splitAssistantContent(content: string | null | undefined, allowOpenThin
   const thinkingParts: string[] = []
   let afterClosed = 0
   for (const m of raw.matchAll(/<(?:thinking|think)>([\s\S]*?)<\/(?:thinking|think)>/gi)) {
-    const part = m[1].trim()
+    const part = stripResidualTags(m[1])
     if (part) thinkingParts.push(part)
     afterClosed = (m.index ?? 0) + m[0].length
   }
   const openTail = raw.slice(afterClosed).match(/<(?:thinking|think)>([\s\S]*)$/i)
-  if (openTail && openTail[1].trim()) thinkingParts.push(openTail[1].trim())
+  if (openTail && openTail[1].trim()) thinkingParts.push(stripResidualTags(openTail[1]))
   const thinking = thinkingParts.join('\n\n---\n\n')
 
   // 正文 = 剥离所有思考块与残留标签后的剩余文本，

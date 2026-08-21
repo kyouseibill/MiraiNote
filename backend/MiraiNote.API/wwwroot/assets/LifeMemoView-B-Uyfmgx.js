@@ -1,1 +1,0 @@
-import{P as e,k as t,w as n}from"./index-EOBNvIfP.js";import{t as r}from"./MemoBoard-DHJIulkE.js";var i=t({__name:`LifeMemoView`,setup(t){return(t,i)=>(e(),n(r,{section:`life`,accent:`rose`,title:`生活备忘`}))}});export{i as default};
