@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using ClosedXML.Excel;
@@ -15,6 +15,17 @@ namespace MiraiNote.Core.Services;
 public interface IWeeklyReportService
 {
     Task<WeeklyReportDto> GenerateAsync(int userId, GenerateReportRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// 流式生成周报（SSE）。onToken 逐段推送 AI 输出的增量文本；
+    /// 生成完成后再落库并返回完整周报 DTO。
+    /// </summary>
+    Task<WeeklyReportDto> GenerateStreamAsync(
+        int userId,
+        GenerateReportRequest request,
+        Func<string, Task> onToken,
+        CancellationToken ct = default);
+
     Task<List<WeeklyReportDto>> GetListAsync(int userId, CancellationToken ct = default);
     Task<WeeklyReportDto> GetByIdAsync(int userId, int id, CancellationToken ct = default);
     Task<WeeklyReportDto> UpdateAsync(int userId, int id, UpdateReportRequest request, CancellationToken ct = default);
@@ -31,6 +42,9 @@ public interface IWeeklyReportService
 /// </summary>
 public class WeeklyReportService : IWeeklyReportService
 {
+    // 同用户周报生成防重：key = UserId。Service 为 Scoped，需 static 才能跨请求生效。
+    private static readonly ConcurrentDictionary<int, byte> _generatingUsers = new();
+
     private readonly MiraiNoteDbContext _db;
     private readonly DeepSeekOptions _deepSeekOptions;
     private readonly UploadOptions _uploadOptions;
@@ -49,58 +63,81 @@ public class WeeklyReportService : IWeeklyReportService
     }
 
     public async Task<WeeklyReportDto> GenerateAsync(int userId, GenerateReportRequest request, CancellationToken ct = default)
+        => await GenerateCoreAsync(userId, request, onToken: null, ct);
+
+    public async Task<WeeklyReportDto> GenerateStreamAsync(
+        int userId,
+        GenerateReportRequest request,
+        Func<string, Task> onToken,
+        CancellationToken ct = default)
+        => await GenerateCoreAsync(userId, request, onToken, ct);
+
+    private async Task<WeeklyReportDto> GenerateCoreAsync(
+        int userId, GenerateReportRequest request, Func<string, Task>? onToken, CancellationToken ct)
     {
-        var weekStart = request.WeekStart.Date;
-        var weekEnd = request.WeekEnd.Date;
-
-        // 查询该周工作记录
-        var workLogs = await _db.WorkLogs
-            .AsNoTracking()
-            .Where(w => w.UserId == userId && w.LogDate >= weekStart && w.LogDate <= weekEnd)
-            .OrderBy(w => w.LogDate)
-            .ToListAsync(ct);
-
-        // 查询参考文件
-        var references = await _db.WeeklyReportReferences
-            .AsNoTracking()
-            .Where(r => r.UserId == userId)
-            .OrderByDescending(r => r.CreatedAt)
-            .Take(3)
-            .ToListAsync(ct);
-
-        // 构建 Prompt
-        var detailLevel = request.DetailLevel is >= 1 and <= 3 ? request.DetailLevel : 2;
-        var prompt = BuildPrompt(weekStart, weekEnd, workLogs, references, detailLevel);
-
-        // 调用 DeepSeek API
-        var content = await CallDeepSeekAsync(prompt, ct);
-
-        // 保存周报（若已有则更新）
-        var existing = await _db.WeeklyReports
-            .FirstOrDefaultAsync(r => r.UserId == userId && r.WeekStart == weekStart, ct);
-
-        if (existing != null)
+        // 并发防重：同用户已有生成进行中时直接拒绝，避免并发双跑 LLM
+        if (!_generatingUsers.TryAdd(userId, 0))
+            throw new BusinessException("周报正在生成中，请稍候再试", 409);
+        try
         {
-            existing.Content = content;
-            existing.WeekEnd = weekEnd;
-            existing.GeneratedAt = DateTime.UtcNow;
-            existing.IsEdited = false;
+            var weekStart = request.WeekStart.Date;
+            var weekEnd = request.WeekEnd.Date;
+
+            // 查询该周工作记录
+            var workLogs = await _db.WorkLogs
+                .AsNoTracking()
+                .Where(w => w.UserId == userId && w.LogDate >= weekStart && w.LogDate <= weekEnd)
+                .OrderBy(w => w.LogDate)
+                .ToListAsync(ct);
+
+            // 查询参考文件：未标注周次（通用模板）或周次与目标周有交集
+            var references = await _db.WeeklyReportReferences
+                .AsNoTracking()
+                .Where(r => r.UserId == userId)
+                .Where(r => r.WeekStart == null
+                    || (r.WeekStart <= weekEnd && (r.WeekEnd == null || r.WeekEnd >= weekStart)))
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(3)
+                .ToListAsync(ct);
+
+            // 构建 Prompt
+            var detailLevel = request.DetailLevel is >= 1 and <= 3 ? request.DetailLevel : 2;
+            var prompt = BuildPrompt(weekStart, weekEnd, workLogs, references, detailLevel);
+
+            // 调用 DeepSeek API（流式，边生成边透传）
+            var content = await CallDeepSeekAsync(prompt, onToken, ct);
+
+            // 保存周报（若已有则更新）
+            var existing = await _db.WeeklyReports
+                .FirstOrDefaultAsync(r => r.UserId == userId && r.WeekStart == weekStart, ct);
+
+            if (existing != null)
+            {
+                existing.Content = content;
+                existing.WeekEnd = weekEnd;
+                existing.GeneratedAt = DateTime.UtcNow;
+                existing.IsEdited = false;
+                await _db.SaveChangesAsync(ct);
+                return Map(existing);
+            }
+
+            var report = new WeeklyReport
+            {
+                UserId = userId,
+                WeekStart = weekStart,
+                WeekEnd = weekEnd,
+                Content = content,
+                GeneratedAt = DateTime.UtcNow,
+                IsEdited = false
+            };
+            _db.WeeklyReports.Add(report);
             await _db.SaveChangesAsync(ct);
-            return Map(existing);
+            return Map(report);
         }
-
-        var report = new WeeklyReport
+        finally
         {
-            UserId = userId,
-            WeekStart = weekStart,
-            WeekEnd = weekEnd,
-            Content = content,
-            GeneratedAt = DateTime.UtcNow,
-            IsEdited = false
-        };
-        _db.WeeklyReports.Add(report);
-        await _db.SaveChangesAsync(ct);
-        return Map(report);
+            _generatingUsers.TryRemove(userId, out _);
+        }
     }
 
     public async Task<List<WeeklyReportDto>> GetListAsync(int userId, CancellationToken ct = default)
@@ -245,11 +282,22 @@ public class WeeklyReportService : IWeeklyReportService
         if (references.Any())
         {
             sb.AppendLine("【参考资料（仅用于理解工作背景，参考资料的内容不得写入周报，格式严格按照上述要求）】");
+            // 所有参考文件合计的字符数预算，单个文件按文件数均分（先到先得，简单为主）
+            var maxTotalChars = _deepSeekOptions.WeeklyReportMaxReferenceChars;
+            var perFileBudget = Math.Max(1, maxTotalChars / references.Count);
             foreach (var r in references)
             {
                 if (!string.IsNullOrWhiteSpace(r.Remark))
                     sb.AppendLine($"--- 参考文件：{r.Remark} ---");
-                sb.AppendLine(r.ParsedText);
+                if (r.ParsedText.Length > perFileBudget)
+                {
+                    sb.AppendLine(r.ParsedText[..perFileBudget]);
+                    sb.AppendLine("……[参考文件已截断]");
+                }
+                else
+                {
+                    sb.AppendLine(r.ParsedText);
+                }
                 sb.AppendLine();
             }
         }
@@ -328,7 +376,12 @@ public class WeeklyReportService : IWeeklyReportService
         return sb.ToString();
     }
 
-    private async Task<string> CallDeepSeekAsync(string prompt, CancellationToken ct)
+    /// <summary>
+    /// 流式调用 DeepSeek（周报生成无工具调用，只需累积 content；
+    /// reasoning_content 为模型思考过程，周报不需要，直接丢弃）。
+    /// onToken 用于 SSE 端点透传增量文本，可为 null（同步端点）。
+    /// </summary>
+    private async Task<string> CallDeepSeekAsync(string prompt, Func<string, Task>? onToken, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
             throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
@@ -344,20 +397,94 @@ public class WeeklyReportService : IWeeklyReportService
             messages = new[]
             {
                 new { role = "user", content = prompt }
-            }
+            },
+            max_tokens = _deepSeekOptions.WeeklyReportMaxOutputTokens,
+            stream = true
         };
 
-        var response = await client.PostAsJsonAsync("/v1/chat/completions", body, ct);
-        response.EnsureSuccessStatusCode();
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
 
-        using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct)
-            ?? throw new BusinessException("AI 服务返回异常", 500);
+        using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(ct);
+            throw new BusinessException(
+                $"AI 服务错误 {(int)response.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+        }
 
-        return doc.RootElement
-            .GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString() ?? string.Empty;
+        using var responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(responseStream);
+
+        var content = new StringBuilder();
+
+        // HttpClient.Timeout 已设为无限（DeepSeek 命名客户端），用空闲超时兜底：
+        // 超过时限仍收不到新行（连接卡死）则中断；收到任意新行即重置计时。
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(TimeSpan.FromMinutes(5));
+
+        while (await reader.ReadLineAsync(idleCts.Token) is { } line)
+        {
+            idleCts.CancelAfter(TimeSpan.FromMinutes(5));
+            if (string.IsNullOrEmpty(line)) continue;
+
+            // SSE 格式：data: {...}（容忍 "data:" 后无空格或多余空格）
+            if (!line.StartsWith("data:")) continue;
+
+            var json = line[5..].TrimStart();
+            if (json == "[DONE]") break;
+
+            JsonDocument doc;
+            try
+            {
+                doc = JsonDocument.Parse(json);
+            }
+            catch (JsonException)
+            {
+                // 跳过坏帧，避免单帧异常终止整个流
+                continue;
+            }
+
+            using (doc)
+            {
+                // usage-only chunk 等帧可能没有 choices 或为空数组
+                if (!doc.RootElement.TryGetProperty("choices", out var choicesEl) ||
+                    choicesEl.ValueKind != JsonValueKind.Array ||
+                    choicesEl.GetArrayLength() == 0)
+                {
+                    continue;
+                }
+
+                var choice = choicesEl[0];
+
+                // 先处理 delta 再判断 finish_reason：最后一个 content chunk 可能同时
+                // 携带 finish_reason，若先 break 会丢弃该块的正文。
+                if (choice.TryGetProperty("delta", out var delta) &&
+                    delta.ValueKind == JsonValueKind.Object &&
+                    delta.TryGetProperty("content", out var contentEl) &&
+                    contentEl.ValueKind == JsonValueKind.String)
+                {
+                    var token = contentEl.GetString();
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        content.Append(token);
+                        if (onToken != null)
+                            await onToken(token);
+                    }
+                }
+
+                if (choice.TryGetProperty("finish_reason", out var frEl) &&
+                    frEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(frEl.GetString()))
+                {
+                    // 停止后不再有新的内容
+                    break;
+                }
+            }
+        }
+
+        return content.ToString();
     }
 
     private static string ParseExcel(string filePath)
