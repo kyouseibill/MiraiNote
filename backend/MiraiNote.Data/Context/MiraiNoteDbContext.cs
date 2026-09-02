@@ -29,6 +29,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<InboxItem> InboxItems => Set<InboxItem>();
     public DbSet<DailyBriefing> DailyBriefings => Set<DailyBriefing>();
     public DbSet<AIActionLog> AIActionLogs => Set<AIActionLog>();
+    public DbSet<WelcomeGreeting> WelcomeGreetings => Set<WelcomeGreeting>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
@@ -241,6 +242,15 @@ public class MiraiNoteDbContext : DbContext
             .WithMany()
             .HasForeignKey(a => a.UserId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // ===== WelcomeGreeting：文案唯一（未删除）+ 启用排序索引 =====
+        modelBuilder.Entity<WelcomeGreeting>()
+            .HasIndex(g => g.Content)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        modelBuilder.Entity<WelcomeGreeting>()
+            .HasIndex(g => new { g.IsActive, g.SortOrder });
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
