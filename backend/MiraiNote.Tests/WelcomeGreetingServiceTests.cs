@@ -67,23 +67,15 @@ public class WelcomeGreetingServiceTests
     }
 
     [Fact]
-    public void PickFromPool_ChangesAcrossDaysForSameUser()
+    public void PickFromPool_HasAtLeastFiveDistinctOverSevenToFourteenDays()
     {
         var userId = 7;
         var start = new DateOnly(2026, 9, 1);
-        string? first = null;
-        var foundDifferent = false;
+        var distinct = new HashSet<string>();
         for (var i = 0; i < 14; i++)
-        {
-            var pick = WelcomeGreetingService.PickFromPool(userId, start.AddDays(i));
-            first ??= pick;
-            if (pick != first)
-            {
-                foundDifferent = true;
-                break;
-            }
-        }
-        Assert.True(foundDifferent, "14 天内应至少出现一句不同文案");
+            distinct.Add(WelcomeGreetingService.PickFromPool(userId, start.AddDays(i)));
+
+        Assert.True(distinct.Count >= 5, $"7～14 天内 distinct 应为 ≥5，实际 {distinct.Count}");
     }
 
     [Fact]
