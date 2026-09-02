@@ -1,0 +1,138 @@
+{
+  "generated": "2026-08-22",
+  "triageV13Merged": {
+    "sampleCount": 30,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 1.0,
+    "avgLatencyS": 7.68,
+    "maxLatencyS": 38.87,
+    "badCases": [],
+    "_totals": {
+      "expectedItems": 43,
+      "matched": 43,
+      "timeChecked": 20,
+      "timeOk": 20,
+      "sectionChecked": 20,
+      "sectionOk": 20,
+      "contentChecked": 40,
+      "contentOk": 40
+    },
+    "v13DirectlyVerified": [
+      "t01",
+      "t10",
+      "t11",
+      "t12",
+      "t13",
+      "t14",
+      "t15",
+      "t16",
+      "t17",
+      "t18",
+      "t19",
+      "t20",
+      "t28",
+      "t29",
+      "t30"
+    ],
+    "carriedFromV12": [
+      "t02",
+      "t03",
+      "t04",
+      "t05",
+      "t06",
+      "t07",
+      "t08",
+      "t09",
+      "t21",
+      "t22",
+      "t23",
+      "t24",
+      "t25",
+      "t26",
+      "t27"
+    ],
+    "relativeDateSamples": {
+      "t08": {
+        "ok": true,
+        "timeOk": 2,
+        "timeChecked": 2,
+        "fromPrompt": "v1.2"
+      },
+      "t11": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t12": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t13": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t14": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t15": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t16": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.3"
+      },
+      "t21": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.2"
+      },
+      "t23": {
+        "ok": true,
+        "timeOk": 1,
+        "timeChecked": 1,
+        "fromPrompt": "v1.2"
+      },
+      "t28": {
+        "ok": true,
+        "timeOk": 2,
+        "timeChecked": 2,
+        "fromPrompt": "v1.3"
+      },
+      "t29": {
+        "ok": true,
+        "timeOk": 2,
+        "timeChecked": 2,
+        "fromPrompt": "v1.3"
+      }
+    }
+  },
+  "briefingV11Merged": {
+    "sampleCount": 10,
+    "samplePassRate": 0.9,
+    "badCases": [
+      "b06"
+    ],
+    "noExclamationRate": 1.0,
+    "sourceTagValidRate": 1.0,
+    "factsOnlyNumbersRate": 1.0,
+    "note": "b06 三次 finish_reason=length（全空事实触发推理不收敛），1 次有效输出仅结构违规；已列为已知限制"
+  }
+}

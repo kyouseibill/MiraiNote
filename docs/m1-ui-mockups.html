@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MiraiNote · M1 界面视觉稿</title>
+<style>
+  :root{
+    --teal:#0f766e; --teal-light:#f0fdfa; --teal-border:#99f6e4;
+    --bg:#eef1f4; --card:#ffffff; --border:#e5e7eb;
+    --text:#1f2937; --sub:#6b7280; --faint:#9ca3af;
+    --ai:#7c3aed; --ai-bg:#f5f3ff;
+    --ok:#059669; --warn:#d97706; --danger:#dc2626;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;background:#dfe3e8;color:var(--text);font-size:13px;padding:28px 20px 60px}
+  h1{font-size:20px;margin-bottom:4px}
+  .sub{color:var(--sub);margin-bottom:20px;font-size:13px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+  .tabs button{padding:8px 16px;border:1px solid var(--border);background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:var(--sub)}
+  .tabs button.on{background:var(--teal);color:#fff;border-color:var(--teal)}
+  .screen{display:none}
+  .screen.on{display:block}
+  .frame{max-width:1180px;margin:0 auto;background:var(--card);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.15);overflow:hidden}
+  .titlebar{display:flex;align-items:center;gap:10px;background:#f1f3f5;padding:8px 14px;border-bottom:1px solid var(--border)}
+  .titlebar .logo{color:var(--teal);font-weight:700}
+  .searchpill{margin-left:auto;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:16px;padding:4px 12px;color:var(--faint);font-size:12px}
+  .kbd{border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;background:#f9fafb;color:var(--sub)}
+  .winbtns{display:flex;gap:6px;margin-left:14px}
+  .winbtns i{width:11px;height:11px;border-radius:50%;background:#d1d5db;display:block}
+  .body{display:flex;min-height:640px}
+  .nav{width:190px;border-right:1px solid var(--border);padding:14px 10px;background:#fafbfc;flex-shrink:0}
+  .nav a{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:8px;color:var(--sub);text-decoration:none;margin-bottom:2px}
+  .nav a.on{background:var(--teal-light);color:var(--teal);font-weight:600}
+  .nav .sep{margin:10px 12px;border-top:1px dashed var(--border)}
+  .nav .soon{font-size:10px;color:var(--faint);border:1px solid var(--border);border-radius:4px;padding:0 4px;margin-left:4px}
+  .main{flex:1;padding:20px 24px;overflow:hidden;background:var(--bg)}
+  .ctx{width:300px;border-left:1px solid var(--border);background:#fff;flex-shrink:0;display:flex;flex-direction:column}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .badge-ai{font-size:10px;background:var(--ai-bg);color:var(--ai);border:1px solid #ddd6fe;border-radius:4px;padding:1px 5px;vertical-align:1px;margin-left:6px}
+  .chip{display:inline-block;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:10px;padding:1px 8px;margin:2px 4px 2px 0;cursor:pointer}
+  .btn{display:inline-block;border:1px solid var(--border);border-radius:6px;padding:4px 12px;background:#fff;cursor:pointer;font-size:12px;color:var(--text)}
+  .btn.pri{background:var(--teal);border-color:var(--teal);color:#fff}
+  .btn.ghost{border-color:transparent;color:var(--sub)}
+  .note{max-width:1180px;margin:14px auto 0;color:var(--sub);font-size:12.5px;line-height:1.9;background:#fff8eb;border:1px solid #fde8b3;border-radius:8px;padding:10px 16px}
+  .note b{color:#92400e}
+  .capbar{display:flex;align-items:center;gap:10px;background:var(--teal-light);border:1px solid var(--teal-border);border-radius:10px;padding:10px 14px;margin-bottom:14px;color:var(--teal)}
+  .capbar input{flex:1;border:none;background:transparent;outline:none;font-size:13px;color:var(--text)}
+  .dot{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;background:#f59e0b;color:#fff;border-radius:50%;font-size:11px;font-weight:700;margin:0 3px;vertical-align:2px}
+  .row{display:flex;align-items:flex-start;gap:10px}
+  .timeline{border-left:2px solid var(--border);margin-left:6px;padding-left:16px}
+  .tl-item{position:relative;margin-bottom:12px}
+  .tl-item::before{content:"";position:absolute;left:-21px;top:4px;width:8px;height:8px;border-radius:50%;background:var(--teal-border)}
+  .muted{color:var(--faint);font-size:11px}
+  /* 收件箱 */
+  .inbox-list{width:300px;border-right:1px solid var(--border);background:#fff;flex-shrink:0}
+  .inbox-item{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer}
+  .inbox-item.on{background:var(--teal-light)}
+  .inbox-item .t{font-weight:600;margin-bottom:2px}
+  .st{font-size:10px;border-radius:4px;padding:1px 6px}
+  .st.pending{background:#fef3c7;color:#92400e}
+  .st.done{background:#d1fae5;color:#065f46}
+  .st.err{background:#fee2e2;color:#991b1b}
+  .sug{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#fff}
+  .sug.checked{border-color:#a7f3d0;background:#f6fefb}
+  .sug-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .typeicon{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .ti-task{background:#eff6ff;color:#2563eb}
+  .ti-work{background:#f0fdf4;color:#16a34a}
+  .ti-life{background:#fdf2f8;color:#db2777}
+  .kv{display:grid;grid-template-columns:70px 1fr;gap:3px 10px;font-size:12.5px;margin:6px 0}
+  .kv b{color:var(--sub);font-weight:500}
+  .conf{margin-left:auto;font-size:11px;color:var(--sub)}
+  .cb{width:18px;height:18px;border:1.5px solid var(--border);border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+  .cb.on{background:var(--ok);border-color:var(--ok)}
+  /* 指令面板 */
+  .overlay{position:relative;background:linear-gradient(160deg,#2b3a42,#1f2937);min-height:640px;display:flex;align-items:flex-start;justify-content:center;padding-top:70px}
+  .palette{width:640px;background:#fff;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.45);overflow:hidden}
+  .palette .in{display:flex;gap:10px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border)}
+  .palette .in input{flex:1;border:none;outline:none;font-size:14px}
+  .toolchip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border:1px solid var(--border);border-radius:14px;padding:2px 10px;font-size:11px;color:var(--sub);margin:0 6px 6px 0}
+  .toolchip.ok{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .toolchip.run{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+  .spin{width:10px;height:10px;border:2px solid #bfdbfe;border-top-color:#1d4ed8;border-radius:50%;display:inline-block;animation:r 0.8s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  .cursor{display:inline-block;width:7px;height:14px;background:var(--teal);vertical-align:-2px;animation:bl 1s steps(1) infinite}
+  @keyframes bl{50%{opacity:0}}
+  /* 捕获条 */
+  .floatwrap{min-height:640px;background:linear-gradient(135deg,#33415522,#0f766e22),repeating-linear-gradient(45deg,#e5e7eb 0 12px,#e2e4e8 12px 24px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px}
+  .floatcap{width:640px;background:#fff;border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.25);padding:6px 8px}
+  .floatcap .row{padding:8px 10px}
+  .bubble{background:#fff;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.18);padding:12px 16px;display:flex;gap:12px;align-items:center;width:640px}
+  .toast{background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:13px 16px;width:360px;border-left:4px solid var(--teal)}
+  /* 侧边对话 */
+  .msg{border-radius:10px;padding:8px 12px;margin-bottom:10px;max-width:88%;font-size:12.5px;line-height:1.7}
+  .msg.u{background:var(--teal);color:#fff;margin-left:auto}
+  .msg.a{background:#f3f4f6}
+  .attach{background:#f8fafc;border:1px dashed var(--border);border-radius:8px;padding:6px 10px;font-size:11.5px;color:var(--sub);margin-bottom:12px}
+  .md h4{font-size:13.5px;margin:8px 0 6px}
+  .md p{margin-bottom:8px;line-height:1.8;font-size:13px}
+  .md ul{padding-left:20px;line-height:1.9;font-size:12.5px}
+  .md code{background:#f3f4f6;border-radius:4px;padding:0 4px;font-size:12px}
+  .list-item{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+  .list-item.on{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-light)}
+</style>
+</head>
+<body>
+
+<h1>MiraiNote · M1 界面视觉稿</h1>
+<div class="sub">七个关键界面 · 点击上方标签切换 · 橙色圆点为设计说明编号，对应每个界面下方的注释</div>
+
+<div class="tabs">
+  <button class="on" data-s="s1" onclick="show(this)">① 今天</button>
+  <button data-s="s2" onclick="show(this)">② 收件箱 · AI 分拣</button>
+  <button data-s="s3" onclick="show(this)">③ 指令面板 Ctrl+K</button>
+  <button data-s="s4" onclick="show(this)">④ 全局热键捕获</button>
+  <button data-s="s5" onclick="show(this)">⑤ 侧边对话</button>
+  <button data-s="s6" onclick="show(this)">⑥ 桌面通知</button>
+  <button data-s="s7" onclick="show(this)">⑦ 周报 / OKR（预留入口）</button>
+</div>
+
+<!-- ======================= ① 今天 ======================= -->
+<div class="screen on" id="s1">
+  <div class="frame">
+    <div class="titlebar">
+      <span class="logo">◈ Mirai</span><span class="muted">— 今天</span>
+      <div class="searchpill">🔍 指令面板 · 随时说点什么 <span class="kbd">Ctrl K</span><span class="dot">1</span></div>
+      <div class="winbtns"><i></i><i></i><i></i></div>
+    </div>
+    <div class="body">
+      <div class="nav">
+        <a class="on">◈ 今天</a><a>✦ 收件箱 <span style="color:#d97706">●3</span></a><a>▤ 工作流</a><a>☘ 生活流</a><a>✓ 任务</a>
+        <div class="sep"></div>
+        <a style="color:#c4c9d0">¶ 周报<span class="soon">M2</span></a><a style="color:#c4c9d0">◎ OKR<span class="soon">M2</span></a><a style="color:#c4c9d0">◇ 记忆<span class="soon">M2</span></a>
+        <div class="sep"></div><a>⚙ 设置</a>
+        <div style="margin-top:26px;padding:0 12px" class="muted">◉ 托盘常驻中<br>Ctrl+Shift+Space 随时捕获</div>
+      </div>
+      <div class="main">
+        <div class="capbar"><span class="dot">2</span>✎ <input placeholder="随手丢一句话，助理帮你分拣…（任何应用内按 Ctrl+Shift+Space）"><span class="kbd">Enter</span></div>
+
+        <div class="card">
+          <div class="row" style="align-items:center">
+            <b>☀ 晨报</b><span class="badge-ai">AI 生成 07:30</span><span class="dot">3</span>
+            <span style="margin-left:auto" class="muted">2026-08-22 周六 · 本周已记录 23 条</span>
+            <button class="btn ghost" style="margin-left:10px">↻ 重新生成</button>
+          </div>
+          <div style="margin-top:10px;line-height:2;font-size:13px">
+            今天有 <b>3 件到期事项</b>，最要紧的是「推动安全评审排期」——你 8/19 记录过老王要求周三前给排期结论<span class="chip">工作记录 #231 · 8/19</span><br>
+            昨天你完成了迁移方案 v3 的修订，本周该主题已积累 6 条记录<span class="chip">工作记录 #238 · 8/21</span><br>
+            <span style="color:var(--warn)">收件箱积压 3 条</span>，最早的一条已放 2 天，建议抽空处理<span class="chip">收件箱 · 8/20</span>
+          </div>
+        </div>
+
+        <div class="card" style="border-left:3px solid var(--warn)">
+          <div class="row">
+            <span>⚑</span><div style="flex:1">
+              <b>推动安全评审排期</b> <span class="muted">今天 14:00 到期 · 优先级 高 · 弹窗+邮件</span><span class="dot">4</span>
+              <div style="margin-top:6px;color:var(--sub);font-size:12.5px">AI 上下文：老王上周三提出的安全评审要求，涉及迁移方案 v3 的授权改造部分 <span class="chip">#231</span><span class="chip">聊天记录 8/13</span></div>
+            </div>
+            <div><button class="btn pri">完成</button> <button class="btn">稍后</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <b style="font-size:12.5px;color:var(--sub)">今日动态</b><span class="dot">5</span>
+          <div class="timeline" style="margin-top:12px">
+            <div class="tl-item"><span class="muted">09:41</span> 记录了「迁移方案 v3 修订完成」 <span class="badge-ai">AI 已摘要</span></div>
+            <div class="tl-item"><span class="muted">09:20</span> 捕获 1 条，AI 分拣出 <b>2 条任务 + 1 条记录草稿</b>，已确认入库</div>
+            <div class="tl-item"><span class="muted">07:30</span> 晨报已生成</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b> ① 指令面板入口常驻标题栏，但 Ctrl+K 全局可用；② 快速捕获条常驻今日流顶部；③ 晨报每条结论强制带来源 chips（点击跳转原文），每天一次、可重生成；④ 到期卡不是原文复述，附 AI 从关联记录提取的上下文摘要；⑤ 今日动态把"AI 在背后做了什么"外化，建立信任。</div>
+</div>
+
+<!-- ======================= ② 收件箱 ======================= -->
+<div class="screen" id="s2">
+  <div class="frame">
+    <div class="titlebar"><span class="logo">◈ Mirai</span><span class="muted">— 收件箱</span>
+      <div class="searchpill">🔍 指令面板 <span class="kbd">Ctrl K</span></div><div class="winbtns"><i></i><i></i><i></i></div></div>
+    <div class="body">
+      <div class="inbox-list">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-weight:700">✦ 收件箱 <span style="color:#d97706">● 3 待处理</span></div>
+        <div class="inbox-item on"><div class="row"><span>●</span><div style="flex:1"><div class="t">重构方案要过安全评审，老王…</div><span class="st pending">已分拣 · 待确认</span></div></div></div>
+        <div class="inbox-item"><div class="row"><span style="color:#9ca3af">○</span><div style="flex:1"><div class="t">Go 1.24 的迭代器模式挺有意思</div><span class="st pending">分拣中…</span></div></div></div>
+        <div class="inbox-item"><div class="row"><span style="color:#9ca3af">○</span><div style="flex:1"><div class="t">（一段会议录音转写）</div><span class="st err">分拣失败 · 重试</span></div></div></div>
+      </div>
+      <div class="main" style="background:#fafbfc">
+        <div class="card"><b>原始输入</b><div style="margin-top:6px;color:var(--sub)">重构方案要过安全评审，老王周三前要排期，顺便记得给妈买生日礼物</div>
+          <div class="muted" style="margin-top:6px">来源：全局热键捕获 · 09:20 · 已按你的时区解析时间</div></div>
+
+        <div style="font-weight:700;margin:4px 0 10px">AI 建议（3 个对象）<span class="badge-ai">AI</span></div>
+
+        <div class="sug checked"><div class="sug-head"><div class="cb on">✓</div><div class="typeicon ti-task">✓</div><b>任务 · 工作</b><span class="conf">置信度 0.92</span></div>
+          <div class="kv"><b>内容</b><span>推动安全评审排期（老王）</span><b>截止</b><span>周三前（2026-08-26）</span><b>优先级</b><span>中</span><b>提醒</b><span>周三 09:00 · 弹窗</span></div>
+          <div class="muted">依据：原文含行动+期限"周三前要排期"</div></div>
+
+        <div class="sug checked"><div class="sug-head"><div class="cb on">✓</div><div class="typeicon ti-task">✓</div><b>任务 · 生活</b><span class="conf">置信度 0.88</span></div>
+          <div class="kv"><b>内容</b><span>给妈妈买生日礼物</span><b>提醒</b><span>下周三 09:00 · 弹窗</span></div>
+          <div class="muted">依据："记得"= 提醒意图；生日日期原文未提及，未猜测</div></div>
+
+        <div class="sug"><div class="sug-head"><div class="cb"></div><div class="typeicon ti-work">▤</div><b>工作记录草稿</b><span class="conf">置信度 0.81</span></div>
+          <div class="kv"><b>标题</b><span>安全评审排期待推进</span><b>内容</b><span style="color:var(--sub)">重构方案需通过安全评审，老王负责排期，截止周三前。<i style="color:#9ca3af">（可编辑）</i></span><b>标签</b><span><span class="chip">重构方案</span><span class="chip">安全评审</span></span></div></div>
+
+        <div style="background:#fffbeb;border:1px solid #fde8b3;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;margin-bottom:14px">⚠ 不确定：「妈的生日」具体日期原文未给出，提醒时间默认设为下周三，请在确认时核对</div>
+
+        <div class="row"><button class="btn pri">采纳勾选的 2 项（将创建 2 个任务）</button><button class="btn">纠错重分拣（输入一句话）</button><button class="btn ghost">全部丢弃</button>
+          <span style="margin-left:auto" class="muted">采纳后 30 秒内可撤销</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>左列表按状态流转（分拣中→待确认→已分发）；建议卡片即"字段级 diff"，勾选即采纳；低置信度必须在黄色提示区显式说明，不许硬猜；「纠错重分拣」输入"第二条不是任务"即可让 AI 重出方案，纠错记录用于迭代 prompt；分发走事务 + AIActionLog，30 秒撤销入口。</div>
+</div>
+
+<!-- ======================= ③ 指令面板 ======================= -->
+<div class="screen" id="s3">
+  <div class="frame">
+    <div class="overlay">
+      <div class="palette">
+        <div class="in"><span style="color:var(--teal)">◈</span><input value="把上周关于迁移的记录整理成一页"><span class="kbd">Esc</span></div>
+        <div style="padding:14px 18px">
+          <div style="margin-bottom:12px">
+            <span class="toolchip ok">🔍 search_work_logs ✓ 12 条</span>
+            <span class="toolchip ok">🔍 get_record_overview ✓</span>
+            <span class="toolchip run"><span class="spin"></span>📄 export_file · DOCX 生成中</span>
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:12px;font-size:13px;line-height:1.9">
+            上周（8/17–8/21）与迁移相关共 <b>12 条记录</b>，归纳为三块：<br>
+            <b>1. 方案演进</b> —— v2 评审意见（8/18）→ v3 修订完成（8/21）；<br>
+            <b>2. 安全评审</b> —— 老王要求周三前排期，授权改造为阻塞项<span class="chip">#231</span>；<br>
+            <b>3. 数据迁移</b> —— 存量数据校验脚本完成，差异 37 条待处理<span class="chip">#226</span>；<br>
+            文档已生成：《迁移工作周整理.docx》<span class="cursor"></span>
+          </div>
+          <div style="border-top:1px dashed var(--border);margin-top:12px;padding-top:10px">
+            <span class="muted">▾ 数据来源（3）：</span><span class="chip">迁移方案 v3 修订 #238</span><span class="chip">安全评审要求 #231</span><span class="chip">数据校验 #226</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>面板覆盖在当前页面上（背景压暗），Esc 即走不打断心流；工具调用以 chips 呈现进度（完成✓/进行中转圈），复用现有 Agent SSE 事件流；正文流式输出；「数据来源」折叠区列出真实被检索的记录——这是 M1 的溯源形态，M2 升级为正文内联引用；涉及删除/shell 的操作会先弹出确认框（复用现有 Confirm 机制）。</div>
+</div>
+
+<!-- ======================= ④ 悬浮捕获 ======================= -->
+<div class="screen" id="s4">
+  <div class="frame">
+    <div class="floatwrap">
+      <div class="muted" style="font-size:12px;letter-spacing:2px">正在使用其他应用（如 IDE / 浏览器 / 微信）</div>
+      <div class="floatcap"><div class="row"><span style="color:var(--teal);font-size:16px">✎</span><input style="flex:1;border:none;outline:none;font-size:14px" value="重构方案要过安全评审，老王周三前要排期"><span class="kbd">Enter</span><span class="kbd">Esc</span></div></div>
+      <div style="display:flex;align-items:center;gap:8px" class="muted"><span style="font-size:16px">⏎</span>提交后 · · ·</div>
+      <div class="bubble"><div class="typeicon" style="background:var(--teal-light);color:var(--teal);width:34px;height:34px;font-size:16px;border-radius:50%">✓</div>
+        <div style="flex:1"><b>分拣完成：2 条任务 + 1 条记录草稿</b><div class="muted" style="margin-top:2px">「给妈妈买礼物」的提醒设为下周三 09:00，请到收件箱核对</div></div>
+        <button class="btn pri">查看</button><button class="btn ghost">稍后</button></div>
+      <div class="muted" style="font-size:12px">气泡 5 秒后自动消失 · 收件箱角标 +1 · 桌面通知同步一条</div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>全局热键 Ctrl+Shift+Space 在任何应用内唤起无边框小窗（约 720×120），不抢焦点不切屏；Enter 提交即返回原应用继续工作；分拣为同步调用（P95 &lt; 8s），完成以轻气泡提示，不打断；语音输入为 M2（接 Whisper）。</div>
+</div>
+
+<!-- ======================= ⑤ 侧边对话 ======================= -->
+<div class="screen" id="s5">
+  <div class="frame">
+    <div class="titlebar"><span class="logo">◈ Mirai</span><span class="muted">— 工作流 · 迁移方案</span>
+      <div class="searchpill">🔍 指令面板 <span class="kbd">Ctrl K</span></div><div class="winbtns"><i></i><i></i><i></i></div></div>
+    <div class="body">
+      <div class="nav"><a>◈ 今天</a><a>✦ 收件箱</a><a class="on">▤ 工作流</a><a>☘ 生活流</a><a>✓ 任务</a><a style="color:#c4c9d0">¶ 周报<span class="soon">M2</span></a><a style="color:#c4c9d0">◎ OKR<span class="soon">M2</span></a><a style="color:#c4c9d0">◇ 记忆<span class="soon">M2</span></a><div class="sep"></div><a>⚙ 设置</a>
+        <div style="margin-top:18px;padding:0 12px" class="muted">项目：迁移方案<br>本周素材 12 条<br>████████░░</div></div>
+      <div class="main" style="background:#fff">
+        <div style="margin-bottom:12px" class="row"><b style="font-size:15px">迁移方案 v3 修订完成</b><span class="chip">重构方案</span><span class="chip">迁移</span><span class="muted">2026-08-21 · 进行中</span>
+          <button class="btn" style="margin-left:auto">✎ 编辑</button><button class="btn">💬 讨论 <span class="kbd">→</span></button></div>
+        <div class="md">
+          <p>按 8/18 评审意见完成 v3 修订：授权改造采用 RBAC 收敛到 3 个角色，去掉了原来的 7 个散落权限点。</p>
+          <h4>遗留风险</h4>
+          <ul><li>存量数据差异 37 条，校验脚本已覆盖，待业务确认</li><li>安全评审排期未定（阻塞项）</li></ul>
+        </div>
+        <div class="muted" style="border-top:1px dashed var(--border);padding-top:8px;margin-top:10px"><span class="badge-ai">AI</span> 摘要：v3 完成授权收敛，风险集中在存量数据与安全评审排期 <span style="color:#9ca3af">· AI 生成，点击修改</span></div>
+      </div>
+      <div class="ctx">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-weight:700">💬 讨论</div>
+        <div style="padding:12px 14px">
+          <div class="attach">📎 已自动附带上下文：工作记录 #238「迁移方案 v3 修订完成」全文 + 标签</div>
+          <div class="msg u">这个方案还有什么风险没考虑到？</div>
+          <div class="msg a">基于这条记录，主要风险有二：① 存量数据 37 条差异没有回滚预案，建议补充"差异处理决策表"；② 安全评审若周三前排不上期，会连锁影响上线窗口。可参考你 8/13 与老王的讨论结论 <span class="chip">聊天 8/13</span></div>
+          <div style="display:flex;gap:8px;margin:10px 0"><button class="btn">↗ 转为记录</button><button class="btn">◈ 存入记忆</button></div>
+          <div style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:4px"><input style="flex:1;border:none;outline:none;font-size:12.5px" placeholder="针对这条记录追问…"><span class="kbd">Enter</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>右侧 300px 抽屉按需展开（快捷键 →）；对话自动携带对象全文+标签，无需复制粘贴；回答中的相关历史以 chips 引用；有价值的结论一键【转为记录】（生成一条新工作记录）或【存入记忆】（写入 AgentMemory）；每个对象的对话独立保存，可在指令面板检索。</div>
+</div>
+
+<!-- ======================= ⑥ 桌面通知 ======================= -->
+<div class="screen" id="s6">
+  <div class="frame">
+    <div class="floatwrap" style="align-items:flex-end;justify-content:flex-end;padding:24px;background:linear-gradient(135deg,#312e81,#0f766e)">
+      <div class="toast">
+        <div class="row"><span style="font-size:16px">⚑</span><b>Mirai · 任务到期 14:00</b></div>
+        <div style="margin:8px 0;color:var(--sub)">推动安全评审排期<span class="badge-ai">AI</span><br><span style="font-size:12px">老王要求周三前给结论，涉及迁移方案 v3 授权改造 <span class="chip">#231</span></span></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn">完成</button><button class="btn">稍后 1h</button><button class="btn ghost">打开 Mirai</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>到期任务由桌面端轮询现有 due-popups 接口后转系统原生通知（替代 Web 弹窗）；通知正文 = 任务名 + AI 上下文摘要 + 来源 chip；Windows 原生通知不支持内联按钮，M1 的「完成/稍后」点击通知聚焦到 Mirai 内操作（M2 评估改用自定义弹窗实现内联按钮）；主动通知每日 ≤5 条可在设置逐类关闭。</div>
+</div>
+
+<!-- ======================= ⑦ 周报 / OKR 预留入口 ======================= -->
+<div class="screen" id="s7">
+  <div class="frame">
+    <div class="titlebar"><span class="logo">◈ Mirai</span><span class="muted">— 周报</span>
+      <div class="searchpill">🔍 指令面板 <span class="kbd">Ctrl K</span></div><div class="winbtns"><i></i><i></i><i></i></div></div>
+    <div class="body">
+      <div class="nav"><a>◈ 今天</a><a>✦ 收件箱</a><a>▤ 工作流</a><a>☘ 生活流</a><a>✓ 任务</a><a class="on">¶ 周报</a><a style="color:#c4c9d0">◎ OKR<span class="soon">M2</span></a><a style="color:#c4c9d0">◇ 记忆<span class="soon">M2</span></a><div class="sep"></div><a>⚙ 设置</a></div>
+      <div class="main" style="display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center;max-width:560px">
+          <div style="font-size:44px">¶</div>
+          <div style="font-size:16px;font-weight:700;margin:10px 0 8px">周报 · 新版即将上线（M2）</div>
+          <div style="color:var(--sub);line-height:2">M2 将提供「事实区 + 叙事区 + 追问区」的 AI 共创周报，周五下午草稿自动就绪。<br>在此之前，历史周报可正常查看，生成功能继续在 Web 端使用。</div>
+          <div style="margin-top:16px"><button class="btn pri">查看历史周报（23 篇）</button> <button class="btn">在 Web 端生成 ↗</button></div>
+          <div class="muted" style="margin-top:10px">历史周报只读 · 与 Web 端数据完全同步</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="height:18px"></div>
+  <div class="frame">
+    <div class="titlebar"><span class="logo">◈ Mirai</span><span class="muted">— OKR</span>
+      <div class="searchpill">🔍 指令面板 <span class="kbd">Ctrl K</span></div><div class="winbtns"><i></i><i></i><i></i></div></div>
+    <div class="body">
+      <div class="nav"><a>◈ 今天</a><a>✦ 收件箱</a><a>▤ 工作流</a><a>☘ 生活流</a><a>✓ 任务</a><a style="color:#c4c9d0">¶ 周报<span class="soon">M2</span></a><a class="on">◎ OKR</a><a style="color:#c4c9d0">◇ 记忆<span class="soon">M2</span></a><div class="sep"></div><a>⚙ 设置</a></div>
+      <div class="main" style="display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center;max-width:560px">
+          <div style="font-size:40px">◎</div>
+          <div style="font-size:16px;font-weight:700;margin:10px 0 8px">OKR · 规划中</div>
+          <div style="color:var(--sub);line-height:2">目标与关键结果管理：录入 O/KR 后，AI 自动从工作流记录中关联进展证据，<br>季度复盘时一键生成叙事。入口已预留，功能将随 M2+ 版本上线。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>设计说明：</b>周报与 OKR 是日常工作高频场景，M1 采用「入口预留」策略：导航可见但置灰，M2 实装后空态替换为完整功能——用户的使用路径与习惯从第一天就建立。周报空态不是死胡同：历史周报只读可查（数据已存在），生成动作引导回 Web 端，M1 功能不断档。月度/年度回顾（M3）将并入周报模块扩展。</div>
+</div>
+
+<script>
+function show(btn){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById(btn.dataset.s).classList.add('on');
+}
+</script>
+</body>
+</html>

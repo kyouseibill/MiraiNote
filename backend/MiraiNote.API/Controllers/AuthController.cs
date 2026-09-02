@@ -108,7 +108,8 @@ public class AuthController : ControllerBase
         Response.Cookies.Append(RefreshCookieName, token, new CookieOptions
         {
             HttpOnly = true,
-            Secure = !_env.IsDevelopment(), // 生产环境强制 HTTPS
+            // Cookie 必须与实际请求协议匹配；当前生产环境通过 HTTP IP 访问时不能标记为 Secure。
+            Secure = Request.IsHttps,
             SameSite = SameSiteMode.Lax,
             Expires = expiresAt,
             Path = "/api/v1/auth" // 仅 auth 路径下随请求带出

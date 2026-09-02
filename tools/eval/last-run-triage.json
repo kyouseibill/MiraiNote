@@ -1,0 +1,73 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 1,
+    "totalApiCalls": 1,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 0.0,
+    "sectionAccuracy": 0.0,
+    "contentAccuracy": 0.0,
+    "sampleFullPassRate": 0.0,
+    "avgLatencyS": 5.37,
+    "maxLatencyS": 5.37
+  },
+  "badCases": [
+    {
+      "id": "t12",
+      "category": "相对日期",
+      "failures": [
+        "content_mismatch[task#s1]: 关键词 ['牙医'] 未命中，实际内容: ",
+        "time_mismatch[task#s1]: 期望 2026-08-23T09:00，实际 None",
+        "section_mismatch[task#s1]: 期望 life，实际 None"
+      ],
+      "warnings": [],
+      "actualTypes": [
+        "task"
+      ]
+    }
+  ],
+  "details": [
+    {
+      "id": "t12",
+      "category": "相对日期",
+      "failures": [
+        "content_mismatch[task#s1]: 关键词 ['牙医'] 未命中，实际内容: ",
+        "time_mismatch[task#s1]: 期望 2026-08-23T09:00，实际 None",
+        "section_mismatch[task#s1]: 期望 life，实际 None"
+      ],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 0,
+      "sectionChecked": 1,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 0,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "task": {
+              "content": "去看牙医",
+              "remindAtLocal": "2026-08-23T09:00",
+              "priority": 2,
+              "section": "life"
+            }
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 5.37,
+      "retried": false,
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.98,\n      \"rationale\": \"明确的生活任务，含具体时间\",\n      \"fields\": {\n        \"task\": {\n          \"content\": \"去看牙医\",\n          \"remindAtLocal\": \"2026-08-23T09:00\",\n          \"priority\": 2,\n          \"section\": \"life\"\n        }\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    }
+  ]
+}

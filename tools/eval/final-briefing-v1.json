@@ -1,0 +1,223 @@
+{
+  "summary": {
+    "model": "deepseek-v4-flash",
+    "sampleCount": 10,
+    "totalApiCalls": 17,
+    "samplePassRate": 0.1,
+    "noExclamationRate": 1.0,
+    "sourceTagValidRate": 0.3333,
+    "factsOnlyNumbersRate": 1.0,
+    "avgLatencyS": 6.49
+  },
+  "badCases": [
+    {
+      "id": "b01",
+      "category": "常规工作日",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "source_tag_missing: 有到期任务但全文无【来源: …#Id】标注"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b03",
+      "category": "逾期任务",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b04",
+      "category": "零积压",
+      "failures": [
+        "source_tag_missing: 有到期任务但全文无【来源: …#Id】标注",
+        "must_not_mention_violation: 出现禁词 ['积压']",
+        "backlog_section: 期望积压段=False，实际含积压字样=True"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b05",
+      "category": "昨日无记录",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b07",
+      "category": "历史背景命中",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b08",
+      "category": "生活与心情",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b09",
+      "category": "数字密集防虚构",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    }
+  ],
+  "results": [
+    {
+      "id": "b01",
+      "category": "常规工作日",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 7.66,
+      "raw": ""
+    },
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "source_tag_missing: 有到期任务但全文无【来源: …#Id】标注"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": false,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [],
+      "bodyChars": 86,
+      "latency": 2.03,
+      "raw": "① 今日到期 3 件事：\n- 确认合同续约条款（优先级1） #110\n- 组织迁移演练（优先级2） #111\n- 提交差旅报销单（优先级3） #112\n\n② 昨日回顾：完成周报整理 #210。\n\n③ 收件箱积压 5 条，最早积压 1 天。"
+    },
+    {
+      "id": "b03",
+      "category": "逾期任务",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 7.8,
+      "raw": ""
+    },
+    {
+      "id": "b04",
+      "category": "零积压",
+      "failures": [
+        "source_tag_missing: 有到期任务但全文无【来源: …#Id】标注",
+        "must_not_mention_violation: 出现禁词 ['积压']",
+        "backlog_section: 期望积压段=False，实际含积压字样=True"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": false,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [],
+      "bodyChars": 52,
+      "latency": 3.55,
+      "raw": "① 今日到期 1 件事\n- 发送版本发布通告（工作，优先级2） #130\n\n② 昨日一句话回顾\n- 完成发布准备检查 #230\n\n无收件箱积压。"
+    },
+    {
+      "id": "b05",
+      "category": "昨日无记录",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 8.03,
+      "raw": ""
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 8.85,
+      "raw": ""
+    },
+    {
+      "id": "b07",
+      "category": "历史背景命中",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 7.07,
+      "raw": ""
+    },
+    {
+      "id": "b08",
+      "category": "生活与心情",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 7.37,
+      "raw": ""
+    },
+    {
+      "id": "b09",
+      "category": "数字密集防虚构",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 8.05,
+      "raw": ""
+    },
+    {
+      "id": "b10",
+      "category": "多来源引用",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#180",
+        "#181",
+        "#280",
+        "#281"
+      ],
+      "bodyChars": 146,
+      "latency": 4.53,
+      "raw": "① 今日到期 2 件事\n- 提交季度 OKR 草稿（优先级1，工作）…#180；参考 9月8日会议纪要，下季度聚焦迁移与告警两条线 #280\n- 还社区图书角两本书（优先级2，生活）#181\n\n② 昨日回顾\n完成 OKR 对齐会议纪要 #280，并整理《卡夫卡短篇集》阅读笔记 #281\n\n③ 收件箱积压提醒\n收件箱积压 3 条，最早积压 8 天，建议今日优先清理。\n\n---\n【来源: 季度 OKR 草稿 #180】【来源: 还社区图书角两本书 #181】【来源: OKR 对齐会议纪要 #280】【来源: 阅读笔记：《卡夫卡短篇集》 #281】"
+    }
+  ]
+}

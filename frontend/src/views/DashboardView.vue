@@ -11,6 +11,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
+import { welcomeApi } from '@/api/welcome'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
@@ -19,6 +20,7 @@ const router = useRouter()
 const toast = useToast()
 
 const loading = ref(true)
+const greeting = ref('今天，安静地推进')
 const quickCapture = ref('')
 const capturing = ref(false)
 const workMemos = ref<Memo[]>([])
@@ -129,14 +131,16 @@ async function load() {
   }
 
   try {
-    const [wm, lm, wl] = await Promise.all([
+    const [wm, lm, wl, welcome] = await Promise.all([
       memoApi.list({ section: 'work', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       memoApi.list({ section: 'life', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       workLogApi.list({ page: 1, pageSize: 5, dateFrom: weekStart(), dateTo: todayStr }),
+      welcomeApi.getGreeting().catch(() => null),
     ])
     workMemos.value = wm.items
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
+    if (welcome?.content) greeting.value = welcome.content
   } finally {
     loading.value = false
   }
@@ -195,7 +199,7 @@ onMounted(load)
             <span>{{ dateLabel }}</span>
           </div>
           <h1 class="mt-4 font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]">
-            今天，安静地推进
+            {{ greeting }}
           </h1>
         </header>
 

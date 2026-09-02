@@ -1,0 +1,113 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 2,
+    "totalApiCalls": 4,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 1.0,
+    "avgLatencyS": 6.54,
+    "maxLatencyS": 8.57
+  },
+  "badCases": [],
+  "details": [
+    {
+      "id": "t01",
+      "category": "会议记录",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 2,
+      "matched": 2,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 2,
+      "contentOk": 2,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "worklog",
+          "fields": {
+            "title": "周会：迁移方案v3拆两期上线",
+            "content": "迁移方案v3接口改动大，确定拆两期上线；缓存优化留至二期评估；老王下周更新设计文档。",
+            "tags": [
+              "迁移方案",
+              "周会"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "更新迁移方案设计文档",
+            "remindAtLocal": null,
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "worklog",
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 8.57,
+      "retried": true,
+      "finishReasons": [
+        "stop",
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"周会决议：迁移方案拆两期、缓存二期评估\",\n      \"fields\": {\n        \"title\": \"周会：迁移方案v3拆两期上线\",\n        \"content\": \"迁移方案v3接口改动大，确定拆两期上线；缓存优化留至二期评估；老王下周更新设计文档。\",\n        \"tags\": [\"迁移方案\", \"周会\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.9,\n      \"rationale\": \"老王下周更新设计文档\",\n      \"fields\": {\n        \"content\": \"更新迁移方案设计文档\",\n        \"remindAtLocal\": null,\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": [\"「下周」未指明具体星期，未设置提醒时间\"]\n}"
+    },
+    {
+      "id": "t10",
+      "category": "双意图混排",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 2,
+      "matched": 2,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 2,
+      "contentOk": 2,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "lifelog",
+          "fields": {
+            "content": "今天跑步5公里，配速5'40''，感觉状态回来了。",
+            "mood": "状态好"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "lifelog",
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 4.52,
+      "retried": true,
+      "finishReasons": [
+        "stop",
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"跑步记录，状态回来自我感受\",\n      \"fields\": {\n        \"content\": \"今天跑步5公里，配速5'40''，感觉状态回来了。\",\n        \"mood\": \"状态好\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.9,\n      \"rationale\": \"记录晨跑前吃半根香蕉防岔气的知识点\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    }
+  ]
+}

@@ -1,0 +1,481 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 12,
+    "totalApiCalls": 12,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 0.9333,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 0.9167,
+    "avgLatencyS": 7.46,
+    "maxLatencyS": 28.71
+  },
+  "badCases": [
+    {
+      "id": "t29",
+      "category": "超长输入-生活混排",
+      "failures": [
+        "type_missing: 期望 knowledge（播客知识点），实际类型集 ['lifelog', 'task', 'task']"
+      ],
+      "warnings": [],
+      "actualTypes": [
+        "lifelog",
+        "task",
+        "task"
+      ]
+    }
+  ],
+  "details": [
+    {
+      "id": "t11",
+      "category": "相对日期",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "回复客户邮件，确认验收标准",
+            "remindAtLocal": "2026-08-22T17:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 3.07,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.97,\n      \"rationale\": \"行动+明确时间「下午5点前」\",\n      \"fields\": {\n        \"content\": \"回复客户邮件，确认验收标准\",\n        \"remindAtLocal\": \"2026-08-22T17:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t12",
+      "category": "相对日期",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "看牙医",
+            "remindAtLocal": "2026-08-23T09:00",
+            "priority": 2,
+            "section": "life"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 2.89,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"原文有明确时间「明天9点」的行动\",\n      \"fields\": {\n        \"content\": \"看牙医\",\n        \"remindAtLocal\": \"2026-08-23T09:00\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t13",
+      "category": "相对日期",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "和设计团队过稿",
+            "remindAtLocal": "2026-08-19T11:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 7.58,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.96,\n      \"rationale\": \"明确时间行动「和设计团队过稿」\",\n      \"fields\": {\n        \"content\": \"和设计团队过稿\",\n        \"remindAtLocal\": \"2026-08-19T11:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t14",
+      "category": "相对日期",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "为下周三的月度经营复盘准备数据",
+            "remindAtLocal": "2026-08-26T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 16.6,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"准备月度经营复盘数据\",\n      \"fields\": {\n        \"content\": \"为下周三的月度经营复盘准备数据\",\n        \"remindAtLocal\": \"2026-08-26T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": [\"「提前」的具体提前量未说明，提醒时间暂按下周三09:00\"]\n}"
+    },
+    {
+      "id": "t15",
+      "category": "相对日期",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "完成数据合规自查",
+            "remindAtLocal": "2026-08-31T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 2.88,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"行动+期限「月底前完成」\",\n      \"fields\": {\n        \"content\": \"完成数据合规自查\",\n        \"remindAtLocal\": \"2026-08-31T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t16",
+      "category": "相对日期-负时区",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "跟教授开会讨论论文进度",
+            "remindAtLocal": "2026-08-19T15:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 6.64,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.97,\n      \"rationale\": \"「明天下午3点跟教授开会」行动+明确时间\",\n      \"fields\": {\n        \"content\": \"跟教授开会讨论论文进度\",\n        \"remindAtLocal\": \"2026-08-19T15:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t17",
+      "category": "纯想法",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 5.17,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.82,\n      \"rationale\": \"对日志系统乱象提出埋点规范设想，无行动\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t18",
+      "category": "纯想法",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 3.64,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.92,\n      \"rationale\": \"读完《卡夫卡短篇集》的感想，无行动\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t19",
+      "category": "纯想法",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 2.42,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.95,\n      \"rationale\": \"记录temperature与发散性知识点\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t20",
+      "category": "纯想法",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 3.34,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.95,\n      \"rationale\": \"通勤听播客比刷短视频更充实\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t29",
+      "category": "超长输入-生活混排",
+      "failures": [
+        "type_missing: 期望 knowledge（播客知识点），实际类型集 ['lifelog', 'task', 'task']"
+      ],
+      "warnings": [],
+      "expectedItems": 4,
+      "matched": 3,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 3,
+      "contentOk": 3,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "lifelog",
+          "fields": {
+            "content": "周六带儿子去科技馆，他看蒸汽机近二十分钟，买拼装模型；周日全家爬城郊小山，孩子自己走完全程，下山吃牛肉面。路上听播客：TNR比扑杀有效，正念可缓解焦虑，打算下周每天冥想十分钟。感叹孩子精力旺盛，陪玩比上班累，但看他成长值得。",
+            "mood": "累并快乐"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "参加儿子幼儿园家长会（下周四19:00）",
+            "remindAtLocal": "2026-08-27T19:00",
+            "priority": 1,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s3",
+          "type": "task",
+          "fields": {
+            "content": "归还社区图书漂流角借的两本书（下周日到期）",
+            "remindAtLocal": "2026-08-30T09:00",
+            "priority": 2,
+            "section": "life"
+          }
+        }
+      ],
+      "actualTypes": [
+        "lifelog",
+        "task",
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 28.71,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"周末亲子记录含播客感悟\",\n      \"fields\": {\n        \"content\": \"周六带儿子去科技馆，他看蒸汽机近二十分钟，买拼装模型；周日全家爬城郊小山，孩子自己走完全程，下山吃牛肉面。路上听播客：TNR比扑杀有效，正念可缓解焦虑，打算下周每天冥想十分钟。感叹孩子精力旺盛，陪玩比上班累，但看他成长值得。\",\n        \"mood\": \"累并快乐\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.98,\n      \"rationale\": \"下周四幼儿园家长会\",\n      \"fields\": {\n        \"content\": \"参加儿子幼儿园家长会（下周四19:00）\",\n        \"remindAtLocal\": \"2026-08-27T19:00\",\n        \"priority\": 1,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s3\",\n      \"type\": \"task\",\n      \"confidence\": 0.96,\n      \"rationale\": \"图书借阅到期需还\",\n      \"fields\": {\n        \"content\": \"归还社区图书漂流角借的两本书（下周日到期）\",\n        \"remindAtLocal\": \"2026-08-30T09:00\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t30",
+      "category": "超长输入-单主题",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "worklog",
+          "fields": {
+            "title": "8月21日订单服务故障复盘",
+            "content": "故障约17分钟，影响订单创建约2400单。20:14监控告警5xx升至6%、P99达2.4s；排查排除发布因素，定位为未走工单的DDL加索引被长事务阻塞，导致连接池耗尽。20:25 kill DDL与长事务后恢复。根因：变更流程被绕过，DDL高峰执行且无锁等待超时；放大因素：连接池未设等待上限。改进项已列入本周迭代：DDL走工单并设超时、连接池上限对齐max_connections、补充metadata lock告警。时间线与分工已同步QA与客服，无需跟进。",
+            "tags": [
+              "复盘"
+            ],
+            "category": null
+          }
+        }
+      ],
+      "actualTypes": [
+        "worklog"
+      ],
+      "extraItems": 0,
+      "latency": 6.58,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"线上故障复盘记录：订单服务5xx飙升，根因为绕过变更管理执行DDL\",\n      \"fields\": {\n        \"title\": \"8月21日订单服务故障复盘\",\n        \"content\": \"故障约17分钟，影响订单创建约2400单。20:14监控告警5xx升至6%、P99达2.4s；排查排除发布因素，定位为未走工单的DDL加索引被长事务阻塞，导致连接池耗尽。20:25 kill DDL与长事务后恢复。根因：变更流程被绕过，DDL高峰执行且无锁等待超时；放大因素：连接池未设等待上限。改进项已列入本周迭代：DDL走工单并设超时、连接池上限对齐max_connections、补充metadata lock告警。时间线与分工已同步QA与客服，无需跟进。\",\n        \"tags\": [\"复盘\"],\n        \"category\": null\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    }
+  ]
+}

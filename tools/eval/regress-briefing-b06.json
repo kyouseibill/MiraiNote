@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "model": "deepseek-v4-flash",
+    "sampleCount": 1,
+    "totalApiCalls": 2,
+    "samplePassRate": 0.0,
+    "noExclamationRate": null,
+    "sourceTagValidRate": null,
+    "factsOnlyNumbersRate": null,
+    "avgLatencyS": 57.64
+  },
+  "badCases": [
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    }
+  ],
+  "results": [
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 57.64,
+      "raw": ""
+    }
+  ]
+}

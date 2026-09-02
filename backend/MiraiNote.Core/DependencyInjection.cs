@@ -27,6 +27,14 @@ public static class DependencyInjection
         services.AddScoped<Services.IAgentMemoryService, Services.AgentMemoryService>();
         services.AddScoped<Services.IAgentPlannerService, Services.AgentPlannerService>();
         services.AddScoped<Services.IAgentReflectorService, Services.AgentReflectorService>();
+        // Mirai M1：收件箱分拣 / 晨报 / 今日流 / AI 统计 / context 会话快照
+        services.AddScoped<Services.Mirai.IInboxTriageService, Services.Mirai.InboxTriageService>();
+        services.AddScoped<Services.Mirai.IBriefingService, Services.Mirai.BriefingService>();
+        services.AddScoped<Services.Mirai.IDayOverviewService, Services.Mirai.DayOverviewService>();
+        services.AddScoped<Services.Mirai.IMiraiStatsService, Services.Mirai.MiraiStatsService>();
+        services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
+        services.AddScoped<Services.Mirai.IMiraiContextProvider, Services.Mirai.MiraiContextProvider>();
+        services.AddHostedService<Services.TempCleanupBackgroundService>();
         services.AddScoped<Services.ServerAgentToolRegistry>();
         services.AddScoped<Services.Tools.ServerSearchWorkLogsTool>();
         services.AddScoped<Services.Tools.ServerSearchMemosTool>();

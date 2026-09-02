@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-08-21T19:04:46.949Z",
+  "sessionId": "sess_9574348a-aaed-4cee-8d08-1356648c1a1c",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "frontend/src/views/chat/ChatView.vue",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 9,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

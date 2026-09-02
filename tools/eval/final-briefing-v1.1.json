@@ -1,0 +1,250 @@
+{
+  "summary": {
+    "model": "deepseek-v4-flash",
+    "sampleCount": 10,
+    "totalApiCalls": 12,
+    "samplePassRate": 0.6,
+    "noExclamationRate": 1.0,
+    "sourceTagValidRate": 1.0,
+    "factsOnlyNumbersRate": 1.0,
+    "avgLatencyS": 30.08
+  },
+  "badCases": [
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "must_not_mention_violation: 出现禁词 ['任务', '积压']",
+        "backlog_section: 期望积压段=False，实际含积压字样=True"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b07",
+      "category": "历史背景命中",
+      "failures": [
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b09",
+      "category": "数字密集防虚构",
+      "failures": [
+        "due_order: 关键词顺序 ['复盘', '弱口令', '告警'] 与优先级降序不符（位置 [74, 21, 113]）",
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": []
+    }
+  ],
+  "results": [
+    {
+      "id": "b01",
+      "category": "常规工作日",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#102",
+        "#101",
+        "#201",
+        "#201",
+        "#202",
+        "#203"
+      ],
+      "bodyChars": 124,
+      "latency": 4.0,
+      "raw": "## 今日到期 2 件事\n\n1. 回复客户验收标准邮件（优先级1）【来源: 回复客户验收标准邮件 #102】\n2. 推进数据迁移一期里程碑计划并发给客户（优先级2）【来源: 推进数据迁移一期里程碑计划发给客户 #101】；一期范围为用户表与订单表迁移【来源: 数据迁移方案v3评审记录 #201】\n\n## 昨日一句话回顾\n\n- 完成数据迁移方案v3评审【来源: 数据迁移方案v3评审记录 #201】\n- 启动监控告警治理【来源: 监控告警治理启动 #202】\n- 与客户召开电话会议【来源: 与客户电话会议纪要 #203】\n\n## 收件箱积压提醒\n\n收件箱积压 2 条，最早积压 3 天。"
+    },
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#110",
+        "#111",
+        "#112",
+        "#210"
+      ],
+      "bodyChars": 61,
+      "latency": 45.0,
+      "raw": "① 今日到期 3 件事：\n- 确认合同续约条款（优先级1）【来源: 确认合同续约条款 #110】\n- 组织迁移演练（优先级2）【来源: 组织迁移演练 #111】\n- 提交差旅报销单（优先级3）【来源: 提交差旅报销单 #112】\n\n② 昨日一句话回顾：完成周报整理【来源: 周报整理 #210】"
+    },
+    {
+      "id": "b03",
+      "category": "逾期任务",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#121",
+        "#120",
+        "#220",
+        "#220"
+      ],
+      "bodyChars": 107,
+      "latency": 16.66,
+      "raw": "今日待办 2 件事：\n\n- 更新权限矩阵文档，已逾期 2 天，优先处理【来源: 更新权限矩阵文档 #121】\n- 提交安全整改方案今日到期，需覆盖 8月22日渗透测试沟通中确认的两个中危项【来源: 提交安全整改方案 #120】【来源: 渗透测试结果沟通 #220】\n\n昨日完成渗透测试结果沟通，确认中危待整改项【来源: 渗透测试结果沟通 #220】\n\n收件箱积压 3 条，最早已积压 6 天，建议安排清理。"
+    },
+    {
+      "id": "b04",
+      "category": "零积压",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#130",
+        "#230"
+      ],
+      "bodyChars": 44,
+      "latency": 6.32,
+      "raw": "① 今日到期 1 件事：发送版本发布通告，优先级 2，工作事项。【来源: 发送版本发布通告 #130】\n\n② 昨日一句话回顾：完成发布准备检查。【来源: 发布准备检查 #230】"
+    },
+    {
+      "id": "b05",
+      "category": "昨日无记录",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#140"
+      ],
+      "bodyChars": 57,
+      "latency": 29.11,
+      "raw": "① 今日到期 1 件事  \n- 预约年度体检（优先级 1，生活）【来源: 预约年度体检 #140】\n\n② 昨日一句话回顾  \n无工作记录。\n\n③ 收件箱积压提醒  \n收件箱积压 1 条，最早积压 2 天。"
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "must_not_mention_violation: 出现禁词 ['任务', '积压']",
+        "backlog_section: 期望积压段=False，实际含积压字样=True"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [],
+      "bodyChars": 75,
+      "latency": 37.77,
+      "raw": "① 今日到期 0 件事，无逾期未完成事项。【来源: 今日到期任务 #无】【来源: 逾期未完成 #无】  \n② 昨日无工作记录。【来源: 昨日工作记录 #无】  \n\n（收件箱积压为 0，本节省略。）"
+    },
+    {
+      "id": "b07",
+      "category": "历史背景命中",
+      "failures": [
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#150",
+        "#250",
+        "#250",
+        "#251"
+      ],
+      "bodyChars": 81,
+      "latency": 35.95,
+      "raw": "① 今日到期 1 件事\n- 向评审组提交重构设计文档（优先级1），8月30日讨论会已确认拆两期，一期仅用户表与订单表。【来源: 向评审组提交重构设计文档 #150】【来源: 重构方案讨论会 #250】\n\n② 昨日一句话回顾\n- 昨日工作记录：重构方案讨论会、接口范围梳理。【来源: 重构方案讨论会 #250】【来源: 接口范围梳理 #251】"
+    },
+    {
+      "id": "b08",
+      "category": "生活与心情",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#160"
+      ],
+      "bodyChars": 84,
+      "latency": 50.28,
+      "raw": "今日到期 1 件事：\n- 下午带儿子参加幼儿园亲子活动，优先级最高【来源: 幼儿园亲子活动 #160】\n\n昨日一句话回顾：\n昨日无工作记录【来源: 昨日工作记录】\n\n收件箱积压提醒：\n收件箱积压 2 条，最早积压 4 天【来源: 收件箱】"
+    },
+    {
+      "id": "b09",
+      "category": "数字密集防虚构",
+      "failures": [
+        "due_order: 关键词顺序 ['复盘', '弱口令', '告警'] 与优先级降序不符（位置 [74, 21, 113]）",
+        "backlog_section: 期望积压段=True，实际含积压字样=False"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#172",
+        "#170",
+        "#270",
+        "#270"
+      ],
+      "bodyChars": 134,
+      "latency": 48.12,
+      "raw": "① 今日到期 3 件事：\n- 修复管理后台弱口令策略（已逾期 3 天，优先级2，工作）【来源: 修复管理后台弱口令策略 #172】\n- 输出月度经营复盘报告（优先级1，工作）【来源: 输出月度经营复盘报告 #170】\n- 确认告警规则梳理分工（优先级3，工作），昨日周会已清理 Top10 噪音源中 6 项【来源: 确认告警规则梳理分工 #171；告警治理周会 #270】\n\n② 昨日一句话回顾：告警治理周会：误报率从 40% 降到 25%，日均告警从 300 条降为 120 条【来源: 告警治理周会 #270】"
+    },
+    {
+      "id": "b10",
+      "category": "多来源引用",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#180",
+        "#280",
+        "#181",
+        "#280",
+        "#281"
+      ],
+      "bodyChars": 119,
+      "latency": 27.56,
+      "raw": "**今日到期 2 件事**\n- 提交季度 OKR 草稿（优先级1）。9月8日对齐会已明确下季度聚焦迁移与告警两条线，可参照【来源: 提交季度 OKR 草稿 #180】【来源: OKR 对齐会议纪要 #280】\n- 还社区图书角两本书【来源: 还社区图书角两本书 #181】\n\n**昨日一句话回顾**\n完成 OKR 对齐会议纪要，并整理《卡夫卡短篇集》阅读笔记【来源: OKR 对齐会议纪要 #280】【来源: 阅读笔记：《卡夫卡短篇集》 #281】\n\n**收件箱积压**\n积压 3 条，最早积压 8 天【来源: 收件箱积压】"
+    }
+  ]
+}

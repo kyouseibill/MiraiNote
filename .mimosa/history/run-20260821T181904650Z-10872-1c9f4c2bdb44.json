@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20260821T181904650Z-10872-1c9f4c2bdb44",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:release/MiraiNote.API/wwwroot/assets/useMarkdown-B8DdFYwr.js: candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js: baseline_snapshot_unreadable: file is missing from task baseline",
+    "scan:release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+  ],
+  "target": ".",
+  "revision": "446c8b62f1a9524f71deec8a71c1b53f07eb321c",
+  "diffHash": "965df3e24b7d63833fb9781d79c849ef61ad3994b08e3b84c30ca2f7c315e867",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-08-21T18:19:04.650Z",
+  "timing": {
+    "startedAt": "2026-08-21T18:19:01.896Z",
+    "completedAt": "2026-08-21T18:19:04.650Z",
+    "durationMs": 2754
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "candidate_limit_exceeded": 1,
+      "baseline_snapshot_unreadable": 20,
+      "scanner_failed": 20,
+      "project_check_failed": 41
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_9574348a-aaed-4cee-8d08-1356648c1a1c-20260821T181904650Z-10872-1c9f4c2bdb44.json"
+}

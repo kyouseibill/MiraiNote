@@ -1,0 +1,1 @@
+var e=`https://mirainotefileservice.miraiai.net`,t=`/api/v1`.replace(/\/api\/v\d+\/?$/,``),n=(e.trim().split(/\s+/)[0]||t).replace(/\/$/,``);function r(e){return e?e.startsWith(`http://`)||e.startsWith(`https://`)||e.startsWith(`data:`)||e.startsWith(`blob:`)?e:`${n}${e.startsWith(`/`)?e:`/${e}`}`:``}export{r as t};

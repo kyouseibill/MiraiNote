@@ -1,0 +1,1 @@
+import{A as e,L as t,w as n}from"./index-BXGHVxdZ.js";import{t as r}from"./MemoBoard-Dq--tyW9.js";var i=e({__name:`WorkMemoView`,setup(e){return(e,i)=>(t(),n(r,{section:`work`,accent:`teal`,title:`工作备忘`}))}});export{i as default};

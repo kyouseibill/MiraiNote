@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260822T042542151Z-12608-f6dde1d107bc",
+  "runId": "20260822T042542151Z-12608-f6dde1d107bc",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": [
+      {
+        "code": "baseline_partial",
+        "stage": "baseline",
+        "target": ".",
+        "detail": "baseline capture had enumeration or snapshot errors",
+        "affectsCompletion": false
+      }
+    ]
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "935de26b483e1d09707ac82a5bea0e71419e719a",
+  "diffHash": "a634c0f1b2ece955ee13ee73b6f96024abdc06b3c041103dc3dc796b58b3c8d6",
+  "rulesVersion": "unavailable",
+  "sessionHash": "65251fca4ae66fdf662db32b83e3c9e1c7e28121d3346d43c131edbfdb4ffb3e",
+  "reportRef": ".mimosa/reports/task-review-sess_f3991b98-0d59-44c0-a4e4-02564cbbcb2b-20260822T042542151Z-12608-f6dde1d107bc.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [
+    {
+      "file": "MiraiNote.Core/Services/Mirai/MiraiPrompts.cs",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "MiraiNote.Core/Services/Mirai/InboxTriageService.cs",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "MiraiNote.Core/Services/Mirai/BriefingService.cs",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "MiraiNote.Tests/BriefingServiceTests.cs",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-08-22T04:25:42.747Z"
+}
