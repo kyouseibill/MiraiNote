@@ -1,14 +1,25 @@
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services;
+using MiraiNote.Data.Context;
+using MiraiNote.Data.Entities;
 using Xunit;
 
 namespace MiraiNote.Tests;
 
-public class WelcomeGreetingServiceTests
+public class WelcomeGreetingServiceTests : IDisposable
 {
-    private static WelcomeGreetingService CreateService(string? apiKey, IHttpClientFactory factory) =>
+    private readonly MiraiTestFixture _fx = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
+
+    private WelcomeGreetingService CreateService(
+        string? apiKey,
+        IHttpClientFactory factory,
+        MiraiNoteDbContext? db = null) =>
         new(
+            db ?? _fx.CreateContext(),
+            _cache,
             Options.Create(new DeepSeekOptions
             {
                 ApiKey = apiKey ?? "",
@@ -89,5 +100,69 @@ public class WelcomeGreetingServiceTests
             Assert.True(g.Length <= 60);
             Assert.DoesNotContain('\n', g);
         });
+    }
+
+    [Fact]
+    public void PickFromPool_UsesExplicitListWhenProvided()
+    {
+        var day = new DateOnly(2026, 9, 3);
+        var pool = new[] { "甲", "乙", "丙" };
+        var pick = WelcomeGreetingService.PickFromPool(1013, day, pool);
+
+        Assert.Contains(pick, pool);
+        Assert.Equal(WelcomeGreetingService.PickFromPool(1013, day, pool), pick);
+        Assert.DoesNotContain(pick, WelcomeGreetingService.GreetingPool);
+    }
+
+    [Fact]
+    public void PickFromPool_FallsBackToHardcodedWhenListEmpty()
+    {
+        var day = new DateOnly(2026, 9, 3);
+        var pick = WelcomeGreetingService.PickFromPool(42, day, Array.Empty<string>());
+
+        Assert.Equal(WelcomeGreetingService.PickFromPool(42, day), pick);
+        Assert.Contains(pick, WelcomeGreetingService.GreetingPool);
+    }
+
+    [Fact]
+    public async Task PickFromPoolAsync_UsesDbRowsOrderedBySortOrder()
+    {
+        await using (var seed = _fx.CreateContext())
+        {
+            seed.WelcomeGreetings.AddRange(
+                new WelcomeGreeting { Content = "库内第三条", IsActive = true, SortOrder = 30 },
+                new WelcomeGreeting { Content = "库内第一条", IsActive = true, SortOrder = 10 },
+                new WelcomeGreeting { Content = "库内第二条", IsActive = true, SortOrder = 20 },
+                new WelcomeGreeting { Content = "已禁用", IsActive = false, SortOrder = 1 });
+            await seed.SaveChangesAsync();
+        }
+
+        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
+        var service = CreateService(apiKey: null, factory);
+        var day = new DateOnly(2026, 9, 3);
+        var expectedPool = new[] { "库内第一条", "库内第二条", "库内第三条" };
+
+        var greeting = await service.PickFromPoolAsync(7, day);
+
+        Assert.Equal(WelcomeGreetingService.PickFromPool(7, day, expectedPool), greeting);
+        Assert.Contains(greeting, expectedPool);
+    }
+
+    [Fact]
+    public async Task PickFromPoolAsync_FallsBackWhenDbEmpty()
+    {
+        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
+        var service = CreateService(apiKey: null, factory);
+        var day = new DateOnly(2026, 9, 3);
+
+        var greeting = await service.PickFromPoolAsync(42, day);
+
+        Assert.Equal(WelcomeGreetingService.PickFromPool(42, day), greeting);
+    }
+
+    public void Dispose()
+    {
+        _cache.Dispose();
+        _fx.Dispose();
     }
 }

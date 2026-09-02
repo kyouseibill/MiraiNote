@@ -1,9 +1,12 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Mirai;
+using MiraiNote.Data.Context;
 
 namespace MiraiNote.Core.Services;
 
@@ -18,11 +21,13 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     /// <summary>文案池首句；保留常量名供兼容旧测试/引用。</summary>
     public const string FallbackGreeting = "今天，安静地推进";
     private const int MaxLength = 60;
+    private const string PoolCacheKey = "welcome-greeting-pool";
+    private static readonly TimeSpan PoolCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan GenerateTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// P0 本地文案池。选句算法：UTF-8 字节对 key="{userId}:{yyyy-MM-dd}" 做 FNV-1a 32-bit，
-    /// 再 mod Pool.Length，保证同用户同日本地日期结果稳定。
+    /// P0 本地文案池（硬编码回退）。选句算法：UTF-8 字节对 key="{userId}:{yyyy-MM-dd}" 做 FNV-1a 32-bit，
+    /// 再 mod Pool.Count，保证同用户同日本地日期结果稳定。
     /// </summary>
     public static readonly string[] GreetingPool =
     [
@@ -68,15 +73,21 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         "今天，也请好好照顾自己的节奏",
     ];
 
+    private readonly MiraiNoteDbContext _db;
+    private readonly IMemoryCache _cache;
     private readonly DeepSeekOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WelcomeGreetingService> _logger;
 
     public WelcomeGreetingService(
+        MiraiNoteDbContext db,
+        IMemoryCache cache,
         IOptions<DeepSeekOptions> options,
         IHttpClientFactory httpClientFactory,
         ILogger<WelcomeGreetingService> logger)
     {
+        _db = db;
+        _cache = cache;
         _options = options.Value;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -87,7 +98,7 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         try
         {
             if (string.IsNullOrWhiteSpace(_options.ApiKey))
-                return PickFromPool(userId, localDate);
+                return await PickFromPoolAsync(userId, localDate, ct);
 
             using var client = DeepSeekJsonClient.CreateAuthorizedClient(
                 _httpClientFactory, _options.BaseUrl, _options.ApiKey);
@@ -111,21 +122,69 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
                 temperature: 0.8, maxTokens: 100, jsonObject: false,
                 timeout: GenerateTimeout, ct);
 
-            return IsValid(greeting) ? greeting.Trim() : PickFromPool(userId, localDate);
+            return IsValid(greeting) ? greeting.Trim() : await PickFromPoolAsync(userId, localDate, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             _logger.LogWarning("今日欢迎语生成失败：{Message}", ex.Message);
-            return PickFromPool(userId, localDate);
+            return await PickFromPoolAsync(userId, localDate, ct);
         }
     }
 
-    public static string PickFromPool(int userId, DateOnly localDate)
+    /// <summary>从缓存/DB 加载文案池后选句；池空或异常时回退硬编码原 40 条。</summary>
+    public async Task<string> PickFromPoolAsync(int userId, DateOnly localDate, CancellationToken ct = default)
     {
+        var pool = await LoadPoolAsync(ct);
+        return PickFromPool(userId, localDate, pool);
+    }
+
+    /// <summary>对硬编码 GreetingPool 选句（兼容旧测试）。</summary>
+    public static string PickFromPool(int userId, DateOnly localDate) =>
+        PickFromPool(userId, localDate, GreetingPool);
+
+    /// <summary>
+    /// 对显式文案列表选句。pool 为空时回退 GreetingPool。
+    /// 算法：FNV-1a 32-bit(UTF-8 of "{userId}:{yyyy-MM-dd}") mod count。
+    /// </summary>
+    public static string PickFromPool(int userId, DateOnly localDate, IReadOnlyList<string> pool)
+    {
+        var effective = pool is { Count: > 0 } ? pool : GreetingPool;
         var key = $"{userId}:{localDate:yyyy-MM-dd}";
         var hash = Fnv1a32(Encoding.UTF8.GetBytes(key));
-        var index = (int)(hash % (uint)GreetingPool.Length);
-        return GreetingPool[index];
+        var index = (int)(hash % (uint)effective.Count);
+        return effective[index];
+    }
+
+    private async Task<IReadOnlyList<string>> LoadPoolAsync(CancellationToken ct)
+    {
+        if (_cache.TryGetValue(PoolCacheKey, out IReadOnlyList<string>? cached) && cached is { Count: > 0 })
+            return cached;
+
+        try
+        {
+            // 全局软删除过滤器已排除 IsDeleted=1；再按 IsActive + SortOrder,Id 排序
+            var list = await _db.WelcomeGreetings
+                .AsNoTracking()
+                .Where(g => g.IsActive)
+                .OrderBy(g => g.SortOrder)
+                .ThenBy(g => g.Id)
+                .Select(g => g.Content)
+                .ToListAsync(ct);
+
+            if (list.Count == 0)
+            {
+                _logger.LogWarning("WelcomeGreeting 表无可用文案，回退硬编码文案池");
+                return GreetingPool;
+            }
+
+            _cache.Set(PoolCacheKey, (IReadOnlyList<string>)list, PoolCacheDuration);
+            return list;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "加载 WelcomeGreeting 文案池失败，回退硬编码文案池");
+            return GreetingPool;
+        }
     }
 
     private static uint Fnv1a32(ReadOnlySpan<byte> data)
