@@ -1,0 +1,106 @@
+{
+  "summary": {
+    "model": "deepseek-v4-flash",
+    "sampleCount": 4,
+    "totalApiCalls": 6,
+    "samplePassRate": 0.5,
+    "noExclamationRate": 1.0,
+    "sourceTagValidRate": 0.6667,
+    "factsOnlyNumbersRate": 1.0,
+    "avgLatencyS": 33.99
+  },
+  "badCases": [
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "source_tag_invalid: #110 标题『今日到期任务』与事实行不符：1. 确认合同续约条款（优先级1，工作） #110; #111 标题『今日到期任务』与事实行不符：2. 组织迁移演练（优先级2，工作） #111; #112 标题『今日到期任务』与事实行不符：3. 提交差旅报销单（优先级3，工作） #112; #210 标题『昨日工作记录』与事实行不符：- 周报整理 #210"
+      ],
+      "warnings": []
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": []
+    }
+  ],
+  "results": [
+    {
+      "id": "b02",
+      "category": "优先级排序",
+      "failures": [
+        "source_tag_invalid: #110 标题『今日到期任务』与事实行不符：1. 确认合同续约条款（优先级1，工作） #110; #111 标题『今日到期任务』与事实行不符：2. 组织迁移演练（优先级2，工作） #111; #112 标题『今日到期任务』与事实行不符：3. 提交差旅报销单（优先级3，工作） #112; #210 标题『昨日工作记录』与事实行不符：- 周报整理 #210"
+      ],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": false,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#110",
+        "#111",
+        "#112",
+        "#210"
+      ],
+      "bodyChars": 67,
+      "latency": 3.62,
+      "raw": "① 今日到期 3 件事，按优先级：\n- 确认合同续约条款【来源: 今日到期任务 #110】\n- 组织迁移演练【来源: 今日到期任务 #111】\n- 提交差旅报销单【来源: 今日到期任务 #112】\n\n② 昨日完成周报整理【来源: 昨日工作记录 #210】\n\n③ 收件箱积压 5 条，最早积压 1 天【来源: 收件箱 #收件箱】"
+    },
+    {
+      "id": "b06",
+      "category": "全空事实",
+      "failures": [
+        "api_fail: empty content (finish_reason=length)"
+      ],
+      "warnings": [],
+      "constraints": {},
+      "latency": 61.7,
+      "raw": ""
+    },
+    {
+      "id": "b07",
+      "category": "历史背景命中",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#150",
+        "#250",
+        "#250",
+        "#251"
+      ],
+      "bodyChars": 111,
+      "latency": 45.72,
+      "raw": "① 今日到期 1 件事  \n- 向评审组提交重构设计文档（优先级1）。8月30日讨论会已确认拆两期，一期仅用户表与订单表【来源: 向评审组提交重构设计文档 #150】【来源: 重构方案讨论会 #250】\n\n② 昨日一句话回顾  \n昨日完成重构方案讨论与接口范围梳理【来源: 重构方案讨论会 #250】【来源: 接口范围梳理 #251】\n\n③ 收件箱积压提醒  \n收件箱积压 4 条，最早积压 5 天，建议尽早清理【来源: 收件箱】"
+    },
+    {
+      "id": "b09",
+      "category": "数字密集防虚构",
+      "failures": [],
+      "warnings": [],
+      "constraints": {
+        "noExclamation": true,
+        "sourceTagValid": true,
+        "factsOnlyNumbers": true
+      },
+      "sourceTags": [
+        "#172",
+        "#170",
+        "#171",
+        "#270",
+        "#270"
+      ],
+      "bodyChars": 144,
+      "latency": 24.94,
+      "raw": "① 今日到期 3 件事\n- 修复管理后台弱口令策略，已逾期 3 天（优先级2）【来源: 修复管理后台弱口令策略 #172】\n- 输出月度经营复盘报告（优先级1）【来源: 输出月度经营复盘报告 #170】\n- 确认告警规则梳理分工（优先级3，9月7日周会已清理Top10噪音源6项）【来源: 确认告警规则梳理分工 #171】【来源: 告警治理周会 #270】\n\n② 昨日一句话回顾\n告警治理周会：误报率从 40% 降到 25%，日均告警 300 条降为 120 条【来源: 告警治理周会 #270】\n\n③ 收件箱积压提醒\n收件箱积压 7 条，最早积压 9 天"
+    }
+  ]
+}

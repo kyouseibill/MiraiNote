@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-08-21T18:47:02.062Z",
+  "sessionId": "sess_9574348a-aaed-4cee-8d08-1356648c1a1c",
+  "event": "PostToolUse",
+  "toolName": "Write",
+  "file": "C:/Users/18852/AppData/Local/Temp/ds_probe.js",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 17,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

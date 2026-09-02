@@ -56,7 +56,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
-if (!app.Environment.IsDevelopment())
+if (app.Configuration.GetValue<bool>("Hosting:RequireHttps"))
 {
     app.UseHttpsRedirection();
 }

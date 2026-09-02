@@ -1,0 +1,452 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 5,
+    "totalApiCalls": 5,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 0.625,
+    "sectionAccuracy": 0.875,
+    "contentAccuracy": 0.75,
+    "sampleFullPassRate": 0.2,
+    "avgLatencyS": 23.89,
+    "maxLatencyS": 39.51
+  },
+  "badCases": [
+    {
+      "id": "t09",
+      "category": "双意图混排",
+      "failures": [
+        "section_mismatch[task#s1]: 期望 work，实际 'life'",
+        "content_mismatch[knowledge#s2]: 关键词 ['Pin'] 未命中，实际内容: 收藏文章，无后续行动"
+      ],
+      "warnings": [],
+      "actualTypes": [
+        "task",
+        "knowledge"
+      ]
+    },
+    {
+      "id": "t23",
+      "category": "生活事件",
+      "failures": [
+        "time_mismatch[task#s1]: 期望 2026-10-02T09:00，实际 None"
+      ],
+      "warnings": [
+        "uncertain_missing: 未在 uncertain 中提及 ['纪念日']"
+      ],
+      "actualTypes": [
+        "task",
+        "lifelog"
+      ]
+    },
+    {
+      "id": "t28",
+      "category": "超长输入-会议",
+      "failures": [
+        "extra_items: 多出 4 条（容忍 1）：['worklog', 'worklog', 'worklog', 'worklog']"
+      ],
+      "warnings": [],
+      "actualTypes": [
+        "task",
+        "task",
+        "worklog",
+        "worklog",
+        "worklog",
+        "worklog",
+        "worklog"
+      ]
+    },
+    {
+      "id": "t29",
+      "category": "超长输入-生活混排",
+      "failures": [
+        "content_mismatch[task#s6]: 关键词 ['家长会'] 未命中，实际内容: 下周尝试每天冥想十分钟",
+        "time_mismatch[task#s6]: 期望 2026-08-27T19:00，实际 None",
+        "content_mismatch[task#s7]: 关键词 ['还书', '书'] 未命中，实际内容: 参加儿子的幼儿园家长会（下周四晚上7点）",
+        "time_mismatch[task#s7]: 期望 2026-08-30T09:00，实际 '2026-08-27T19:00'",
+        "extra_items: 多出 4 条（容忍 1）：['lifelog', 'lifelog', 'knowledge', 'task']"
+      ],
+      "warnings": [],
+      "actualTypes": [
+        "lifelog",
+        "lifelog",
+        "lifelog",
+        "knowledge",
+        "knowledge",
+        "task",
+        "task",
+        "task"
+      ]
+    }
+  ],
+  "details": [
+    {
+      "id": "t08",
+      "category": "双意图混排",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 2,
+      "matched": 2,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 2,
+      "contentOk": 2,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "去拿体检报告",
+            "remindAtLocal": "2026-08-23T09:30",
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "提交季度OKR",
+            "remindAtLocal": "2026-08-26T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 32.53,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.97,\n      \"rationale\": \"明确行动+明确时间（明天9:30）\",\n      \"fields\": {\n        \"content\": \"去拿体检报告\",\n        \"remindAtLocal\": \"2026-08-23T09:30\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.85,\n      \"rationale\": \"明确行动+期限（周三前），但“之前”的具体提前量未说明\",\n      \"fields\": {\n        \"content\": \"提交季度OKR\",\n        \"remindAtLocal\": \"2026-08-26T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": [\n    \"“周三之前”的截止时刻未说明，默认按周三（2026-08-26）09:00作为提醒时间；若用户意为不晚于周二，请告知具体截止时间。\"\n  ]\n}"
+    },
+    {
+      "id": "t09",
+      "category": "双意图混排",
+      "failures": [
+        "section_mismatch[task#s1]: 期望 work，实际 'life'",
+        "content_mismatch[knowledge#s2]: 关键词 ['Pin'] 未命中，实际内容: 收藏文章，无后续行动"
+      ],
+      "warnings": [],
+      "expectedItems": 2,
+      "matched": 2,
+      "timeChecked": 1,
+      "timeOk": 1,
+      "sectionChecked": 1,
+      "sectionOk": 0,
+      "contentChecked": 2,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "研究Rust的async生态",
+            "remindAtLocal": null,
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 5.33,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.9,\n      \"rationale\": \"行动+无明确期限，时间模糊为空时\",\n      \"fields\": {\n        \"content\": \"研究Rust的async生态\",\n        \"remindAtLocal\": null,\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.95,\n      \"rationale\": \"收藏文章，无后续行动\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t23",
+      "category": "生活事件",
+      "failures": [
+        "time_mismatch[task#s1]: 期望 2026-10-02T09:00，实际 None"
+      ],
+      "warnings": [
+        "uncertain_missing: 未在 uncertain 中提及 ['纪念日']"
+      ],
+      "expectedItems": 1,
+      "matched": 1,
+      "timeChecked": 1,
+      "timeOk": 0,
+      "sectionChecked": 1,
+      "sectionOk": 1,
+      "contentChecked": 1,
+      "contentOk": 1,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "提前为爸妈结婚纪念日订餐厅",
+            "remindAtLocal": null,
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "lifelog",
+          "fields": {
+            "content": "爸妈结婚纪念日是10月2号",
+            "mood": null
+          }
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "lifelog"
+      ],
+      "extraItems": 1,
+      "latency": 11.24,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.9,\n      \"rationale\": \"有明确行动「提前订餐厅」且属生活场景，但未给出提醒时间\",\n      \"fields\": {\n        \"content\": \"提前为爸妈结婚纪念日订餐厅\",\n        \"remindAtLocal\": null,\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"记录爸妈结婚纪念日这一生活事件\",\n      \"fields\": {\n        \"content\": \"爸妈结婚纪念日是10月2号\",\n        \"mood\": null\n      }\n    }\n  ],\n  \"uncertain\": [\n    \"「提前订餐厅」的具体提前天数未说明，无法设置提醒时间\"\n  ]\n}"
+    },
+    {
+      "id": "t28",
+      "category": "超长输入-会议",
+      "failures": [
+        "extra_items: 多出 4 条（容忍 1）：['worklog', 'worklog', 'worklog', 'worklog']"
+      ],
+      "warnings": [],
+      "expectedItems": 3,
+      "matched": 3,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 3,
+      "contentOk": 3,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "28号下午5点前发一期迁移里程碑计划给客户",
+            "remindAtLocal": "2026-08-28T17:00",
+            "priority": 2,
+            "section": "work"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "下周一早上和小王对齐告警规则梳理分工",
+            "remindAtLocal": "2026-08-24T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        },
+        {
+          "suggestionId": "s3",
+          "type": "worklog",
+          "fields": {
+            "title": "数据迁移方案v3评审结论",
+            "content": "接口改动范围大，参会人一致同意拆两期：一期迁移用户表、订单表，资产表迁移放二期；缓存预热策略二期评估；灰度方案由基础架构组下轮会前出初稿。",
+            "tags": [
+              "迁移方案",
+              "周会"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s4",
+          "type": "worklog",
+          "fields": {
+            "title": "监控告警激增分析",
+            "content": "迁移演练期间告警从日均40条涨至300多条，误报率约40%，原因：重复告警未合并、阈值一刀切；需按模块分级梳理告警规则，先清理Top10噪音源。",
+            "tags": [
+              "周会",
+              "监控告警"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s5",
+          "type": "worklog",
+          "fields": {
+            "title": "安全渗透测试结果",
+            "content": "渗透测试报告发布，两个中危：管理后台未启用弱口令策略、开放接口缺少频控；安全组本周内出整改方案，应用改动排下个迭代。",
+            "tags": [
+              "安全评审"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s6",
+          "type": "worklog",
+          "fields": {
+            "title": "客户询问迁移时间表",
+            "content": "客户已两次询问迁移时间表，商务侧需提供书面里程碑计划，包含每期范围、灰度节奏和回滚预案。",
+            "tags": [
+              "客户需求"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s7",
+          "type": "worklog",
+          "fields": {
+            "title": "多租户改造立项信息同步",
+            "content": "老板提到下季度可能立项多租户改造，本季度不启动，仅同步。",
+            "tags": [
+              "周会",
+              "多租户改造"
+            ],
+            "category": null
+          }
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "task",
+        "worklog",
+        "worklog",
+        "worklog",
+        "worklog",
+        "worklog"
+      ],
+      "extraItems": 4,
+      "latency": 39.51,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.98,\n      \"rationale\": \"行动项①，明确日期时间\",\n      \"fields\": {\n        \"content\": \"28号下午5点前发一期迁移里程碑计划给客户\",\n        \"remindAtLocal\": \"2026-08-28T17:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"行动项②，下周一早上\",\n      \"fields\": {\n        \"content\": \"下周一早上和小王对齐告警规则梳理分工\",\n        \"remindAtLocal\": \"2026-08-24T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    },\n    {\n      \"suggestionId\": \"s3\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"数据迁移方案评审结论\",\n      \"fields\": {\n        \"title\": \"数据迁移方案v3评审结论\",\n        \"content\": \"接口改动范围大，参会人一致同意拆两期：一期迁移用户表、订单表，资产表迁移放二期；缓存预热策略二期评估；灰度方案由基础架构组下轮会前出初稿。\",\n        \"tags\": [\"迁移方案\", \"周会\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s4\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"监控告警数据与分析\",\n      \"fields\": {\n        \"title\": \"监控告警激增分析\",\n        \"content\": \"迁移演练期间告警从日均40条涨至300多条，误报率约40%，原因：重复告警未合并、阈值一刀切；需按模块分级梳理告警规则，先清理Top10噪音源。\",\n        \"tags\": [\"周会\", \"监控告警\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s5\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"安全渗透测试结果\",\n      \"fields\": {\n        \"title\": \"安全渗透测试结果\",\n        \"content\": \"渗透测试报告发布，两个中危：管理后台未启用弱口令策略、开放接口缺少频控；安全组本周内出整改方案，应用改动排下个迭代。\",\n        \"tags\": [\"安全评审\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s6\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"客户沟通情况\",\n      \"fields\": {\n        \"title\": \"客户询问迁移时间表\",\n        \"content\": \"客户已两次询问迁移时间表，商务侧需提供书面里程碑计划，包含每期范围、灰度节奏和回滚预案。\",\n        \"tags\": [\"客户需求\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s7\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"多租户改造信息同步\",\n      \"fields\": {\n        \"title\": \"多租户改造立项信息同步\",\n        \"content\": \"老板提到下季度可能立项多租户改造，本季度不启动，仅同步。\",\n        \"tags\": [\"周会\", \"多租户改造\"],\n        \"category\": null\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t29",
+      "category": "超长输入-生活混排",
+      "failures": [
+        "content_mismatch[task#s6]: 关键词 ['家长会'] 未命中，实际内容: 下周尝试每天冥想十分钟",
+        "time_mismatch[task#s6]: 期望 2026-08-27T19:00，实际 None",
+        "content_mismatch[task#s7]: 关键词 ['还书', '书'] 未命中，实际内容: 参加儿子的幼儿园家长会（下周四晚上7点）",
+        "time_mismatch[task#s7]: 期望 2026-08-30T09:00，实际 '2026-08-27T19:00'",
+        "extra_items: 多出 4 条（容忍 1）：['lifelog', 'lifelog', 'knowledge', 'task']"
+      ],
+      "warnings": [],
+      "expectedItems": 4,
+      "matched": 4,
+      "timeChecked": 2,
+      "timeOk": 0,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 4,
+      "contentOk": 2,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "lifelog",
+          "fields": {
+            "content": "周六上午带儿子去科技馆，他看老式蒸汽机近二十分钟，在纪念品店买拼装模型，回家路上睡着。",
+            "mood": null
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "lifelog",
+          "fields": {
+            "content": "周日全家爬城郊小山，顶风大，儿子第一次独立走完全程，下山吃牛肉面。",
+            "mood": null
+          }
+        },
+        {
+          "suggestionId": "s3",
+          "type": "lifelog",
+          "fields": {
+            "content": "小孩精力旺盛，陪玩一天比上班还累，但看到孩子成长觉得值得。",
+            "mood": null
+          }
+        },
+        {
+          "suggestionId": "s4",
+          "type": "knowledge",
+          "fields": null
+        },
+        {
+          "suggestionId": "s5",
+          "type": "knowledge",
+          "fields": null
+        },
+        {
+          "suggestionId": "s6",
+          "type": "task",
+          "fields": {
+            "content": "下周尝试每天冥想十分钟",
+            "remindAtLocal": null,
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s7",
+          "type": "task",
+          "fields": {
+            "content": "参加儿子的幼儿园家长会（下周四晚上7点）",
+            "remindAtLocal": "2026-08-27T19:00",
+            "priority": 1,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s8",
+          "type": "task",
+          "fields": {
+            "content": "归还社区图书漂流角借的两本书（下周日到期）",
+            "remindAtLocal": null,
+            "priority": 2,
+            "section": "life"
+          }
+        }
+      ],
+      "actualTypes": [
+        "lifelog",
+        "lifelog",
+        "lifelog",
+        "knowledge",
+        "knowledge",
+        "task",
+        "task",
+        "task"
+      ],
+      "extraItems": 4,
+      "latency": 30.86,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"生活事件记录\",\n      \"fields\": {\n        \"content\": \"周六上午带儿子去科技馆，他看老式蒸汽机近二十分钟，在纪念品店买拼装模型，回家路上睡着。\",\n        \"mood\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.95,\n      \"rationale\": \"生活事件记录\",\n      \"fields\": {\n        \"content\": \"周日全家爬城郊小山，顶风大，儿子第一次独立走完全程，下山吃牛肉面。\",\n        \"mood\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s3\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.9,\n      \"rationale\": \"个人感受与心情\",\n      \"fields\": {\n        \"content\": \"小孩精力旺盛，陪玩一天比上班还累，但看到孩子成长觉得值得。\",\n        \"mood\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s4\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.9,\n      \"rationale\": \"播客知识：TNR比直接扑杀成本低、效果更好\",\n      \"fields\": null\n    },\n    {\n      \"suggestionId\": \"s5\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.9,\n      \"rationale\": \"播客知识：焦虑源于对未来过度模拟，正念可缓解\",\n      \"fields\": null\n    },\n    {\n      \"suggestionId\": \"s6\",\n      \"type\": \"task\",\n      \"confidence\": 0.85,\n      \"rationale\": \"行动+期限：下周尝试每天冥想十分钟\",\n      \"fields\": {\n        \"content\": \"下周尝试每天冥想十分钟\",\n        \"remindAtLocal\": null,\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s7\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"明确时间提醒：下周四晚上7点家长会\",\n      \"fields\": {\n        \"content\": \"参加儿子的幼儿园家长会（下周四晚上7点）\",\n        \"remindAtLocal\": \"2026-08-27T19:00\",\n        \"priority\": 1,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s8\",\n      \"type\": \"task\",\n      \"confidence\": 0.9,\n      \"rationale\": \"行动+期限：归还图书，下周日到期\",\n      \"fields\": {\n        \"content\": \"归还社区图书漂流角借的两本书（下周日到期）\",\n        \"remindAtLocal\": null,\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    }\n  ],\n  \"uncertain\": [\n    \"还书提醒的具体时间未说明，未设置提醒，建议用户确认\",\n    \"冥想的每日具体时间未说明，未设置提醒\"\n  ]\n}"
+    }
+  ]
+}

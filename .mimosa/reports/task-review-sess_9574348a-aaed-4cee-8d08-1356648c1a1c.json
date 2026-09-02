@@ -1,0 +1,994 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20260821T181904650Z-10872-1c9f4c2bdb44",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "candidate-select",
+      "target": "release/MiraiNote.API/wwwroot/assets/useMarkdown-B8DdFYwr.js",
+      "reason": "candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+      "reason": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 240,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 4
+    },
+    "change_tracking": {
+      "touched_observed": 0,
+      "touched_retained": 0,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 58,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 58,
+      "selected_files": 20,
+      "limit": 20,
+      "truncated": true
+    },
+    "scanning": {
+      "required_files": 20,
+      "scanned_files": 0,
+      "skipped_files": 0,
+      "failed_files": 20,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "candidate_limit_exceeded": 1,
+      "baseline_snapshot_unreadable": 20,
+      "scanner_failed": 20,
+      "project_check_failed": 41
+    },
+    "reasons": [
+      {
+        "code": "candidate_limit_exceeded",
+        "stage": "candidate-select",
+        "target": "release/MiraiNote.API/wwwroot/assets/useMarkdown-B8DdFYwr.js",
+        "detail": "38 changed reviewable file(s) were not scanned because the limit is 20",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+        "detail": "spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "release/MiraiNote.API/wwwroot/assets/useMarkdown-B8DdFYwr.js",
+        "detail": "candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+        "detail": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+        "detail": "scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": true
+  },
+  "generated_at": "2026-08-21T18:19:04.650Z",
+  "session_id": "sess_9574348a-aaed-4cee-8d08-1356648c1a1c",
+  "target": ".",
+  "revision": "446c8b62f1a9524f71deec8a71c1b53f07eb321c",
+  "rules_version": "unavailable",
+  "diff_hash": "965df3e24b7d63833fb9781d79c849ef61ad3994b08e3b84c30ca2f7c315e867",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 20,
+    "changed_files": [
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/ChatView-DvhY_vH9.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 8
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "06657597541f49ae7711c2b65df0077d69725327ce798c023c007068c920ad7b"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/createVueComponent-BaDIxc9v.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "083ccdbc05396162f82a583127f1196a842853f692eab60828a19d3eac9e28ec"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/DashboardView-DDSdjz_i.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "29bcf6da92d45ab18eb65133dc2070d65fa8c051c7ea3646a7ae24bf8d2e79ca"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/favicon-CjgOoDgN.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "8f6d6b9ae57936b15c86bc8b5ec3f76c6ede078ab9df34efa45f31d7455abac5"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/ForgotPasswordView-BoKdNg9F.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "72b94d654636bb6750f772ef33936ae55e2d138dd886a40f2a51e9d1f15e22e4"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/FormField-C5oX-Kkd.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "f4f6114a8b915ec1a8ce9bcacf2cee5481721d221e32400dce917e4e6b065d64"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/IconFileText-CneDzpLp.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "ac59ed49b8918275af49be85552808a815a45cbbf1544fe43458fc9075aad6e2"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/IconX-CTsn5opa.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "95a3e02d2439b3efaeed6139b7067675abf2da4a3c1236ec35e95528dd5afce7"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/index-C8sIXoTX.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 10
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "2682069a5783b20d20c8c07037281b05d0df769d1c86095ac3ae5d8eda10ff75"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/LifeLogView-CE2Uk-k1.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "be4d3a602cf29a5c98aeb15041663db4ad366a4b725258fe9124881efff7352b"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/LifeMemoView-BMnHy8PQ.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "b5270a06dc0c48043ee757b11406f76b75c7232b7c526ecc294011872f5d7bd0"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/LoginView-wwmg1QW6.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "282eafcc6102a4c5945d65c0c33d9eb7905a1e4865cf625f99ec07ee88ec4e3e"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/MainLayout-D2DtBtr_.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "604de1c5e1ba6a2397a3a9201ffd175555d5a6509ff236cab7f6ddf0e87ada9b"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/memo-DMioCjPL.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "d931eca8d1e423752b87b8024bd1645b83ee4307e966244c85a797c748423b65"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/MemoBoard-xyyNp_lH.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "5fc892d5d869bdcb7547ba0367d0ed962833ed23bf766ad3cf8d27541f571bbe"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/PasswordInput-DCl7vSJg.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "d2c4e85deefece9bdb87c151c6143457a7275ab58a2d9bc9cf0a2fa4dcc5c7db"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/ProfileView-CbcujFZd.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "f35346fa0b416ecc89bb5d18eed85638cc696b4f63cdafcdfd5256e2be55bfa5"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/RegisterView-CXuRX_2B.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "99b8324e670f01d5c44201467ddf1993513b8eec46f71647b5b626e882612458"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/ResetPasswordView-CVnA1Cxu.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "bec9d3f37a2e8e507791df8b933c115deae6b043c2b0a9c45e1d545c5a96ec72"
+      },
+      {
+        "file": "release/MiraiNote.API/wwwroot/assets/sse-sMDMgzMx.js",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "49b0dae90a39b5b23c86d84a1b0faa9f40b36ecc62730f1406a6bb7023721d80"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-08-21T18:19:01.896Z",
+    "completed_at": "2026-08-21T18:19:04.650Z",
+    "duration_ms": 2754,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 2754,
+    "peakMemoryBytes": 73949184,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 0,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_9574348a-aaed-4cee-8d08-1356648c1a1c-20260821T181904650Z-10872-1c9f4c2bdb44.json",
+    "latest_report": ".mimosa/reports/task-review-sess_9574348a-aaed-4cee-8d08-1356648c1a1c.json",
+    "history_summary": ".mimosa/history/run-20260821T181904650Z-10872-1c9f4c2bdb44.json"
+  }
+}

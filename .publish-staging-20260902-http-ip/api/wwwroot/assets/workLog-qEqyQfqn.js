@@ -1,0 +1,1 @@
+import{a as e,o as t}from"./index-BXGHVxdZ.js";var n={list:n=>t(e.get(`/worklogs`,{params:n})),get:n=>t(e.get(`/worklogs/${n}`)),create:n=>t(e.post(`/worklogs`,n)),update:(n,r)=>t(e.put(`/worklogs/${n}`,r)),remove:n=>t(e.delete(`/worklogs/${n}`)),getCategories:()=>t(e.get(`/worklogs/categories`))};export{n as t};

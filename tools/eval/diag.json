@@ -1,0 +1,103 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 2,
+    "totalApiCalls": 3,
+    "jsonParseSuccessRate": 0.5,
+    "typeAccuracy": 0.4,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 0.5,
+    "avgLatencyS": 11.42,
+    "maxLatencyS": 19.06
+  },
+  "badCases": [
+    {
+      "id": "t28",
+      "category": "超长输入-会议",
+      "failures": [
+        "parse_fail: empty content (finish_reason=length) reasoning_head='我们需要解析这段话。注意当前时间2026-08-22T09:20。我们需要提取多个条目。\\n\\n首先，整体是一份会议纪要，包含多个议题和行动项。规则：一句话可能包含多个意图。这里显然是一个会议纪要，可以拆解为多个条目。用户说“项目周会纪要（8月22日）：... 行动项：①... ②...”。\\n\\n我们要输出JSON items，每个suggestionId递增。需要分类：有行动+期限 → task；工作'; api error; empty content (finish_reason=length) reasoning_head='我们需要按照前面的系统提示，对用户输入进行分拣。用户输入是中文的一段工作纪要，需要拆解为结构化条目。\\n\\n先看输入内容：\\n\\n\"项目周会纪要（8月22日）：一、数据迁移方案v3评审：接口改动范围太大，参会人一致同意拆成两期，一期只做用户表和订单表的迁移，资产表迁移放二期；缓存预热策略二期再评估；灰度方案由基础架构组下轮会前出初稿。二、监控告警：上周迁移演练期间告警数量激增，从日均40条涨到300多条，'"
+      ],
+      "warnings": [],
+      "actualTypes": []
+    }
+  ],
+  "details": [
+    {
+      "id": "t08",
+      "category": "双意图混排",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 2,
+      "matched": 2,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 2,
+      "contentOk": 2,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "去拿体检报告",
+            "remindAtLocal": "2026-08-23T09:30",
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "提交季度OKR",
+            "remindAtLocal": "2026-08-26T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 3.78,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"明确时间与行动\",\n      \"fields\": {\n        \"content\": \"去拿体检报告\",\n        \"remindAtLocal\": \"2026-08-23T09:30\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.95,\n      \"rationale\": \"明确截止时间与行动，工作相关\",\n      \"fields\": {\n        \"content\": \"提交季度OKR\",\n        \"remindAtLocal\": \"2026-08-26T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    },
+    {
+      "id": "t28",
+      "category": "超长输入-会议",
+      "failures": [
+        "parse_fail: empty content (finish_reason=length) reasoning_head='我们需要解析这段话。注意当前时间2026-08-22T09:20。我们需要提取多个条目。\\n\\n首先，整体是一份会议纪要，包含多个议题和行动项。规则：一句话可能包含多个意图。这里显然是一个会议纪要，可以拆解为多个条目。用户说“项目周会纪要（8月22日）：... 行动项：①... ②...”。\\n\\n我们要输出JSON items，每个suggestionId递增。需要分类：有行动+期限 → task；工作'; api error; empty content (finish_reason=length) reasoning_head='我们需要按照前面的系统提示，对用户输入进行分拣。用户输入是中文的一段工作纪要，需要拆解为结构化条目。\\n\\n先看输入内容：\\n\\n\"项目周会纪要（8月22日）：一、数据迁移方案v3评审：接口改动范围太大，参会人一致同意拆成两期，一期只做用户表和订单表的迁移，资产表迁移放二期；缓存预热策略二期再评估；灰度方案由基础架构组下轮会前出初稿。二、监控告警：上周迁移演练期间告警数量激增，从日均40条涨到300多条，'"
+      ],
+      "warnings": [],
+      "expectedItems": 3,
+      "matched": 0,
+      "timeChecked": 0,
+      "timeOk": 0,
+      "sectionChecked": 0,
+      "sectionOk": 0,
+      "contentChecked": 0,
+      "contentOk": 0,
+      "actualItems": [],
+      "actualTypes": [],
+      "parseOk": false,
+      "latency": 19.06,
+      "retried": true,
+      "finishReasons": [
+        "length",
+        "length"
+      ],
+      "raw": ""
+    }
+  ]
+}

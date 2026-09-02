@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20260822T033801227Z-18708-73a4374adc4b",
+  "runStatus": "inconclusive",
+  "errors": [
+    "scan:docs/contracts/types.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:docs/contracts/MiraiDtos.cs: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/vite.config.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/postcss.config.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/tailwind.config.js: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/vite-env.d.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/main.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/router/index.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/api/client.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/api/mirai.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/stores/auth.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/stores/ui.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src-tauri/build.rs: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src-tauri/src/main.rs: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src-tauri/src/lib.rs: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "scan:desktop/src/api/types.ts: scanner_failed: spawnSync C:\\Program Files\\nodejs\\node.exe ETIMEDOUT",
+    "supply-chain-check:.: stop_budget_exhausted: focused supply-chain check was not run before the gate budget"
+  ],
+  "target": ".",
+  "revision": "935de26b483e1d09707ac82a5bea0e71419e719a",
+  "diffHash": "3ba6d551fd448e6b32e6326eccd4924f24716c32fdbb37bdd3d8a3915968d38a",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-08-22T03:38:01.227Z",
+  "timing": {
+    "startedAt": "2026-08-22T03:37:58.179Z",
+    "completedAt": "2026-08-22T03:38:01.227Z",
+    "durationMs": 3048
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "scanner_failed": 16,
+      "stop_budget_exhausted": 1,
+      "project_check_failed": 17
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_f3991b98-0d59-44c0-a4e4-02564cbbcb2b-20260822T033801227Z-18708-73a4374adc4b.json"
+}

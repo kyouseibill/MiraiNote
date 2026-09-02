@@ -1,0 +1,248 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20260822T042542151Z-12608-f6dde1d107bc",
+  "run_status": "completed",
+  "errors": [],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "complete",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": false,
+      "captured_files": 4,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 4
+    },
+    "change_tracking": {
+      "touched_observed": 4,
+      "touched_retained": 4,
+      "truncated": false,
+      "bash_mutation": false,
+      "bash_discovered": 0,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 4,
+      "selected_files": 4,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 4,
+      "scanned_files": 4,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "baseline_partial": 1
+    },
+    "reasons": [
+      {
+        "code": "baseline_partial",
+        "stage": "baseline",
+        "target": ".",
+        "detail": "baseline capture had enumeration or snapshot errors",
+        "affects_completion": false
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-08-22T04:25:42.151Z",
+  "session_id": "sess_f3991b98-0d59-44c0-a4e4-02564cbbcb2b",
+  "target": ".",
+  "revision": "935de26b483e1d09707ac82a5bea0e71419e719a",
+  "rules_version": "unavailable",
+  "diff_hash": "a634c0f1b2ece955ee13ee73b6f96024abdc06b3c041103dc3dc796b58b3c8d6",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 4,
+    "changed_files": [
+      {
+        "file": "MiraiNote.Core/Services/Mirai/BriefingService.cs",
+        "ranges": [
+          {
+            "start": 166,
+            "end": 174
+          },
+          {
+            "start": 189,
+            "end": 189
+          }
+        ],
+        "before_hash": "a92489ce4844a4571510e7aa688479cc26e9175572364b1bd375d0afc7c48415",
+        "after_hash": "697aa36d92034ebd8b38540b54394189e39ed57ccbae924456370eeda3b9af9f"
+      },
+      {
+        "file": "MiraiNote.Core/Services/Mirai/InboxTriageService.cs",
+        "ranges": [
+          {
+            "start": 347,
+            "end": 347
+          },
+          {
+            "start": 354,
+            "end": 354
+          },
+          {
+            "start": 358,
+            "end": 358
+          },
+          {
+            "start": 409,
+            "end": 409
+          }
+        ],
+        "before_hash": "4a5c4900aac17b23362d483f8cfa67b4e917f4838e9ac6e46aafceec29def8cf",
+        "after_hash": "70a189bce5103b0c19e02da301c6dfc5049f4719eafd1735d3272f5f63fb24c7"
+      },
+      {
+        "file": "MiraiNote.Core/Services/Mirai/MiraiPrompts.cs",
+        "ranges": [
+          {
+            "start": 9,
+            "end": 9
+          },
+          {
+            "start": 17,
+            "end": 24
+          },
+          {
+            "start": 26,
+            "end": 27
+          },
+          {
+            "start": 30,
+            "end": 31
+          },
+          {
+            "start": 36,
+            "end": 45
+          },
+          {
+            "start": 47,
+            "end": 47
+          },
+          {
+            "start": 55,
+            "end": 55
+          },
+          {
+            "start": 60,
+            "end": 65
+          },
+          {
+            "start": 68,
+            "end": 73
+          },
+          {
+            "start": 102,
+            "end": 102
+          },
+          {
+            "start": 105,
+            "end": 108
+          },
+          {
+            "start": 111,
+            "end": 112
+          },
+          {
+            "start": 114,
+            "end": 115
+          }
+        ],
+        "before_hash": "a0c9c0a6e28bb6da49f027fad797cd0950f6649326461ace32133b2cbf19044d",
+        "after_hash": "6b43229dfbb04bc2b8c97233783376b588ecb1acf2deea2f7763b8f783d924ea"
+      },
+      {
+        "file": "MiraiNote.Tests/BriefingServiceTests.cs",
+        "ranges": [
+          {
+            "start": 96,
+            "end": 115
+          },
+          {
+            "start": 119,
+            "end": 119
+          },
+          {
+            "start": 136,
+            "end": 136
+          },
+          {
+            "start": 155,
+            "end": 155
+          },
+          {
+            "start": 248,
+            "end": 257
+          }
+        ],
+        "before_hash": "804c65a644411e0148823cadc8b01f26b898c6eb7d86c8068f51b79efcc9c0d1",
+        "after_hash": "7ce1fca2b4a0ff59e2148066eb9ff6478afbc0c43b3e0415b66f19b500fdcfe6"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-08-22T04:25:40.557Z",
+    "completed_at": "2026-08-22T04:25:42.151Z",
+    "duration_ms": 1594,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "complete",
+    "latencyMs": 1594,
+    "peakMemoryBytes": 119869440,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 4,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_f3991b98-0d59-44c0-a4e4-02564cbbcb2b-20260822T042542151Z-12608-f6dde1d107bc.json",
+    "latest_report": ".mimosa/reports/task-review-sess_f3991b98-0d59-44c0-a4e4-02564cbbcb2b.json",
+    "history_summary": ".mimosa/history/run-20260822T042542151Z-12608-f6dde1d107bc.json"
+  }
+}

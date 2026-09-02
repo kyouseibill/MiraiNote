@@ -1,0 +1,83 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 1,
+    "totalApiCalls": 1,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 1.0,
+    "avgLatencyS": 30.13,
+    "maxLatencyS": 30.13
+  },
+  "badCases": [],
+  "details": [
+    {
+      "id": "t28",
+      "category": "超长输入-会议",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 3,
+      "matched": 3,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 3,
+      "contentOk": 3,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "worklog",
+          "fields": {
+            "title": "项目周会纪要（8月22日）",
+            "content": "# 项目周会纪要（2026-08-22）\n- 数据迁移v3评审：接口改动大，拆两期（一期用户/订单表，二期资产表）；缓存策略二期评估；灰度初稿基础架构组下轮会前出。\n- 监控告警：演练期间告警40→300+，误报40%；需分级梳理规则，先清Top10噪音源。\n- 安全：渗透测试两中危（弱口令、无频控），整改本周内出，应用改动下迭代。\n- 客户：两次询问时间表，需书面里程碑计划（含范围/灰度/回滚）。\n- 其他：下季度可能立项多租户，本季度不启动。",
+            "tags": [
+              "周会",
+              "迁移方案",
+              "安全评审",
+              "客户需求"
+            ],
+            "category": null
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "28号17:00前将一期迁移里程碑计划发给客户",
+            "remindAtLocal": "2026-08-28T17:00",
+            "priority": 2,
+            "section": "work"
+          }
+        },
+        {
+          "suggestionId": "s3",
+          "type": "task",
+          "fields": {
+            "content": "下周一早上与小王对齐告警规则梳理的分工",
+            "remindAtLocal": "2026-08-24T09:00",
+            "priority": 2,
+            "section": "work"
+          }
+        }
+      ],
+      "actualTypes": [
+        "worklog",
+        "task",
+        "task"
+      ],
+      "extraItems": 0,
+      "latency": 30.13,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"worklog\",\n      \"confidence\": 0.98,\n      \"rationale\": \"项目周会纪要，含迁移/告警/安全/客户\",\n      \"fields\": {\n        \"title\": \"项目周会纪要（8月22日）\",\n        \"content\": \"# 项目周会纪要（2026-08-22）\\n- 数据迁移v3评审：接口改动大，拆两期（一期用户/订单表，二期资产表）；缓存策略二期评估；灰度初稿基础架构组下轮会前出。\\n- 监控告警：演练期间告警40→300+，误报40%；需分级梳理规则，先清Top10噪音源。\\n- 安全：渗透测试两中危（弱口令、无频控），整改本周内出，应用改动下迭代。\\n- 客户：两次询问时间表，需书面里程碑计划（含范围/灰度/回滚）。\\n- 其他：下季度可能立项多租户，本季度不启动。\",\n        \"tags\": [\"周会\", \"迁移方案\", \"安全评审\", \"客户需求\"],\n        \"category\": null\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 0.98,\n      \"rationale\": \"行动项：28号发里程碑计划给客户\",\n      \"fields\": {\n        \"content\": \"28号17:00前将一期迁移里程碑计划发给客户\",\n        \"remindAtLocal\": \"2026-08-28T17:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    },\n    {\n      \"suggestionId\": \"s3\",\n      \"type\": \"task\",\n      \"confidence\": 0.98,\n      \"rationale\": \"行动项：下周一与小王对齐告警分工\",\n      \"fields\": {\n        \"content\": \"下周一早上与小王对齐告警规则梳理的分工\",\n        \"remindAtLocal\": \"2026-08-24T09:00\",\n        \"priority\": 2,\n        \"section\": \"work\"\n      }\n    }\n  ],\n  \"uncertain\": []\n}"
+    }
+  ]
+}

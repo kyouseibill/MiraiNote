@@ -1,0 +1,82 @@
+{
+  "summary": {
+    "promptFile": "docs\\prompts\\triage-v1.md",
+    "model": "deepseek-v4-flash",
+    "sampleCount": 1,
+    "totalApiCalls": 1,
+    "jsonParseSuccessRate": 1.0,
+    "typeAccuracy": 1.0,
+    "timeAccuracy": 1.0,
+    "sectionAccuracy": 1.0,
+    "contentAccuracy": 1.0,
+    "sampleFullPassRate": 1.0,
+    "avgLatencyS": 27.52,
+    "maxLatencyS": 27.52
+  },
+  "badCases": [],
+  "details": [
+    {
+      "id": "t29",
+      "category": "超长输入-生活混排",
+      "failures": [],
+      "warnings": [],
+      "expectedItems": 4,
+      "matched": 4,
+      "timeChecked": 2,
+      "timeOk": 2,
+      "sectionChecked": 2,
+      "sectionOk": 2,
+      "contentChecked": 4,
+      "contentOk": 4,
+      "parseOk": true,
+      "actualItems": [
+        {
+          "suggestionId": "s1",
+          "type": "task",
+          "fields": {
+            "content": "参加儿子幼儿园家长会（晚上7点）",
+            "remindAtLocal": "2026-08-27T19:00",
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s2",
+          "type": "task",
+          "fields": {
+            "content": "归还社区图书漂流角借的两本书",
+            "remindAtLocal": "2026-08-30T09:00",
+            "priority": 2,
+            "section": "life"
+          }
+        },
+        {
+          "suggestionId": "s3",
+          "type": "lifelog",
+          "fields": {
+            "content": "周六带儿子去科技馆，他对蒸汽机兴趣浓厚，买了拼装模型；周日全家爬山，儿子首次独立走完全程。感想：孩子精力旺盛，陪伴虽累但值得。",
+            "mood": "累但欣慰"
+          }
+        },
+        {
+          "suggestionId": "s4",
+          "type": "knowledge",
+          "fields": null
+        }
+      ],
+      "actualTypes": [
+        "task",
+        "task",
+        "lifelog",
+        "knowledge"
+      ],
+      "extraItems": 0,
+      "latency": 27.52,
+      "retried": false,
+      "finishReasons": [
+        "stop"
+      ],
+      "raw": "{\n  \"items\": [\n    {\n      \"suggestionId\": \"s1\",\n      \"type\": \"task\",\n      \"confidence\": 1.0,\n      \"rationale\": \"明确事件时间：下周四晚上7点幼儿园家长会，需提醒不迟到\",\n      \"fields\": {\n        \"content\": \"参加儿子幼儿园家长会（晚上7点）\",\n        \"remindAtLocal\": \"2026-08-27T19:00\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s2\",\n      \"type\": \"task\",\n      \"confidence\": 1.0,\n      \"rationale\": \"借阅的书下周日到期，需要归还\",\n      \"fields\": {\n        \"content\": \"归还社区图书漂流角借的两本书\",\n        \"remindAtLocal\": \"2026-08-30T09:00\",\n        \"priority\": 2,\n        \"section\": \"life\"\n      }\n    },\n    {\n      \"suggestionId\": \"s3\",\n      \"type\": \"lifelog\",\n      \"confidence\": 0.98,\n      \"rationale\": \"记录周末陪伴儿子的生活流水：科技馆、爬山及个人感想\",\n      \"fields\": {\n        \"content\": \"周六带儿子去科技馆，他对蒸汽机兴趣浓厚，买了拼装模型；周日全家爬山，儿子首次独立走完全程。感想：孩子精力旺盛，陪伴虽累但值得。\",\n        \"mood\": \"累但欣慰\"\n      }\n    },\n    {\n      \"suggestionId\": \"s4\",\n      \"type\": \"knowledge\",\n      \"confidence\": 0.95,\n      \"rationale\": \"播客知识点：TNR（诱捕-绝育-放归）治理流浪猫优于扑杀；正念缓解焦虑，并打算下周尝试每日十分钟冥想\",\n      \"fields\": null\n    }\n  ],\n  \"uncertain\": []\n}"
+    }
+  ]
+}
