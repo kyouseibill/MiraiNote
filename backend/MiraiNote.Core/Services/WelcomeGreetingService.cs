@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -12,10 +11,10 @@ namespace MiraiNote.Core.Services;
 
 public interface IWelcomeGreetingService
 {
-    Task<string> GetGreetingAsync(int userId, DateOnly localDate, CancellationToken ct = default);
+    Task<string> GetGreetingAsync(int userId, DateOnly localDate, string? exclude = null, CancellationToken ct = default);
 }
 
-/// <summary>生成 Dashboard 的短欢迎语；AI 失败时按用户+本地日期从文案池稳定选句。</summary>
+/// <summary>生成 Dashboard 的短欢迎语；AI 失败时从文案池随机选句（可排除上次展示）。</summary>
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
     /// <summary>文案池首句；保留常量名供兼容旧测试/引用。</summary>
@@ -26,8 +25,8 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     private static readonly TimeSpan GenerateTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// P0 本地文案池（硬编码回退）。选句算法：UTF-8 字节对 key="{userId}:{yyyy-MM-dd}" 做 FNV-1a 32-bit，
-    /// 再 mod Pool.Count，保证同用户同日本地日期结果稳定。
+    /// P0 本地文案池（硬编码回退）。运行时优先读 WelcomeGreeting 表；
+    /// 选句改为每次随机，并通过 exclude 避免连续重复（池大小 ≥ 2 时）。
     /// </summary>
     public static readonly string[] GreetingPool =
     [
@@ -93,12 +92,17 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         _logger = logger;
     }
 
-    public async Task<string> GetGreetingAsync(int userId, DateOnly localDate, CancellationToken ct = default)
+    public async Task<string> GetGreetingAsync(
+        int userId,
+        DateOnly localDate,
+        string? exclude = null,
+        CancellationToken ct = default)
     {
+        _ = userId; // 保留签名兼容；随机池选句不再依赖 userId
         try
         {
             if (string.IsNullOrWhiteSpace(_options.ApiKey))
-                return await PickFromPoolAsync(userId, localDate, ct);
+                return await PickFromPoolAsync(exclude, ct);
 
             using var client = DeepSeekJsonClient.CreateAuthorizedClient(
                 _httpClientFactory, _options.BaseUrl, _options.ApiKey);
@@ -122,37 +126,51 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
                 temperature: 0.8, maxTokens: 100, jsonObject: false,
                 timeout: GenerateTimeout, ct);
 
-            return IsValid(greeting) ? greeting.Trim() : await PickFromPoolAsync(userId, localDate, ct);
+            return IsValid(greeting) ? greeting.Trim() : await PickFromPoolAsync(exclude, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             _logger.LogWarning("今日欢迎语生成失败：{Message}", ex.Message);
-            return await PickFromPoolAsync(userId, localDate, ct);
+            return await PickFromPoolAsync(exclude, ct);
         }
     }
 
-    /// <summary>从缓存/DB 加载文案池后选句；池空或异常时回退硬编码原 40 条。</summary>
-    public async Task<string> PickFromPoolAsync(int userId, DateOnly localDate, CancellationToken ct = default)
+    /// <summary>从缓存/DB 加载文案池后随机选句；池空或异常时回退硬编码原 40 条。</summary>
+    public async Task<string> PickFromPoolAsync(string? exclude = null, CancellationToken ct = default)
     {
         var pool = await LoadPoolAsync(ct);
-        return PickFromPool(userId, localDate, pool);
+        return PickRandomFromPool(pool, exclude);
     }
 
-    /// <summary>对硬编码 GreetingPool 选句（兼容旧测试）。</summary>
-    public static string PickFromPool(int userId, DateOnly localDate) =>
-        PickFromPool(userId, localDate, GreetingPool);
+    /// <summary>对硬编码 GreetingPool 随机选句（兼容旧测试入口）。</summary>
+    public static string PickRandomFromPool(string? exclude = null, Random? random = null) =>
+        PickRandomFromPool(GreetingPool, exclude, random);
 
     /// <summary>
-    /// 对显式文案列表选句。pool 为空时回退 GreetingPool。
-    /// 算法：FNV-1a 32-bit(UTF-8 of "{userId}:{yyyy-MM-dd}") mod count。
+    /// 从文案列表随机选句。pool 为空时回退 GreetingPool。
+    /// exclude 非空且池大小 ≥ 2 时，排除与 exclude 完全相同的句子，避免连续重复；
+    /// 池大小为 1 时允许重复返回该句。
     /// </summary>
-    public static string PickFromPool(int userId, DateOnly localDate, IReadOnlyList<string> pool)
+    public static string PickRandomFromPool(
+        IReadOnlyList<string> pool,
+        string? exclude = null,
+        Random? random = null)
     {
         var effective = pool is { Count: > 0 } ? pool : GreetingPool;
-        var key = $"{userId}:{localDate:yyyy-MM-dd}";
-        var hash = Fnv1a32(Encoding.UTF8.GetBytes(key));
-        var index = (int)(hash % (uint)effective.Count);
-        return effective[index];
+        random ??= Random.Shared;
+
+        if (effective.Count == 1)
+            return effective[0];
+
+        IReadOnlyList<string> candidates = effective;
+        if (!string.IsNullOrEmpty(exclude))
+        {
+            var filtered = effective.Where(s => !string.Equals(s, exclude, StringComparison.Ordinal)).ToList();
+            if (filtered.Count > 0)
+                candidates = filtered;
+        }
+
+        return candidates[random.Next(candidates.Count)];
     }
 
     private async Task<IReadOnlyList<string>> LoadPoolAsync(CancellationToken ct)
@@ -185,19 +203,6 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
             _logger.LogWarning(ex, "加载 WelcomeGreeting 文案池失败，回退硬编码文案池");
             return GreetingPool;
         }
-    }
-
-    private static uint Fnv1a32(ReadOnlySpan<byte> data)
-    {
-        const uint offset = 2166136261;
-        const uint prime = 16777619;
-        var hash = offset;
-        foreach (var b in data)
-        {
-            hash ^= b;
-            hash *= prime;
-        }
-        return hash;
     }
 
     private static bool IsValid(string? value) =>

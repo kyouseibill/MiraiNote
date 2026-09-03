@@ -22,14 +22,17 @@ public sealed class WelcomeController : ControllerBase
 
     /// <summary>
     /// 首页欢迎语。可选 date=yyyy-MM-dd 表示用户本地日期；省略则用服务器本地日期。
+    /// 可选 exclude=上次展示文案，池随机回退时用于避免连续重复。
     /// </summary>
     [HttpGet("greeting")]
     public async Task<ActionResult<ApiResponse<WelcomeGreetingResponse>>> GetGreeting(
         [FromQuery] string? date,
+        [FromQuery] string? exclude,
         CancellationToken ct)
     {
         var localDate = ParseLocalDateOrToday(date);
-        var content = await _greetingService.GetGreetingAsync(_currentUser.UserId, localDate, ct);
+        var content = await _greetingService.GetGreetingAsync(
+            _currentUser.UserId, localDate, exclude, ct);
         return Ok(ApiResponse<WelcomeGreetingResponse>.Ok(new WelcomeGreetingResponse(content)));
     }
 

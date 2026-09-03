@@ -50,10 +50,10 @@ public class WelcomeGreetingServiceTests : IDisposable
         var service = CreateService("test-key", factory);
         var day = new DateOnly(2026, 9, 3);
 
-        var greeting = await service.GetGreetingAsync(userId: 1013, day);
+        var greeting = await service.GetGreetingAsync(userId: 1013, day, exclude: "今天，安静地推进");
 
-        Assert.Equal(WelcomeGreetingService.PickFromPool(1013, day), greeting);
         Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
+        Assert.NotEqual("今天，安静地推进", greeting);
     }
 
     [Fact]
@@ -65,28 +65,54 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var greeting = await service.GetGreetingAsync(userId: 42, day);
 
-        Assert.Equal(WelcomeGreetingService.PickFromPool(42, day), greeting);
+        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
     }
 
     [Fact]
-    public void PickFromPool_IsStableForSameUserAndDate()
+    public async Task GetGreeting_PassesExcludeToPoolFallback()
     {
+        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
+        var service = CreateService(apiKey: null, factory);
         var day = new DateOnly(2026, 9, 3);
-        var a = WelcomeGreetingService.PickFromPool(7, day);
-        var b = WelcomeGreetingService.PickFromPool(7, day);
-        Assert.Equal(a, b);
+        var exclude = WelcomeGreetingService.GreetingPool[0];
+
+        var greeting = await service.GetGreetingAsync(userId: 42, day, exclude);
+
+        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
+        Assert.NotEqual(exclude, greeting);
     }
 
     [Fact]
-    public void PickFromPool_HasAtLeastFiveDistinctOverSevenToFourteenDays()
+    public void PickRandomFromPool_ExcludesLastWhenPoolHasMultiple()
     {
-        var userId = 7;
-        var start = new DateOnly(2026, 9, 1);
-        var distinct = new HashSet<string>();
-        for (var i = 0; i < 14; i++)
-            distinct.Add(WelcomeGreetingService.PickFromPool(userId, start.AddDays(i)));
+        var pool = new[] { "甲", "乙", "丙" };
+        var rng = new Random(12345);
+        for (var i = 0; i < 40; i++)
+        {
+            var pick = WelcomeGreetingService.PickRandomFromPool(pool, exclude: "乙", random: rng);
+            Assert.Contains(pick, pool);
+            Assert.NotEqual("乙", pick);
+        }
+    }
 
-        Assert.True(distinct.Count >= 5, $"7～14 天内 distinct 应为 ≥5，实际 {distinct.Count}");
+    [Fact]
+    public void PickRandomFromPool_AllowsRepeatWhenPoolSizeIsOne()
+    {
+        var pool = new[] { "唯一一句" };
+        var pick = WelcomeGreetingService.PickRandomFromPool(pool, exclude: "唯一一句");
+        Assert.Equal("唯一一句", pick);
+    }
+
+    [Fact]
+    public void PickRandomFromPool_VariesAcrossCalls()
+    {
+        var pool = WelcomeGreetingService.GreetingPool;
+        var distinct = new HashSet<string>();
+        var rng = new Random(7);
+        for (var i = 0; i < 80; i++)
+            distinct.Add(WelcomeGreetingService.PickRandomFromPool(pool, random: rng));
+
+        Assert.True(distinct.Count >= 5, $"随机 80 次 distinct 应为 ≥5，实际 {distinct.Count}");
     }
 
     [Fact]
@@ -103,29 +129,25 @@ public class WelcomeGreetingServiceTests : IDisposable
     }
 
     [Fact]
-    public void PickFromPool_UsesExplicitListWhenProvided()
+    public void PickRandomFromPool_UsesExplicitListWhenProvided()
     {
-        var day = new DateOnly(2026, 9, 3);
         var pool = new[] { "甲", "乙", "丙" };
-        var pick = WelcomeGreetingService.PickFromPool(1013, day, pool);
+        var pick = WelcomeGreetingService.PickRandomFromPool(pool, random: new Random(1));
 
         Assert.Contains(pick, pool);
-        Assert.Equal(WelcomeGreetingService.PickFromPool(1013, day, pool), pick);
         Assert.DoesNotContain(pick, WelcomeGreetingService.GreetingPool);
     }
 
     [Fact]
-    public void PickFromPool_FallsBackToHardcodedWhenListEmpty()
+    public void PickRandomFromPool_FallsBackToHardcodedWhenListEmpty()
     {
-        var day = new DateOnly(2026, 9, 3);
-        var pick = WelcomeGreetingService.PickFromPool(42, day, Array.Empty<string>());
+        var pick = WelcomeGreetingService.PickRandomFromPool(Array.Empty<string>(), random: new Random(2));
 
-        Assert.Equal(WelcomeGreetingService.PickFromPool(42, day), pick);
         Assert.Contains(pick, WelcomeGreetingService.GreetingPool);
     }
 
     [Fact]
-    public async Task PickFromPoolAsync_UsesDbRowsOrderedBySortOrder()
+    public async Task PickFromPoolAsync_UsesDbRowsAndHonorsExclude()
     {
         await using (var seed = _fx.CreateContext())
         {
@@ -139,13 +161,14 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
         var service = CreateService(apiKey: null, factory);
-        var day = new DateOnly(2026, 9, 3);
         var expectedPool = new[] { "库内第一条", "库内第二条", "库内第三条" };
 
-        var greeting = await service.PickFromPoolAsync(7, day);
-
-        Assert.Equal(WelcomeGreetingService.PickFromPool(7, day, expectedPool), greeting);
-        Assert.Contains(greeting, expectedPool);
+        for (var i = 0; i < 20; i++)
+        {
+            var greeting = await service.PickFromPoolAsync(exclude: "库内第二条");
+            Assert.Contains(greeting, expectedPool);
+            Assert.NotEqual("库内第二条", greeting);
+        }
     }
 
     [Fact]
@@ -153,11 +176,10 @@ public class WelcomeGreetingServiceTests : IDisposable
     {
         var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
         var service = CreateService(apiKey: null, factory);
-        var day = new DateOnly(2026, 9, 3);
 
-        var greeting = await service.PickFromPoolAsync(42, day);
+        var greeting = await service.PickFromPoolAsync();
 
-        Assert.Equal(WelcomeGreetingService.PickFromPool(42, day), greeting);
+        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
     }
 
     public void Dispose()

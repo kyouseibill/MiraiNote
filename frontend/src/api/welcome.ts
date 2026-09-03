@@ -12,7 +12,20 @@ function todayLocal(): string {
   return `${y}-${m}-${day}`
 }
 
+export interface GetWelcomeGreetingOptions {
+  date?: string
+  /** 上次展示的欢迎语，供后端池随机时排除连续重复 */
+  exclude?: string
+}
+
 export const welcomeApi = {
-  getGreeting: (date = todayLocal()) =>
-    unwrap<WelcomeGreetingResponse>(http.get('/welcome/greeting', { params: { date } })),
+  getGreeting: (opts: GetWelcomeGreetingOptions = {}) =>
+    unwrap<WelcomeGreetingResponse>(
+      http.get('/welcome/greeting', {
+        params: {
+          date: opts.date ?? todayLocal(),
+          ...(opts.exclude ? { exclude: opts.exclude } : {}),
+        },
+      }),
+    ),
 }
