@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   IconArrowRight,
@@ -12,15 +12,20 @@ import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi } from '@/api/welcome'
+import { useAuthStore } from '@/stores/auth'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const auth = useAuthStore()
 
 const loading = ref(true)
-const greeting = ref('今天，安静地推进')
+/** 初始必须为空：禁止把默认句「今天，安静地推进」当首屏 UI */
+const greeting = ref('')
+const LAST_GREETING_KEY_PREFIX = 'mirainote:welcome:lastGreeting:'
+let welcomeAbort: AbortController | null = null
 const quickCapture = ref('')
 const capturing = ref(false)
 const workMemos = ref<Memo[]>([])
@@ -120,29 +125,111 @@ function focusTime(item: Memo): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前`
 }
 
+function lastGreetingStorageKey(): string | null {
+  const id = auth.user?.id
+  return id != null ? `${LAST_GREETING_KEY_PREFIX}${id}` : null
+}
+
+function readLastGreeting(): string | undefined {
+  const key = lastGreetingStorageKey()
+  if (!key) return undefined
+  try {
+    const value = localStorage.getItem(key)
+    return value || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function saveLastGreeting(content: string) {
+  const key = lastGreetingStorageKey()
+  if (!key || !content) return
+  try {
+    localStorage.setItem(key, content)
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function cancelWelcomeTypewriter() {
+  welcomeAbort?.abort()
+  welcomeAbort = null
+}
+
+/** 打字机约 1.2–2s；可被 abort（重新 load / 卸载）取消 */
+async function typewriterReveal(text: string, signal: AbortSignal) {
+  const chars = Array.from(text)
+  if (chars.length === 0) {
+    if (!signal.aborted) greeting.value = ''
+    return
+  }
+  const durationMs = 1200 + Math.floor(Math.random() * 800)
+  const stepMs = durationMs / chars.length
+  greeting.value = ''
+  for (let i = 0; i < chars.length; i++) {
+    if (signal.aborted) return
+    greeting.value += chars[i]
+    await new Promise<void>((resolve) => {
+      const timer = window.setTimeout(resolve, stepMs)
+      const onAbort = () => {
+        window.clearTimeout(timer)
+        resolve()
+      }
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+}
+
+async function applyWelcomeContent(content: string | null | undefined, signal: AbortSignal) {
+  const text = (content ?? '').trim()
+  if (!text) {
+    if (!signal.aborted) greeting.value = '…'
+    return
+  }
+  await typewriterReveal(text, signal)
+  if (!signal.aborted) saveLastGreeting(text)
+}
+
 async function load() {
+  cancelWelcomeTypewriter()
+  welcomeAbort = new AbortController()
+  const signal = welcomeAbort.signal
+
   loading.value = true
+  greeting.value = ''
+
   if (isDesignPreview.value) {
     workMemos.value = previewWorkMemos
     lifeMemos.value = previewLifeMemos
     recentLogs.value = previewLogs
     loading.value = false
+    await applyWelcomeContent('今天，把重要的一件事做好', signal)
     return
   }
 
   try {
+    const exclude = readLastGreeting()
     const [wm, lm, wl, welcome] = await Promise.all([
       memoApi.list({ section: 'work', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       memoApi.list({ section: 'life', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       workLogApi.list({ page: 1, pageSize: 5, dateFrom: weekStart(), dateTo: todayStr }),
-      welcomeApi.getGreeting().catch(() => null),
+      welcomeApi.getGreeting({ exclude }).catch(() => null),
     ])
+    if (signal.aborted) return
     workMemos.value = wm.items
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
-    if (welcome?.content) greeting.value = welcome.content
-  } finally {
     loading.value = false
+    await applyWelcomeContent(welcome?.content, signal)
+  } catch {
+    if (!signal.aborted) {
+      loading.value = false
+      greeting.value = '…'
+    }
   }
 }
 
@@ -187,6 +274,7 @@ async function toggleMemo(item: Memo) {
 }
 
 onMounted(load)
+onUnmounted(cancelWelcomeTypewriter)
 </script>
 
 <template>
