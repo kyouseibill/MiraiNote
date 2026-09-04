@@ -9,10 +9,8 @@ obj/
 # 不忽略 Migrations 目录
 
 # ===== Local secrets =====
-**/appsettings.Development.json
-**/appsettings.Local.json
-**/appsettings.*.Local.json
-**/appsettings.Production.json
+# All ASP.NET runtime configuration stays local, including templates.
+**/appsettings*.json
 
 # ===== Frontend (预留) =====
 node_modules/
