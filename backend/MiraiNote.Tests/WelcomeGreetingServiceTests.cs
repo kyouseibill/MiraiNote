@@ -32,7 +32,7 @@ public class WelcomeGreetingServiceTests : IDisposable
     [Fact]
     public async Task GetGreeting_ReturnsOriginalGreetingFromAiResponse()
     {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ =>
+        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ =>
             Task.FromResult("今天，把重要的一件事做好。"));
         var service = CreateService("test-key", factory);
         var day = new DateOnly(2026, 9, 3);
@@ -40,6 +40,16 @@ public class WelcomeGreetingServiceTests : IDisposable
         var greeting = await service.GetGreetingAsync(userId: 1013, day);
 
         Assert.Equal("今天，把重要的一件事做好。", greeting);
+        var prompt = MiraiTestFixture.DecodeMessageText(captured.Single());
+        Assert.Contains("AI 前沿观察者与未来预言者", prompt);
+        Assert.Contains("真实进展", prompt);
+        Assert.Contains("OpenAI、Anthropic、Google、SpaceX", prompt);
+        Assert.Contains("不要捏造未经确认的新闻", prompt);
+        Assert.Contains("不超过 60 个汉字", prompt);
+
+        using var request = System.Text.Json.JsonDocument.Parse(captured.Single());
+        Assert.Equal(256, request.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal("disabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
     }
 
     [Fact]

@@ -4,9 +4,40 @@ import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { renderMarkdown } from '@/composables/useMarkdown'
 import { chatApi } from '@/api/chat'
+import { http } from '@/api/auth'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { ChatMessage, ChatProject } from '@/types/chat'
+import AppDialog from '@/components/AppDialog.vue'
+import {
+  IconPlus,
+  IconSearch,
+  IconX,
+  IconMessageCircle,
+  IconDots,
+  IconFolder,
+  IconPaperclip,
+  IconArrowUp,
+  IconArrowDown,
+  IconArchive,
+  IconPencil,
+  IconPin,
+  IconTrash,
+  IconCopy,
+  IconGitBranch,
+  IconRefresh,
+  IconCheck,
+  IconLoader2,
+  IconArrowRight,
+  IconCircleDashed,
+  IconFileText,
+  IconDownload,
+  IconSquare,
+  IconLayoutSidebar,
+  IconMaximize,
+  IconMinimize,
+  IconBulb,
+} from '@tabler/icons-vue'
 
 const store = useChatStore()
 const toast = useToast()
@@ -23,11 +54,64 @@ function safeMarkdown(content: string | null | undefined): string {
     return renderMarkdown(content)
   } catch {
     return String(content ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
   }
 }
 
-function renderUserContent(content: string | null | undefined): string {
-  return String(content ?? '').replace(/\n/g, '<br>')
+function isExportDownload(url: string): boolean {
+  try {
+    return new URL(staticUrl(url), window.location.origin).pathname.includes('/api/v1/mirai/exports/')
+  } catch {
+    return false
+  }
+}
+
+function exportDownloadUrl(url: string): string {
+  const resolved = staticUrl(url)
+  // 旧消息可能保存了具体 IP 与 http 协议。生产环境统一走当前页面的反向代理，
+  // 既避免 HTTPS 页面触发混合内容，也避免跨域请求丢失下载授权。
+  if (!import.meta.env.PROD || !isExportDownload(url)) return resolved
+  const parsed = new URL(resolved, window.location.origin)
+  return `${window.location.origin}${parsed.pathname}${parsed.search}`
+}
+
+function fileNameFromUrl(url: string): string {
+  const name = url.split('/').pop() || '导出文件'
+  try {
+    return decodeURIComponent(name).replace(/^\d{17}_/, '') || '导出文件'
+  } catch {
+    return name
+  }
+}
+
+async function downloadExportFile(url: string, fileName = fileNameFromUrl(url)) {
+  try {
+    const response = await http.get<Blob>(exportDownloadUrl(url), { responseType: 'blob' })
+    if (!response.data.size) throw new Error('文件内容为空')
+    const objectUrl = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = fileName
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
+  } catch (error: any) {
+    toast.error(error?.response?.data?.message || error?.message || '文件下载失败，请稍后重试')
+  }
+}
+
+function onMessageLinkClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  const link = target.closest('a')
+  const href = link?.getAttribute('href')
+  if (!href || !isExportDownload(href)) return
+  event.preventDefault()
+  void downloadExportFile(href, fileNameFromUrl(href))
 }
 
 // 全局剥离思考块（兼容 <think> 变体；未闭合的思考块剥到末尾）
@@ -43,7 +127,10 @@ function stripResidualTags(text: string): string {
     .trim()
 }
 
-function splitAssistantContent(content: string | null | undefined, allowOpenThinking = false): { thinking: string; answer: string } {
+function splitAssistantContent(
+  content: string | null | undefined,
+  allowOpenThinking = false,
+): { thinking: string; answer: string } {
   const raw = String(content ?? '')
   const hasClosedThinking = /<(?:thinking|think)>[\s\S]*?<\/(?:thinking|think)>/i.test(raw)
   if (!hasClosedThinking && allowOpenThinking) {
@@ -101,21 +188,211 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingFiles = ref<Set<string>>(new Set())
 const showWorkspaceBrowser = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
-const renamingId = ref<number | null>(null)
-const renameTitle = ref('')
 const showArchiveManager = ref(false)
 const showSessionList = ref(false)
+const isNarrow = ref(window.matchMedia('(max-width: 767px)').matches)
+const narrowMedia = window.matchMedia('(max-width: 767px)')
+function onViewportChange(event: MediaQueryListEvent) {
+  isNarrow.value = event.matches
+  if (!event.matches) showSessionList.value = false
+}
 const restoringId = ref<number | null>(null)
 const searchQuery = ref('')
 const showProjectManager = ref(false)
 const editingProjectId = ref<number | null>(null)
-const projectForm = reactive({ name: '', instructions: '', color: '#0f766e', icon: '◇' })
+const projectForm = reactive({ name: '', instructions: '', color: '#4c6178', icon: '◇' })
 const showArtifacts = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+const sidebarCollapsed = ref(false)
+const inputRef = ref<HTMLTextAreaElement | null>(null)
+const searchRef = ref<HTMLInputElement | null>(null)
+const searchComposing = ref(false)
+const inputExpanded = ref(false)
+const atBottom = ref(true)
+const creatingSession = ref(false)
+const actionBusy = ref(false)
+const uiError = ref('')
+const uiErrorKind = ref<'load' | 'send' | 'create'>('load')
+const copiedId = ref<number | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+const dialog = ref<{
+  kind: 'delete' | 'archive' | 'project-delete' | 'rename' | 'edit'
+  id: number
+  title: string
+  description: string
+} | null>(null)
+const dialogText = ref('')
+const dialogError = ref('')
+const projectError = ref('')
+const currentProject = computed(() => store.projects.find((p) => p.id === store.currentSession?.projectId))
+const isCurrentStreaming = computed(() => store.sending && store.streamSessionId === store.currentSession?.id)
+const displayMessages = computed(() => [
+  ...(store.currentSession?.messages ?? []).map((message) => ({
+    ...message,
+    streaming: false,
+    ...splitAssistantContent(message.content),
+  })),
+  ...(store.streamMessage && store.streamSessionId === store.currentSession?.id
+    ? [
+        {
+          ...store.streamMessage,
+          streaming: true,
+          ...splitAssistantContent(store.streamMessage.content, true),
+        },
+      ]
+    : []),
+])
+const starters = [
+  {
+    title: '整理工作，写一份周报',
+    hint: '把零散记录整理成清晰的进展',
+    icon: IconFileText,
+    prompt: '帮我整理本周的工作记录，写一份简洁的周报。',
+  },
+  {
+    title: '一起梳理一个想法',
+    hint: '从一个念头，走向可行的下一步',
+    icon: IconBulb,
+    prompt: '我有一个想法，想和你一起梳理：',
+  },
+  {
+    title: '读懂一份文件',
+    hint: '提炼重点，发现值得关注的细节',
+    icon: IconFolder,
+    prompt: '请阅读我附上的文件，整理核心内容和需要关注的问题。',
+  },
+]
+
+async function focusInput() {
+  await nextTick()
+  inputRef.value?.focus()
+}
+async function useStarter(prompt: string) {
+  inputContent.value = prompt
+  await focusInput()
+}
+async function resizeInput() {
+  await nextTick()
+  const el = inputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${inputExpanded.value ? 220 : Math.min(160, Math.max(64, el.scrollHeight))}px`
+}
+function handleScroll() {
+  const el = messagesContainer.value
+  if (el) atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 72
+}
+async function copyMessage(message: ChatMessage) {
+  try {
+    await navigator.clipboard.writeText(
+      message.role === 'assistant' ? splitAssistantContent(message.content).answer : message.content,
+    )
+    copiedId.value = message.id
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => {
+      copiedId.value = null
+    }, 1800)
+    toast.success('已复制消息')
+  } catch {
+    toast.error('复制失败，请选择消息文字后复制')
+  }
+}
+
+function scheduleSearch() {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (searchComposing.value) return
+  searchTimer = setTimeout(() => runSearch(), 300)
+}
+async function runSearch() {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (searchComposing.value) return
+  uiError.value = ''
+  uiErrorKind.value = 'load'
+  try {
+    await store.searchSessions(searchQuery.value)
+  } catch {
+    uiError.value = '对话列表加载失败，请重试。'
+  }
+}
+async function clearSearch() {
+  searchQuery.value = ''
+  await runSearch()
+  searchRef.value?.focus()
+}
+function onSearchCompositionEnd() {
+  searchComposing.value = false
+  scheduleSearch()
+}
+function openDialog(
+  kind: NonNullable<typeof dialog.value>['kind'],
+  id: number,
+  title: string,
+  description: string,
+  text = '',
+) {
+  menuOpenId.value = null
+  dialogText.value = text
+  dialogError.value = ''
+  dialog.value = { kind, id, title, description }
+}
+async function submitDialog() {
+  const target = dialog.value
+  if (!target || actionBusy.value) return
+  const text = dialogText.value.trim()
+  if ((target.kind === 'rename' || target.kind === 'edit') && !text) {
+    dialogError.value = '请填写内容后再保存。'
+    return
+  }
+  actionBusy.value = true
+  dialogError.value = ''
+  try {
+    if (target.kind === 'delete') {
+      await store.deleteSession(target.id)
+      inputDrafts.delete(target.id)
+      toast.success('对话已删除')
+    }
+    if (target.kind === 'archive') {
+      await store.archiveSession(target.id)
+      inputDrafts.delete(target.id)
+      toast.success('对话已归档')
+    }
+    if (target.kind === 'project-delete') {
+      await store.deleteProject(target.id)
+      resetProjectForm()
+      toast.success('项目已删除')
+    }
+    if (target.kind === 'rename') {
+      await store.updateTitle(target.id, text)
+      toast.success('对话已重命名')
+    }
+    if (target.kind === 'edit') {
+      const messages = store.currentSession?.messages ?? []
+      const index = messages.findIndex((m) => m.id === target.id)
+      const previousId = index > 0 && messages[index - 1].id > 0 ? messages[index - 1].id : null
+      await store.branchSession({
+        messageId: previousId,
+        title: `${store.currentSession?.title || '对话'} · 编辑`,
+      })
+      inputContent.value = text
+      dialog.value = null
+      await send()
+    }
+    dialog.value = null
+  } catch {
+    dialogError.value = '操作未完成，请重试。已填写的内容仍然保留。'
+  } finally {
+    actionBusy.value = false
+  }
+}
 
 const groupedSessions = computed(() => {
   const groups = new Map<string, typeof store.sessions>()
-  for (const session of store.sessions) {
+  const sorted = [...store.sessions].sort(
+    (a, b) =>
+      Number(b.isPinned) - Number(a.isPinned) ||
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  )
+  for (const session of sorted) {
     const label = session.isPinned ? '已置顶' : sessionDateGroup(session.updatedAt)
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label)!.push(session)
@@ -135,14 +412,27 @@ const artifacts = computed<ConversationArtifact[]>(() => {
   const results: ConversationArtifact[] = []
   const seen = new Set<string>()
   for (const message of store.currentSession?.messages ?? []) {
-    const markdownLink = /\[([^\]]+)\]\(([^)]+\/exports\/[^)]+)\)/g
+    if (message.role !== 'assistant') continue
+    const markdownLink = /\[([^\]]+)\]\(([^)\s]+)\)/g
     let match: RegExpExecArray | null
     while ((match = markdownLink.exec(message.content)) !== null) {
       const url = match[2]
+      try {
+        const parsed = new URL(url, window.location.origin)
+        if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.pathname.includes('/exports/')) continue
+      } catch {
+        continue
+      }
       if (seen.has(url)) continue
       seen.add(url)
-      const name = match[1] || decodeURIComponent(url.split('/').pop() || '导出文件')
-      results.push({ name, url, extension: fileExtension(name), messageId: message.id, createdAt: message.createdAt })
+      const name = match[1] || url.split('/').pop() || '导出文件'
+      results.push({
+        name,
+        url,
+        extension: fileExtension(name),
+        messageId: message.id,
+        createdAt: message.createdAt,
+      })
     }
   }
   return results.reverse()
@@ -163,17 +453,24 @@ function sessionDateGroup(iso: string): string {
 
 async function changeProject(event: Event) {
   const value = (event.target as HTMLSelectElement).value
+  if (searchTimer) clearTimeout(searchTimer)
   searchQuery.value = ''
-  await store.selectProject(value ? Number(value) : null)
-  if (store.sessions.length > 0) await selectSession(store.sessions[0].id)
+  try {
+    await store.selectProject(value ? Number(value) : null)
+    if (store.sessions.length > 0) await selectSession(store.sessions[0].id)
+  } catch {
+    uiError.value = '项目对话加载失败，请重试。'
+  }
 }
 
 function resetProjectForm() {
   editingProjectId.value = null
-  Object.assign(projectForm, { name: '', instructions: '', color: '#0f766e', icon: '◇' })
+  projectError.value = ''
+  Object.assign(projectForm, { name: '', instructions: '', color: '#4c6178', icon: '◇' })
 }
 
 function editProject(project: ChatProject) {
+  projectError.value = ''
   editingProjectId.value = project.id
   Object.assign(projectForm, {
     name: project.name,
@@ -184,28 +481,42 @@ function editProject(project: ChatProject) {
 }
 
 async function saveProject() {
-  if (!projectForm.name.trim()) return
+  if (actionBusy.value) return
+  if (!projectForm.name.trim()) {
+    projectError.value = '请填写项目名称。'
+    return
+  }
+  actionBusy.value = true
+  projectError.value = ''
   const payload = {
     name: projectForm.name.trim(),
     instructions: projectForm.instructions.trim(),
     color: projectForm.color,
     icon: projectForm.icon.trim() || '◇',
   }
-  if (editingProjectId.value == null) {
-    const project = await store.createProject(payload)
-    await store.selectProject(project.id)
-  } else {
-    await store.updateProject(editingProjectId.value, payload)
+  try {
+    if (editingProjectId.value == null) {
+      const project = await store.createProject(payload)
+      await store.selectProject(project.id)
+    } else {
+      await store.updateProject(editingProjectId.value, payload)
+    }
+    resetProjectForm()
+    toast.success('项目已保存')
+  } catch {
+    projectError.value = '项目保存失败，请重试。'
+  } finally {
+    actionBusy.value = false
   }
-  resetProjectForm()
-  toast.success('项目已保存')
 }
 
 async function removeProject(project: ChatProject) {
-  if (!confirm(`删除项目“${project.name}”？项目内对话不会删除，将移回全部对话。`)) return
-  await store.deleteProject(project.id)
-  resetProjectForm()
-  toast.success('项目已删除')
+  openDialog(
+    'project-delete',
+    project.id,
+    `删除“${project.name}”？`,
+    '项目内对话会保留，并移回全部对话。项目专属指令将被删除。',
+  )
 }
 
 async function removeEditingProject() {
@@ -214,38 +525,58 @@ async function removeEditingProject() {
 }
 
 async function togglePinned(sessionId: number, isPinned: boolean) {
-  await store.setSessionPinned(sessionId, !isPinned)
-  if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
-  menuOpenId.value = null
+  if (actionBusy.value) return
+  actionBusy.value = true
+  try {
+    await store.setSessionPinned(sessionId, !isPinned)
+    if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
+    menuOpenId.value = null
+  } catch {
+    toast.error('置顶状态更新失败，请重试')
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 async function moveSession(sessionId: number, event: Event) {
+  if (actionBusy.value) return
+  actionBusy.value = true
   const value = (event.target as HTMLSelectElement).value
-  await store.assignSessionProject(sessionId, value ? Number(value) : null)
-  if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
-  menuOpenId.value = null
+  try {
+    await store.assignSessionProject(sessionId, value ? Number(value) : null)
+    if (searchQuery.value.trim()) await store.searchSessions(searchQuery.value)
+    menuOpenId.value = null
+  } catch {
+    toast.error('移动对话失败，请重试')
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 async function branchFromMessage(message: ChatMessage) {
-  if (store.isTemporary || message.id <= 0) return
-  await store.branchSession({ messageId: message.id, title: `${store.currentSession?.title || '对话'} · 分支` })
-  toast.success('已创建分支对话')
+  if (store.isTemporary || message.id <= 0 || actionBusy.value || store.sending) return
+  actionBusy.value = true
+  try {
+    await store.branchSession({
+      messageId: message.id,
+      title: `${store.currentSession?.title || '对话'} · 分支`,
+    })
+    toast.success('已创建分支对话')
+    await focusInput()
+  } catch {
+    toast.error('创建分支失败，请重试')
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 async function editUserMessage(message: ChatMessage) {
   if (store.isTemporary || message.role !== 'user') return
-  const edited = prompt('编辑消息并创建新分支', message.content)?.trim()
-  if (!edited || edited === message.content) return
-  const messages = store.currentSession?.messages ?? []
-  const index = messages.findIndex((item) => item.id === message.id)
-  const previousId = index > 0 && messages[index - 1].id > 0 ? messages[index - 1].id : null
-  await store.branchSession({ messageId: previousId, title: `${store.currentSession?.title || '对话'} · 编辑` })
-  inputContent.value = edited
-  await send()
+  openDialog('edit', message.id, '编辑消息', '发送后会创建一段分支对话，原对话保持完整。', message.content)
 }
 
 async function retryAssistantMessage(message: ChatMessage) {
-  if (store.isTemporary || message.role !== 'assistant') return
+  if (store.isTemporary || message.role !== 'assistant' || actionBusy.value || store.sending) return
   const messages = store.currentSession?.messages ?? []
   const index = messages.findIndex((item) => item.id === message.id)
   let userMessage: ChatMessage | undefined
@@ -256,9 +587,19 @@ async function retryAssistantMessage(message: ChatMessage) {
     }
   }
   if (!userMessage || userMessage.id <= 0) return
-  await store.branchSession({ messageId: userMessage.id, title: `${store.currentSession?.title || '对话'} · 重试` })
-  inputContent.value = '请重新回答上一条消息，并给出更准确、完整的结果。'
-  await send()
+  actionBusy.value = true
+  try {
+    await store.branchSession({
+      messageId: userMessage.id,
+      title: `${store.currentSession?.title || '对话'} · 重试`,
+    })
+    inputContent.value = '请重新回答上一条消息，并给出更准确、完整的结果。'
+    await send()
+  } catch {
+    toast.error('重新回答失败，请重试')
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 // 会话条目的单一入口“…”菜单（编辑/归档/删除）
@@ -271,58 +612,89 @@ function closeSessionMenu() {
   menuOpenId.value = null
 }
 
-// 拖拽对话内容与输入框之间的分隔条，调整输入框高度
-const inputHeightPx = ref(84)
-const MIN_INPUT_HEIGHT = 40
-const MAX_INPUT_HEIGHT = 400
-let resizeStartY = 0
-let resizeStartHeight = 0
-let resizingInput = false
-
-function startInputResize(e: MouseEvent) {
-  resizingInput = true
-  resizeStartY = e.clientY
-  resizeStartHeight = inputHeightPx.value
-  window.addEventListener('mousemove', onInputResizeMove)
-  window.addEventListener('mouseup', stopInputResize)
-  e.preventDefault()
-}
-
-function onInputResizeMove(e: MouseEvent) {
-  if (!resizingInput) return
-  const delta = resizeStartY - e.clientY
-  inputHeightPx.value = Math.min(MAX_INPUT_HEIGHT, Math.max(MIN_INPUT_HEIGHT, resizeStartHeight + delta))
-}
-
-function stopInputResize() {
-  resizingInput = false
-  window.removeEventListener('mousemove', onInputResizeMove)
-  window.removeEventListener('mouseup', stopInputResize)
-}
-
 onMounted(() => {
   window.addEventListener('click', closeSessionMenu)
+  narrowMedia.addEventListener('change', onViewportChange)
 })
 onUnmounted(() => {
   window.removeEventListener('click', closeSessionMenu)
-  stopInputResize()
+  narrowMedia.removeEventListener('change', onViewportChange)
   if (searchTimer) clearTimeout(searchTimer)
+  if (copiedTimer) clearTimeout(copiedTimer)
   store.stopGeneration()
 })
 
 const ACCEPTED_TYPES = [
-  '.pdf', '.docx', '.xlsx', '.xls',
-  '.txt', '.md', '.csv', '.json', '.xml', '.html', '.yaml', '.yml',
-  '.ts', '.js', '.tsx', '.jsx', '.py', '.cs', '.java', '.go', '.rs',
-  '.sql', '.sh', '.bat', '.ps1', '.vue', '.css', '.log',
+  '.pdf',
+  '.docx',
+  '.xlsx',
+  '.xls',
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.xml',
+  '.html',
+  '.yaml',
+  '.yml',
+  '.ts',
+  '.js',
+  '.tsx',
+  '.jsx',
+  '.py',
+  '.cs',
+  '.java',
+  '.go',
+  '.rs',
+  '.sql',
+  '.sh',
+  '.bat',
+  '.ps1',
+  '.vue',
+  '.css',
+  '.log',
 ].join(',')
 
 const LOCAL_TEXT_EXTENSIONS = new Set([
-  '.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm', '.yaml', '.yml',
-  '.toml', '.ini', '.env', '.log', '.sql', '.ts', '.js', '.jsx', '.tsx',
-  '.py', '.cs', '.java', '.cpp', '.c', '.h', '.go', '.rs', '.php',
-  '.rb', '.sh', '.bat', '.ps1', '.vue', '.css', '.scss', '.less',
-  '.conf', '.config', '.csproj', '.sln',
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.xml',
+  '.html',
+  '.htm',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.env',
+  '.log',
+  '.sql',
+  '.ts',
+  '.js',
+  '.jsx',
+  '.tsx',
+  '.py',
+  '.cs',
+  '.java',
+  '.cpp',
+  '.c',
+  '.h',
+  '.go',
+  '.rs',
+  '.php',
+  '.rb',
+  '.sh',
+  '.bat',
+  '.ps1',
+  '.vue',
+  '.css',
+  '.scss',
+  '.less',
+  '.conf',
+  '.config',
+  '.csproj',
+  '.sln',
 ])
 const LOCAL_TEXT_MAX_CHARS = 800_000
 
@@ -379,8 +751,10 @@ async function uploadFiles(files: File[]) {
 
 function truncateLocalText(text: string, fileName: string): string {
   if (text.length <= LOCAL_TEXT_MAX_CHARS) return text
-  return text.slice(0, LOCAL_TEXT_MAX_CHARS)
-    + `\n\n... [文件内容已截断，共 ${text.length} 字符，文件名：${fileName}]`
+  return (
+    text.slice(0, LOCAL_TEXT_MAX_CHARS) +
+    `\n\n... [文件内容已截断，共 ${text.length} 字符，文件名：${fileName}]`
+  )
 }
 
 function readFileAsText(file: File): Promise<string> {
@@ -450,8 +824,9 @@ function filesFromDataTransfer(data: DataTransfer | null): File[] {
     })
 
   const merged = [...files, ...itemFiles]
-  return merged.filter((file, index, arr) =>
-    arr.findIndex((x) => x.name === file.name && x.size === file.size && x.type === file.type) === index,
+  return merged.filter(
+    (file, index, arr) =>
+      arr.findIndex((x) => x.name === file.name && x.size === file.size && x.type === file.type) === index,
   )
 }
 
@@ -470,7 +845,14 @@ function getFileIcon(fileType: string): string {
   return icons[fileType] ?? 'FILE'
 }
 
-function onWorkspaceAttach(file: { fileName: string; fileType: string; textContent: string; mimeType?: string; dataUrl?: string; isImage?: boolean }) {
+function onWorkspaceAttach(file: {
+  fileName: string
+  fileType: string
+  textContent: string
+  mimeType?: string
+  dataUrl?: string
+  isImage?: boolean
+}) {
   store.pendingAttachments.push(file)
   showWorkspaceBrowser.value = false
 }
@@ -487,9 +869,7 @@ function fmtMsgTime(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   const isToday =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
   if (isToday) return time
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`
 }
@@ -497,16 +877,27 @@ function fmtMsgTime(iso: string): string {
 async function scrollToBottom() {
   await nextTick()
   if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    messagesContainer.value.scrollTop = displayMessages.value.length ? messagesContainer.value.scrollHeight : 0
+    atBottom.value = true
   }
 }
 
 async function newSession() {
+  if (creatingSession.value || store.sending) return false
+  creatingSession.value = true
+  uiError.value = ''
+  uiErrorKind.value = 'create'
   try {
     await store.createSession()
     newSessionDraft.value = ''
+    showSessionList.value = false
+    await focusInput()
+    return true
   } catch {
-    // ignore
+    uiError.value = '新对话创建失败，请重试。'
+    return false
+  } finally {
+    creatingSession.value = false
   }
 }
 
@@ -519,34 +910,59 @@ function newTemporarySession() {
 }
 
 async function selectSession(id: number) {
+  uiError.value = ''
+  uiErrorKind.value = 'load'
   try {
     await store.openSession(id)
     showSessionList.value = false
-    store.pendingAttachments.splice(0)
     scrollToBottom()
   } catch {
-    // ignore
+    uiError.value = '对话加载失败，请重新选择或重试。'
   }
 }
 
 async function send() {
   const text = inputContent.value.trim()
-  if ((!text && store.pendingAttachments.length === 0) || store.sending) return
+  if (
+    (!text && store.pendingAttachments.length === 0) ||
+    store.sending ||
+    creatingSession.value ||
+    uploadingFiles.value.size > 0
+  )
+    return
   if (!store.currentSession) {
-    await newSession()
+    if (!(await newSession())) return
   }
-
+  const targetId = store.currentSession?.id
+  uiError.value = ''
+  uiErrorKind.value = 'send'
   inputContent.value = ''
+  atBottom.value = true
+  void scrollToBottom()
+  void focusInput()
   try {
-    if (shouldUseAgent(text)) {
-      await store.sendAgentMessageStream(text || '请分析这些文件的内容')
-    } else {
-      await store.sendMessageStream(text || '请分析这些文件的内容')
-    }
-    scrollToBottom()
+    const outcome = shouldUseAgent(text)
+      ? await store.sendAgentMessageStream(text || '请分析这些文件的内容')
+      : await store.sendMessageStream(text || '请分析这些文件的内容')
+    if (outcome === 'failed') restoreFailedDraft(targetId, text)
+    if (atBottom.value) void scrollToBottom()
   } catch {
-    // ignore
+    restoreFailedDraft(targetId, text)
   }
+}
+
+function restoreFailedDraft(targetId: number | undefined, text: string) {
+  if (targetId != null && !inputDrafts.get(targetId)) inputDrafts.set(targetId, text)
+  if (store.currentSession?.id === targetId) {
+    uiErrorKind.value = 'send'
+    uiError.value = '回复未完成，消息和草稿已保留。你可以修改后重新发送。'
+  }
+}
+
+async function retryFailedAction() {
+  if (uiErrorKind.value === 'send') await send()
+  else if (uiErrorKind.value === 'create') await newSession()
+  else await reloadConversations()
 }
 
 function shouldUseAgent(text: string): boolean {
@@ -571,30 +987,36 @@ function shouldUseAgent(text: string): boolean {
 
 async function deleteSession(id: number, e: Event) {
   e.stopPropagation()
-  if (!confirm('确定删除此对话？')) return
-  await store.deleteSession(id)
-  inputDrafts.delete(id)
-  toast.success('已删除')
+  openDialog(
+    'delete',
+    id,
+    '删除这段对话？',
+    `“${store.sessions.find((s) => s.id === id)?.title || '对话'}”的全部消息将被删除，此操作无法撤销。`,
+  )
 }
 
 async function archiveSession(id: number, e: Event) {
   e.stopPropagation()
-  if (!confirm('确定归档此对话？归档后需要在“归档管理”中还原才能继续查看。')) return
-  await store.archiveSession(id)
-  inputDrafts.delete(id)
-  toast.success('已归档')
+  openDialog('archive', id, '归档这段对话？', '归档后会从列表收起，你可以随时在“归档管理”中还原。')
 }
 
 async function openArchiveManager() {
   showArchiveManager.value = true
-  await store.fetchArchivedSessions()
+  try {
+    await store.fetchArchivedSessions()
+  } catch {
+    toast.error('归档列表加载失败，请关闭后重试')
+  }
 }
 
 async function restoreSession(id: number) {
+  if (restoringId.value != null) return
   restoringId.value = id
   try {
     await store.unarchiveSession(id)
     toast.success('已还原')
+  } catch {
+    toast.error('还原失败，请重试')
   } finally {
     restoringId.value = null
   }
@@ -602,689 +1024,725 @@ async function restoreSession(id: number) {
 
 function startRename(id: number, currentTitle: string, e: Event) {
   e.stopPropagation()
-  renamingId.value = id
-  renameTitle.value = currentTitle
-}
-
-async function submitRename(id: number) {
-  if (!renameTitle.value.trim()) return
-  await store.updateTitle(id, renameTitle.value.trim())
-  renamingId.value = null
+  openDialog('rename', id, '重命名对话', '给这段对话一个容易找到的名字。', currentTitle)
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     send()
   }
 }
 
-watch(() => store.currentSession?.messages.length, () => {
-  scrollToBottom()
-})
-
-watch(searchQuery, (value) => {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => store.searchSessions(value), 250)
-})
+watch(
+  [
+    () => store.currentSession?.messages.length,
+    () => store.streamMessage?.content,
+    () => store.toolCalls.length,
+  ],
+  () => {
+    if (atBottom.value) void scrollToBottom()
+  },
+)
+watch(
+  () => store.currentSession?.id,
+  () => {
+    atBottom.value = true
+    void scrollToBottom()
+  },
+)
+watch([inputContent, inputExpanded], resizeInput)
 
 onMounted(async () => {
-  await Promise.all([store.fetchProjects(), store.fetchSessions()])
-  if (store.sessions.length > 0) {
-    await selectSession(store.sessions[0].id)
-  }
+  await reloadConversations()
+  await resizeInput()
 })
+
+async function reloadConversations() {
+  uiError.value = ''
+  uiErrorKind.value = 'load'
+  try {
+    await Promise.all([store.fetchProjects(), store.searchSessions(searchQuery.value)])
+    if (!store.currentSession && store.sessions.length > 0) await selectSession(store.sessions[0].id)
+  } catch {
+    uiError.value = '聊天加载失败，请检查网络后重试。'
+  }
+}
 </script>
 
 <template>
-  <div class="relative flex h-[calc(100vh-4.5rem)] overflow-hidden bg-slate-50">
-    <div
-      v-if="renderError"
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-white/90"
-    >
-      <div class="text-center">
-        <p class="text-red-500 text-sm mb-3">{{ renderError }}</p>
-        <button
-          class="px-4 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700"
-          @click="renderError = null"
-        >
-          重试
-        </button>
-      </div>
+  <div class="chat-shell" data-testid="chat-shell" @keydown.esc="closeSessionMenu">
+    <div v-if="renderError" class="chat-render-error" role="alert">
+      <p>{{ renderError }}</p>
+      <button class="chat-btn" @click="renderError = null">重试</button>
     </div>
 
-    <Teleport to="body">
-      <div
-        v-if="showWorkspaceBrowser"
-        class="fixed inset-0 z-40 flex"
-        @click.self="showWorkspaceBrowser = false"
+    <AppDialog
+      :open="showSessionList && isNarrow"
+      title="对话列表"
+      size="navigation"
+      @close="showSessionList = false"
+      ><div id="chat-mobile-navigation" class="chat-mobile-navigation"
+    /></AppDialog>
+    <Teleport to="#chat-mobile-navigation" :disabled="!isNarrow" defer>
+      <aside
+        id="chat-navigation"
+        class="chat-sidebar"
+        data-testid="chat-sidebar"
+        :class="{ 'is-open': showSessionList, 'is-collapsed': sidebarCollapsed }"
+        aria-label="对话导航"
       >
-        <div class="ml-auto w-80 max-w-full h-full bg-white shadow-2xl flex flex-col border-l border-gray-200">
-          <WorkspaceBrowser
-            @attach="onWorkspaceAttach"
-            @close="showWorkspaceBrowser = false"
-          />
+        <div class="chat-sidebar-top">
+          <div class="chat-sidebar-heading">
+            <span>对话</span><span class="chat-count">{{ store.sessions.length }}</span
+            ><button
+              class="chat-icon chat-mobile-close"
+              aria-label="关闭对话列表"
+              @click="showSessionList = false"
+            >
+              <IconX :size="18" />
+            </button>
+          </div>
+          <button
+            class="chat-new"
+            data-testid="chat-new"
+            :disabled="store.sending || creatingSession || uploadingFiles.size > 0"
+            @click="newSession"
+          >
+            <IconLoader2 v-if="creatingSession" :size="17" class="chat-spin" /><IconPlus
+              v-else
+              :size="18"
+            /><span>新对话</span>
+          </button>
+          <div class="chat-search">
+            <IconSearch :size="16" />
+            <input
+              ref="searchRef"
+              v-model="searchQuery"
+              data-testid="chat-search"
+              aria-label="搜索对话"
+              placeholder="搜索对话与消息"
+              @input="scheduleSearch"
+              @compositionstart="searchComposing = true"
+              @compositionend="onSearchCompositionEnd"
+              @keydown.enter.prevent="runSearch"
+            />
+            <button
+              v-if="searchQuery"
+              data-testid="chat-search-clear"
+              class="chat-icon"
+              aria-label="清空搜索"
+              @click="clearSearch"
+            >
+              <IconX :size="15" />
+            </button>
+          </div>
+          <div class="chat-project-label">
+            <label for="chat-project">项目空间</label
+            ><button
+              class="chat-icon"
+              aria-label="管理项目"
+              title="管理项目"
+              :disabled="store.sending"
+              @click="showProjectManager = true"
+            >
+              <IconPlus :size="16" />
+            </button>
+          </div>
+          <div class="chat-project-select">
+            <IconFolder :size="16" /><select
+              id="chat-project"
+              :value="store.selectedProjectId ?? ''"
+              :disabled="store.sending || uploadingFiles.size > 0"
+              @change="changeProject"
+            >
+              <option value="">全部对话</option>
+              <option v-for="project in store.projects" :key="project.id" :value="project.id">
+                {{ project.icon }} {{ project.name }} · {{ project.sessionCount }}
+              </option>
+            </select>
+          </div>
         </div>
-      </div>
-    </Teleport>
-
-    <div
-      v-if="showSessionList"
-      class="fixed inset-0 top-[72px] z-30 bg-slate-950/30 backdrop-blur-sm md:hidden"
-      @click="showSessionList = false"
-    />
-
-    <aside
-      class="fixed bottom-0 left-0 top-[72px] z-40 flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white shadow-float transition-transform duration-300 md:static md:w-64 md:translate-x-0 md:shadow-none"
-      :class="showSessionList ? 'translate-x-0' : '-translate-x-full'"
-    >
-      <div class="border-b border-slate-100 px-4 py-4">
-        <div class="mb-3 flex items-center justify-between">
-          <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Projects</p>
-          <button class="text-xs text-teal-700 hover:text-teal-900" @click="showProjectManager = true">管理</button>
-        </div>
-        <select
-          class="mb-3 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-teal-400"
-          :value="store.selectedProjectId ?? ''"
-          @change="changeProject"
-        >
-          <option value="">全部对话</option>
-          <option v-for="project in store.projects" :key="project.id" :value="project.id">
-            {{ project.icon }} {{ project.name }} ({{ project.sessionCount }})
-          </option>
-        </select>
-        <button
-          class="h-10 w-full rounded-xl bg-teal-700 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800"
-          :disabled="store.sending"
-          @click="newSession"
-        >
-          + 新对话
-        </button>
-        <button
-          class="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-50"
-          :class="{ 'border-violet-300 bg-violet-50 text-violet-700': store.isTemporary }"
-          :disabled="store.sending"
-          title="聊天内容不会保存，也不会出现在对话列表中"
-          @click="newTemporarySession"
-        >
-          <span aria-hidden="true">◌</span>
-          临时聊天
-        </button>
-        <div class="relative mt-3">
-          <span class="pointer-events-none absolute left-3 top-2.5 text-xs text-slate-400">⌕</span>
-          <input
-            v-model="searchQuery"
-            class="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-8 pr-3 text-xs text-slate-700 outline-none focus:border-teal-400 focus:bg-white"
-            placeholder="搜索标题和消息内容"
-          />
-        </div>
-      </div>
-      <div class="flex-1 overflow-y-auto">
-        <div v-if="store.sessions.length === 0" class="px-4 py-6 text-xs text-gray-400 text-center">
-          暂无对话，点击“新对话”开始
-        </div>
-        <div class="py-1">
-          <template v-for="group in groupedSessions" :key="group.label">
-            <div class="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              {{ group.label }}
-            </div>
+        <div class="chat-session-scroll">
+          <div v-if="store.sessionsLoading" class="chat-list-state" role="status">
+            <IconLoader2 :size="18" class="chat-spin" />正在查找对话…
+          </div>
+          <div v-else-if="store.sessions.length === 0" class="chat-list-state">
+            <IconMessageCircle :size="24" />
+            <p>{{ searchQuery ? '没有找到相关对话' : '还没有对话' }}</p>
+            <button v-if="searchQuery" class="chat-link" @click="clearSearch">清空搜索</button>
+            <p v-else class="chat-subtle">从一个问题开始吧</p>
+          </div>
+          <section v-for="group in groupedSessions" :key="group.label" class="chat-session-group">
+            <h2>{{ group.label }}</h2>
             <div
               v-for="s in group.sessions"
               :key="s.id"
-              class="group mx-1 my-0.5 cursor-pointer rounded-lg px-3 py-2 transition hover:bg-gray-100"
-              :class="{ 'bg-teal-50': store.currentSession?.id === s.id }"
-              @click="selectSession(s.id)"
+              class="chat-session"
+              :class="{ 'is-active': store.currentSession?.id === s.id }"
             >
-            <div class="flex items-center justify-between gap-1">
-              <div v-if="renamingId === s.id" class="flex-1 flex gap-1">
-                <input
-                  v-model="renameTitle"
-                  class="flex-1 text-xs h-6 px-1 border rounded"
-                  autofocus
-                  @click.stop
-                  @keyup.enter="submitRename(s.id)"
-                  @keyup.escape="renamingId = null"
-                />
-                <button
-                  class="text-xs text-teal-600 px-1"
-                  title="保存"
-                  aria-label="保存"
-                  @click.stop="submitRename(s.id)"
+              <button
+                class="chat-session-select"
+                :disabled="uploadingFiles.size > 0 || creatingSession"
+                :aria-current="store.currentSession?.id === s.id ? 'true' : undefined"
+                :title="s.title"
+                @click="selectSession(s.id)"
+              >
+                <div class="chat-session-title">
+                  <IconPin v-if="s.isPinned" :size="13" /><span>{{ s.title }}</span>
+                </div>
+                <p v-if="s.matchSnippet" class="chat-match">{{ s.matchSnippet }}</p>
+                <span class="chat-session-date">{{ fmtSessionDate(s.updatedAt) }}</span>
+              </button>
+              <button
+                class="chat-icon chat-session-more"
+                :aria-label="`更多操作：${s.title}`"
+                :aria-expanded="menuOpenId === s.id"
+                :disabled="store.sending"
+                title="更多操作"
+                @click="toggleSessionMenu(s.id, $event)"
+              >
+                <IconDots :size="18" />
+              </button>
+              <div v-if="menuOpenId === s.id" class="chat-session-menu" @click.stop>
+                <button @click="startRename(s.id, s.title, $event)"><IconPencil :size="15" />重命名</button>
+                <button @click="togglePinned(s.id, s.isPinned)">
+                  <IconPin :size="15" />{{ s.isPinned ? '取消置顶' : '置顶' }}
+                </button>
+                <label :for="`move-project-${s.id}`">移动到项目</label>
+                <select
+                  :id="`move-project-${s.id}`"
+                  :value="s.projectId ?? ''"
+                  @change="moveSession(s.id, $event)"
                 >
-                  ✓
+                  <option value="">无项目</option>
+                  <option v-for="project in store.projects" :key="project.id" :value="project.id">
+                    {{ project.name }}
+                  </option>
+                </select>
+                <button @click="archiveSession(s.id, $event)"><IconArchive :size="15" />归档</button>
+                <button class="chat-danger-text" @click="deleteSession(s.id, $event)">
+                  <IconTrash :size="15" />删除
                 </button>
               </div>
-              <div v-else class="flex-1 min-w-0">
-                <div class="flex items-center gap-1 text-sm text-gray-700">
-                  <span v-if="s.isPinned" class="text-amber-500" title="已置顶">◆</span>
-                  <span class="truncate">{{ s.title }}</span>
-                </div>
-                <div v-if="s.matchSnippet" class="mt-0.5 line-clamp-2 text-[10px] leading-4 text-teal-700">{{ s.matchSnippet }}</div>
-                <div class="text-xs text-gray-400 mt-0.5">{{ fmtSessionDate(s.createdAt) }}</div>
-              </div>
-              <div class="relative shrink-0">
-                <button
-                  class="flex items-center justify-center w-7 h-7 rounded-md text-base leading-none text-gray-500 hover:bg-white hover:text-gray-700 hover:shadow transition"
-                  title="更多操作"
-                  aria-label="更多操作"
-                  @click="toggleSessionMenu(s.id, $event)"
-                >
-                  ⋯
-                </button>
-                <div
-                  v-if="menuOpenId === s.id"
-                  class="absolute right-0 top-8 z-20 w-44 bg-white rounded-lg shadow-lg border border-gray-100 py-1"
-                  @click.stop
-                >
-                  <button
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                    @click="startRename(s.id, s.title, $event); menuOpenId = null"
-                  >
-                    <span class="w-4 text-center">✎</span> 编辑
-                  </button>
-                  <button
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-amber-50 hover:text-amber-700"
-                    @click="togglePinned(s.id, s.isPinned)"
-                  >
-                    <span class="w-4 text-center">◆</span> {{ s.isPinned ? '取消置顶' : '置顶' }}
-                  </button>
-                  <div class="border-y border-slate-100 px-3 py-2">
-                    <label class="mb-1 block text-[10px] text-slate-400">移动到项目</label>
-                    <select
-                      class="h-7 w-full rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
-                      :value="s.projectId ?? ''"
-                      @change="moveSession(s.id, $event)"
-                    >
-                      <option value="">无项目</option>
-                      <option v-for="project in store.projects" :key="project.id" :value="project.id">{{ project.name }}</option>
-                    </select>
-                  </div>
-                  <button
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-amber-50 hover:text-amber-600"
-                    @click="archiveSession(s.id, $event); menuOpenId = null"
-                  >
-                    <span class="w-4 text-center">▾</span> 归档
-                  </button>
-                  <button
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50"
-                    @click="deleteSession(s.id, $event); menuOpenId = null"
-                  >
-                    <span class="w-4 text-center">×</span> 删除
-                  </button>
-                </div>
-              </div>
             </div>
-            </div>
-          </template>
+          </section>
         </div>
-      </div>
-      <div class="border-t border-slate-100 px-4 py-3">
+        <div class="chat-sidebar-footer">
+          <button
+            :class="{ 'is-selected': store.isTemporary }"
+            :disabled="store.sending || creatingSession || uploadingFiles.size > 0"
+            title="消息不保存到历史记录"
+            @click="newTemporarySession"
+          >
+            <IconCircleDashed :size="17" /><span>临时聊天</span><span class="chat-subtle">不保存</span>
+          </button>
+          <button @click="openArchiveManager"><IconArchive :size="17" /><span>归档管理</span></button>
+        </div>
+      </aside>
+    </Teleport>
+
+    <section class="chat-main" aria-label="聊天内容">
+      <header class="chat-header">
         <button
-          class="w-full h-8 rounded-lg text-xs text-gray-500 hover:text-teal-600 hover:bg-gray-100 transition"
-          @click="openArchiveManager"
+          class="chat-icon chat-desktop-toggle"
+          data-testid="chat-sidebar-toggle"
+          :aria-label="sidebarCollapsed ? '展开对话列表' : '收起对话列表'"
+          :aria-expanded="!sidebarCollapsed"
+          aria-controls="chat-navigation"
+          @click="sidebarCollapsed = !sidebarCollapsed"
         >
-          归档管理
+          <IconLayoutSidebar :size="20" />
+        </button>
+        <button
+          class="chat-icon chat-mobile-toggle"
+          aria-label="打开对话列表"
+          :aria-expanded="showSessionList"
+          aria-controls="chat-navigation"
+          @click="showSessionList = true"
+        >
+          <IconLayoutSidebar :size="20" />
+        </button>
+        <div class="chat-header-title">
+          <h1 :title="store.currentSession?.title">{{ store.currentSession?.title || 'Mirai Chat' }}</h1>
+          <p>
+            <span v-if="currentProject">{{ currentProject.name }}<span aria-hidden="true"> · </span></span
+            >{{
+              store.isTemporary
+                ? '临时聊天 · 内容不保存'
+                : isCurrentStreaming
+                  ? '正在回复…'
+                  : '给想法一点生长的空间'
+            }}
+          </p>
+        </div>
+        <button
+          class="chat-files-button"
+          aria-label="对话文件"
+          :aria-expanded="showArtifacts"
+          @click="showArtifacts = true"
+        >
+          <IconFolder :size="17" /><span>对话文件</span
+          ><span v-if="artifacts.length" class="chat-count">{{ artifacts.length }}</span>
+        </button>
+      </header>
+      <div v-if="uiError" class="chat-error" role="alert">
+        <span>{{ uiError }}</span
+        ><button class="chat-link" :disabled="store.sending || creatingSession" @click="retryFailedAction">{{ uiErrorKind === 'send' ? '重试发送' : uiErrorKind === 'create' ? '重试创建' : '重新加载' }}</button
+        ><button class="chat-icon" aria-label="关闭错误提示" @click="uiError = ''">
+          <IconX :size="15" />
         </button>
       </div>
-    </aside>
-
-    <div class="flex-1 flex flex-col min-w-0">
-      <div class="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex min-w-0 items-center gap-3">
-            <button
-              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 md:hidden"
-              aria-label="打开对话列表"
-              @click="showSessionList = true"
-            >
-              ☰
-            </button>
-            <span class="truncate text-sm font-semibold text-slate-800">
-              {{ store.currentSession?.title ?? 'Mirai Chat' }}
-            </span>
-            <span
-              v-if="store.isTemporary"
-              class="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200"
-            >
-              不保存
-            </span>
-          </div>
-          <div class="flex shrink-0 items-center gap-2">
-            <button
-              class="rounded-lg border px-2.5 py-1.5 text-xs transition"
-              :class="showArtifacts ? 'border-teal-300 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-500 hover:border-teal-300'"
-              @click="showArtifacts = !showArtifacts"
-            >
-              文件 {{ artifacts.length ? `(${artifacts.length})` : '' }}
-            </button>
-            <span
-              v-if="store.contextUsage"
-              class="px-1.5 py-0.5 rounded text-[10px]"
-              :class="store.contextUsage.percentUsed > 40 ? 'bg-yellow-50 text-yellow-700' : 'bg-gray-100 text-gray-400'"
-              :title="`${store.contextUsage.estimatedTokens}/${store.contextUsage.maxTokens} tokens, ${store.contextUsage.messageCount} 条消息`"
-            >
-              {{ store.contextUsage.percentUsed }}%
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div
-        ref="messagesContainer"
-        class="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-4 py-5 sm:px-6 lg:px-10"
-      >
-        <div
-          v-if="store.isTemporary"
-          class="mx-auto flex max-w-2xl items-start gap-2 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-3 text-xs text-violet-700"
-        >
-          <span class="mt-px" aria-hidden="true">◌</span>
-          <span>这是临时聊天。关闭或切换对话后内容将丢失，不会保存，也不会出现在左侧对话列表中。</span>
-        </div>
-
-        <div v-if="store.loading" class="text-center text-gray-400 text-sm">加载中...</div>
-
-        <div
-          v-if="!store.currentSession || store.currentSession.messages.length === 0"
-          class="mx-auto mt-20 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white/70 px-8 py-12 text-center text-sm text-slate-400"
-        >
-          {{ store.isTemporary ? '开始一段临时聊天吧' : '开始对话吧' }}
-        </div>
-
-        <div
-          v-for="msg in store.currentSession?.messages"
-          :key="msg.id"
-          class="group/message flex flex-col"
-          :class="msg.role === 'user' ? 'items-end' : 'items-start'"
-        >
-          <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(msg.createdAt) }}</span>
-          <div
-            class="max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed sm:max-w-[76%] lg:max-w-[68%]"
-            :class="msg.role === 'user'
-              ? 'bg-teal-600 text-white rounded-br-sm'
-              : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-bl-sm prose prose-sm max-w-none'"
-          >
-            <div v-if="msg.role === 'user'" v-html="renderUserContent(msg.content)" />
+      <div class="chat-conversation">
+        <div ref="messagesContainer" class="chat-messages" data-testid="chat-messages" @scroll="handleScroll">
+          <div class="chat-reading-column">
+            <div v-if="store.isTemporary" class="chat-temporary-note">
+              <IconCircleDashed :size="18" />
+              <p>这段对话只留在此刻。关闭或切换后，内容会丢失，不会保存到历史记录。</p>
+            </div>
+            <div v-if="store.loading" class="chat-loading" role="status">
+              <IconLoader2 :size="20" class="chat-spin" />正在打开对话…
+            </div>
+            <div v-else-if="displayMessages.length === 0" class="chat-welcome">
+              <div class="chat-welcome-mark">
+                <img src="/favicon.svg" alt="" width="48" height="48" /><span>Mirai Chat</span>
+              </div>
+              <h2>{{ store.isTemporary ? '此刻，想聊些什么？' : '把想法，慢慢聊清楚。' }}</h2>
+              <p>梳理工作，记录灵感，或只是聊聊今天。<br />我在这里，和你一起往前想一步。</p>
+              <div class="chat-starters">
+                <button v-for="starter in starters" :key="starter.title" @click="useStarter(starter.prompt)">
+                  <component :is="starter.icon" :size="20" :stroke-width="1.5" /><span
+                    ><strong>{{ starter.title }}</strong
+                    ><small>{{ starter.hint }}</small></span
+                  ><IconArrowRight :size="16" />
+                </button>
+              </div>
+              <span class="chat-welcome-footnote">从一句话开始，也很好。</span>
+            </div>
             <template v-else>
-              <details
-                v-if="splitAssistantContent(msg.content).thinking"
-                class="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600"
+              <div class="chat-conversation-start">
+                <span>{{ store.isTemporary ? '临时对话' : '对话记录' }}</span>
+              </div>
+              <article
+                v-for="msg in displayMessages"
+                :key="msg.streaming ? 'stream' : msg.id"
+                class="chat-message"
+                :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
               >
-                <summary class="cursor-pointer select-none font-medium text-slate-500">思考过程</summary>
-                <div class="mt-2 prose max-w-none !text-[11px] leading-relaxed" v-html="safeMarkdown(splitAssistantContent(msg.content).thinking)" />
-              </details>
-              <div v-html="safeMarkdown(splitAssistantContent(msg.content).answer)" />
+                <div class="chat-message-heading">
+                  <img
+                    v-if="msg.role === 'assistant'"
+                    src="/favicon.svg"
+                    alt=""
+                    width="24"
+                    height="24"
+                  /><span>{{ msg.role === 'user' ? '你' : 'Mirai' }}</span
+                  ><time :datetime="msg.createdAt">{{ fmtMsgTime(msg.createdAt) }}</time>
+                </div>
+                <div v-if="msg.role === 'user'" class="chat-user-content">{{ msg.content }}</div>
+                <div v-else class="chat-assistant-content">
+                  <details v-if="msg.thinking" class="chat-thinking">
+                    <summary>
+                      <span>{{ msg.streaming && !msg.answer ? '正在思考' : '思考过程' }}</span>
+                    </summary>
+                    <div class="chat-markdown" v-html="safeMarkdown(msg.thinking)" @click="onMessageLinkClick" />
+                  </details>
+                  <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
+                  <div v-if="msg.streaming && !msg.answer" class="chat-generation-status" role="status">
+                    <IconLoader2 :size="16" class="chat-spin" /><span>{{
+                      store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
+                    }}</span>
+                  </div>
+                  <div v-if="msg.streaming && store.toolCalls.length" class="chat-tool-list">
+                    <div v-for="tc in store.toolCalls" :key="tc.id">
+                      <IconLoader2 :size="14" class="chat-spin" /><span
+                        ><strong>{{ tc.label }}</strong
+                        ><small>{{ tc.detail || '正在处理，请稍候…' }}</small></span
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div v-if="!msg.streaming" class="chat-message-actions">
+                  <button
+                    :aria-label="copiedId === msg.id ? '已复制消息' : '复制消息'"
+                    title="复制消息"
+                    @click="copyMessage(msg)"
+                  >
+                    <IconCheck v-if="copiedId === msg.id" :size="15" /><IconCopy v-else :size="15" /><span>{{
+                      copiedId === msg.id ? '已复制' : '复制'
+                    }}</span>
+                  </button>
+                  <template v-if="!store.isTemporary && msg.id > 0">
+                    <button
+                      v-if="msg.role === 'user'"
+                      :disabled="store.sending"
+                      @click="editUserMessage(msg)"
+                    >
+                      <IconPencil :size="15" /><span>编辑</span>
+                    </button>
+                    <button v-else :disabled="store.sending" @click="retryAssistantMessage(msg)">
+                      <IconRefresh :size="15" /><span>重新回答</span>
+                    </button>
+                    <button :disabled="store.sending" @click="branchFromMessage(msg)">
+                      <IconGitBranch :size="15" /><span>从这里分支</span>
+                    </button>
+                  </template>
+                </div>
+              </article>
             </template>
           </div>
-          <div
-            v-if="!store.isTemporary && msg.id > 0"
-            class="mt-1 flex items-center gap-1 px-1 opacity-0 transition group-hover/message:opacity-100"
-          >
-            <button
-              v-if="msg.role === 'user'"
-              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
-              @click="editUserMessage(msg)"
-            >编辑</button>
-            <button
-              v-if="msg.role === 'assistant'"
-              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
-              @click="retryAssistantMessage(msg)"
-            >重试</button>
-            <button
-              class="rounded px-2 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-teal-700"
-              @click="branchFromMessage(msg)"
-            >从这里分支</button>
-          </div>
         </div>
-
-        <div v-if="store.streamMessage && store.streamSessionId === store.currentSession?.id" class="flex flex-col items-start">
-          <span class="text-xs text-gray-400 mb-1 px-1">{{ fmtMsgTime(store.streamMessage.createdAt) }}</span>
-          <div
-            class="max-w-[88%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-800 shadow-sm prose prose-sm sm:max-w-[76%] lg:max-w-[68%]"
+        <button
+          v-if="!atBottom && displayMessages.length"
+          class="chat-latest"
+          data-testid="chat-latest"
+          @click="scrollToBottom"
+        >
+          <IconArrowDown :size="15" />回到最新消息
+        </button>
+      </div>
+      <div class="chat-composer-wrap">
+        <div v-if="store.sending && !isCurrentStreaming" class="chat-background-status" role="status">
+          另一段对话正在回复，请稍候，或<button
+            class="chat-link"
+            @click="store.streamSessionId != null && selectSession(store.streamSessionId)"
           >
-            <details
-              v-if="splitAssistantContent(store.streamMessage.content, true).thinking"
-              class="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600"
-              open
-            >
-              <summary class="cursor-pointer select-none font-medium text-slate-500">思考过程</summary>
-              <div class="mt-2 prose max-w-none !text-[11px] leading-relaxed" v-html="safeMarkdown(splitAssistantContent(store.streamMessage.content, true).thinking)" />
-            </details>
-            <div v-html="safeMarkdown(splitAssistantContent(store.streamMessage.content, true).answer)" />
-          </div>
-          <div v-if="store.toolCalls.length > 0" class="mt-1.5 space-y-1">
-            <div
-              v-for="tc in store.toolCalls"
-              :key="tc.id"
-              class="flex items-start gap-2 rounded-lg border border-teal-100 bg-teal-50/70 px-3 py-2 text-xs text-slate-500"
-            >
-              <span class="mt-1 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-teal-500"></span>
-              <span class="min-w-0">
-                <span class="block font-medium text-teal-700">{{ tc.label }}</span>
-                <span class="mt-0.5 block text-[10px] leading-4 text-slate-500">
-                  {{ tc.detail || '正在处理，请稍候…' }}
-                </span>
-              </span>
-            </div>
-          </div>
-          <div
-            v-else-if="store.currentToolCall && !store.streamMessage.content"
-            class="mt-1 flex items-center gap-2 text-xs text-gray-400 animate-pulse"
-          >
-            <span class="inline-block w-2 h-2 rounded-full bg-teal-400"></span>
-            {{ store.currentToolCall }}
-          </div>
+            返回查看</button
+          >。
         </div>
-      </div>
-
-      <div
-        class="h-2 shrink-0 flex items-center justify-center bg-white border-t border-gray-200 cursor-row-resize select-none hover:bg-gray-50"
-        title="拖动调整输入框高度"
-        @mousedown="startInputResize"
-      >
-        <div class="w-10 h-1 rounded-full bg-gray-300"></div>
-      </div>
-
-      <div class="px-6 py-4 bg-white">
         <div
-          v-if="store.pendingAttachments.length > 0 || uploadingFiles.size > 0"
-          class="flex flex-wrap gap-2 mb-2"
+          class="chat-composer"
+          data-testid="chat-composer"
+          :class="{ 'is-generating': isCurrentStreaming }"
         >
           <div
-            v-for="name in uploadingFiles"
-            :key="'uploading-' + name"
-            class="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 text-xs text-gray-400 animate-pulse"
+            v-if="store.pendingAttachments.length || uploadingFiles.size"
+            class="chat-attachments"
+            aria-label="待发送附件"
           >
-            <span>...</span>
-            <span class="max-w-[120px] truncate">{{ name }}</span>
+            <div v-for="name in uploadingFiles" :key="name" class="chat-attachment" role="status">
+              <IconLoader2 :size="16" class="chat-spin" /><span>{{ name }}</span
+              ><small>读取中</small>
+            </div>
+            <div v-for="(att, idx) in store.pendingAttachments" :key="idx" class="chat-attachment">
+              <span class="chat-file-type">{{ getFileIcon(att.fileType) }}</span
+              ><span :title="att.fileName">{{ att.fileName }}</span
+              ><button
+                class="chat-icon"
+                :aria-label="`移除附件 ${att.fileName}`"
+                @click="removeAttachment(idx)"
+              >
+                <IconX :size="14" />
+              </button>
+            </div>
           </div>
-          <div
-            v-for="(att, idx) in store.pendingAttachments"
-            :key="idx"
-            class="flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-700"
-          >
-            <span>{{ getFileIcon(att.fileType) }}</span>
-            <span class="max-w-[120px] truncate" :title="att.fileName">{{ att.fileName }}</span>
-            <button
-              class="ml-1 text-teal-400 hover:text-red-500 leading-none"
-              @click="removeAttachment(idx)"
-            >
-              x
-            </button>
-          </div>
-        </div>
-
-        <div class="flex gap-3 items-end">
-          <input
-            ref="fileInputRef"
-            type="file"
-            :accept="ACCEPTED_TYPES"
-            multiple
-            class="hidden"
-            @change="handleFileSelect"
-          />
-          <button
-            class="shrink-0 h-10 w-10 rounded-xl border border-gray-200 text-gray-400 hover:text-teal-600 hover:border-teal-300 flex items-center justify-center transition"
-            :disabled="store.sending"
-            title="上传文件（支持 PDF / Word / Excel / 文本；当前模型不支持图片解析）"
-            aria-label="上传文件"
-            @click="triggerFileInput"
-          >
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M21.4 11.6 12.2 20.8a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.3 9.2a2 2 0 0 1-2.8-2.8l8.6-8.6"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-          <button
-            class="shrink-0 h-10 w-10 rounded-xl border flex items-center justify-center transition"
-            :class="showWorkspaceBrowser
-              ? 'bg-teal-50 border-teal-300 text-teal-600'
-              : 'border-gray-200 text-gray-400 hover:text-teal-600 hover:border-teal-300'"
-            :disabled="store.sending"
-            title="从工作区选择文件附加到消息"
-            aria-label="从工作区选择文件"
-            @click="showWorkspaceBrowser = !showWorkspaceBrowser"
-          >
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M3.5 6.5a2 2 0 0 1 2-2h4.2l2 2H18.5a2 2 0 0 1 2 2v1H3.5v-3Z"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M3.5 9.5h17l-1.4 8.1a2 2 0 0 1-2 1.7H6.9a2 2 0 0 1-2-1.7L3.5 9.5Z"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
+          <label for="chat-input" class="sr-only">输入消息</label>
           <textarea
+            class="resize-none"
+            id="chat-input"
+            ref="inputRef"
             v-model="inputContent"
-            :style="{ height: inputHeightPx + 'px' }"
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            class="flex-1 px-4 py-2 rounded-xl border border-gray-200 text-sm resize-none overflow-y-auto focus:outline-none focus:ring-2 focus:ring-teal-200"
+            data-testid="chat-input"
+            :placeholder="store.sending ? '可以先写下一个想法…' : '写下你的问题，或附上一份文件…'"
+            rows="2"
+            :disabled="creatingSession"
             @keydown="handleKeydown"
             @paste="handlePaste"
           />
-          <button
-            v-if="store.sending"
-            class="h-10 shrink-0 rounded-xl bg-slate-800 px-4 text-sm text-white hover:bg-slate-900"
-            @click="store.stopGeneration"
-          >
-            ■ 停止
-          </button>
-          <button
-            v-else
-            class="h-10 shrink-0 rounded-xl bg-teal-600 px-5 text-sm text-white hover:bg-teal-700 disabled:opacity-50"
-            :disabled="!inputContent.trim() && store.pendingAttachments.length === 0"
-            @click="send"
-          >
-            发送
-          </button>
+          <div class="chat-composer-tools">
+            <input
+              ref="fileInputRef"
+              type="file"
+              :accept="ACCEPTED_TYPES"
+              multiple
+              class="hidden"
+              @change="handleFileSelect"
+            />
+            <button
+              class="chat-icon"
+              aria-label="上传文件"
+              title="上传 PDF、Word、Excel 或文本文件"
+              :disabled="store.sending || creatingSession"
+              @click="triggerFileInput"
+            >
+              <IconPaperclip :size="19" />
+            </button>
+            <button
+              class="chat-icon"
+              aria-label="从工作区选择文件"
+              title="从工作区选择文件"
+              :disabled="store.sending || creatingSession"
+              @click="showWorkspaceBrowser = true"
+            >
+              <IconFolder :size="19" />
+            </button>
+            <span class="chat-composer-label">{{
+              store.isTemporary ? '临时聊天' : currentProject ? currentProject.name : 'Mirai 助手'
+            }}</span>
+            <button
+              class="chat-icon chat-expand-input"
+              :aria-label="inputExpanded ? '收起输入框' : '展开输入框'"
+              :title="inputExpanded ? '收起输入框' : '展开输入框'"
+              :aria-pressed="inputExpanded"
+              @click="inputExpanded = !inputExpanded"
+            >
+              <IconMinimize v-if="inputExpanded" :size="17" /><IconMaximize v-else :size="17" />
+            </button>
+            <button
+              v-if="store.sending"
+              class="chat-send is-stop"
+              aria-label="停止生成"
+              title="停止生成"
+              @click="store.stopGeneration"
+            >
+              <IconSquare :size="16" /><span>停止</span>
+            </button>
+            <button
+              v-else
+              class="chat-send"
+              data-testid="chat-send"
+              aria-label="发送消息"
+              title="发送消息"
+              :disabled="
+                (!inputContent.trim() && !store.pendingAttachments.length) ||
+                creatingSession ||
+                uploadingFiles.size > 0
+              "
+              @click="send"
+            >
+              <IconLoader2 v-if="creatingSession" :size="19" class="chat-spin" /><IconArrowUp
+                v-else
+                :size="20"
+              />
+            </button>
+          </div>
+        </div>
+        <div class="chat-composer-help">
+          <span>支持 PDF、Word、Excel 和文本</span
+          ><span
+            v-if="store.contextUsage"
+            class="chat-context"
+            :title="`上下文已使用 ${store.contextUsage.percentUsed}%，共 ${store.contextUsage.messageCount} 条消息`"
+            >上下文 {{ store.contextUsage.percentUsed }}%</span
+          ><span class="chat-keyboard-help"><kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行</span>
         </div>
       </div>
+      <p class="sr-only" role="status" aria-live="polite">
+        {{ isCurrentStreaming ? 'Mirai 正在回复' : '可以发送消息' }}
+      </p>
+    </section>
 
-      <Teleport to="body">
-        <aside
-          v-if="showArtifacts"
-          class="fixed bottom-0 right-0 top-[72px] z-40 flex w-80 max-w-full flex-col border-l border-slate-200 bg-white shadow-2xl"
-        >
-          <div class="flex items-center justify-between border-b border-slate-100 px-4 py-4">
-            <div>
-              <h3 class="text-sm font-semibold text-slate-800">对话文件</h3>
-              <p class="mt-0.5 text-[10px] text-slate-400">生成的 PDF、Word、Excel 等文件</p>
-            </div>
-            <button class="text-slate-400 hover:text-slate-700" aria-label="关闭文件面板" @click="showArtifacts = false">✕</button>
+    <AppDialog
+      :open="showWorkspaceBrowser"
+      title="工作区文件"
+      size="drawer"
+      @close="showWorkspaceBrowser = false"
+      ><WorkspaceBrowser
+        v-if="showWorkspaceBrowser"
+        @attach="onWorkspaceAttach"
+        @close="showWorkspaceBrowser = false"
+    /></AppDialog>
+    <AppDialog
+      :open="showArtifacts"
+      title="对话文件"
+      description="这段对话中生成的文件，集中放在这里。"
+      size="drawer"
+      @close="showArtifacts = false"
+    >
+      <div class="chat-artifacts">
+        <div v-if="!artifacts.length" class="chat-panel-empty">
+          <IconFolder :size="36" :stroke-width="1.3" /><strong>文件会在这里相遇</strong>
+          <p>请 Mirai 生成一份文档或表格后，<br />就可以在这里预览和下载。</p>
+        </div>
+        <article v-for="artifact in artifacts" :key="artifact.url" class="chat-artifact">
+          <div>
+            <span class="chat-file-type">{{
+              artifact.extension.replace('.', '').toUpperCase() || 'FILE'
+            }}</span>
+            <p :title="artifact.name">
+              {{ artifact.name }}<small>{{ fmtMsgTime(artifact.createdAt) }}</small>
+            </p>
+            <a
+              :href="staticUrl(artifact.url)"
+              download
+              :aria-label="`下载 ${artifact.name}`"
+              class="chat-icon"
+              @click.prevent="downloadExportFile(artifact.url, artifact.name)"
+              ><IconDownload :size="18"
+            /></a>
           </div>
-          <div class="flex-1 space-y-3 overflow-y-auto p-4">
-            <div v-if="artifacts.length === 0" class="mt-16 text-center text-xs text-slate-400">
-              当前对话还没有生成文件
+          <p v-if="artifact.extension === '.pdf'" class="chat-artifact-note">
+            需要身份验证，点击下载后可在本地打开预览。
+          </p>
+        </article>
+      </div>
+    </AppDialog>
+    <AppDialog
+      :open="showProjectManager"
+      title="项目空间"
+      description="把相关对话放在一起，让每一次交流都有共同的背景。"
+      size="lg"
+      :busy="actionBusy"
+      @close="showProjectManager = false"
+    >
+      <div class="chat-project-manager">
+        <nav aria-label="项目列表">
+          <button class="chat-btn" :disabled="actionBusy" @click="resetProjectForm">
+            <IconPlus :size="16" />新建项目</button
+          ><button
+            v-for="project in store.projects"
+            :key="project.id"
+            :disabled="actionBusy"
+            :class="{ 'is-selected': editingProjectId === project.id }"
+            @click="editProject(project)"
+          >
+            <span>{{ project.icon }}</span
+            ><span>{{ project.name }}</span
+            ><small>{{ project.sessionCount }}</small>
+          </button>
+          <p v-if="!store.projects.length" class="chat-subtle">还没有项目，试着建一个吧。</p>
+        </nav>
+        <form class="chat-project-form" novalidate @submit.prevent="saveProject">
+          <h3>{{ editingProjectId ? '编辑项目' : '新建项目' }}</h3>
+          <fieldset :disabled="actionBusy">
+            <div class="chat-project-fields">
+              <label>图标<input v-model="projectForm.icon" aria-label="项目图标" maxlength="10" /></label
+              ><label
+                >项目名称<input
+                  v-model="projectForm.name"
+                  aria-label="项目名称"
+                  maxlength="100"
+                  placeholder="例如：产品设计"
+                  :aria-invalid="!!projectError"
+                  aria-describedby="project-error"
+              /></label>
             </div>
-            <article v-for="artifact in artifacts" :key="artifact.url" class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-              <div class="flex items-center gap-3 p-3">
-                <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[10px] font-bold uppercase text-teal-700 shadow-sm">
-                  {{ artifact.extension.replace('.', '') || 'FILE' }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-xs font-medium text-slate-700" :title="artifact.name">{{ artifact.name }}</p>
-                  <p class="mt-0.5 text-[10px] text-slate-400">{{ fmtMsgTime(artifact.createdAt) }}</p>
-                </div>
-                <a
-                  :href="staticUrl(artifact.url)"
-                  target="_blank"
-                  download
-                  class="rounded-lg bg-teal-700 px-2.5 py-1.5 text-[10px] font-medium text-white hover:bg-teal-800"
-                >下载</a>
-              </div>
-              <iframe
-                v-if="artifact.extension === '.pdf'"
-                :src="staticUrl(artifact.url)"
-                class="h-56 w-full border-0 border-t border-slate-200 bg-white"
-                title="PDF 预览"
-              />
-            </article>
-          </div>
-        </aside>
-      </Teleport>
-
-      <Teleport to="body">
-        <div
-          v-if="showProjectManager"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-          @click.self="showProjectManager = false"
-        >
-          <div class="flex max-h-[85vh] w-[760px] max-w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div class="w-64 shrink-0 overflow-y-auto border-r border-slate-100 bg-slate-50 p-4">
-              <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-slate-800">项目空间</h3>
-                <button class="text-xs text-teal-700" @click="resetProjectForm">+ 新建</button>
-              </div>
-              <button
-                v-for="project in store.projects"
-                :key="project.id"
-                class="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white"
-                :class="editingProjectId === project.id ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'"
-                @click="editProject(project)"
-              >
-                <span>{{ project.icon }}</span>
-                <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
-                <span class="text-[10px] text-slate-400">{{ project.sessionCount }}</span>
-              </button>
-              <p v-if="store.projects.length === 0" class="py-8 text-center text-xs text-slate-400">还没有项目</p>
-            </div>
-            <div class="min-w-0 flex-1 overflow-y-auto p-6">
-              <div class="mb-5 flex items-center justify-between">
-                <div>
-                  <h3 class="text-base font-semibold text-slate-800">{{ editingProjectId ? '编辑项目' : '新建项目' }}</h3>
-                  <p class="mt-1 text-xs text-slate-400">项目指令会自动加入该项目下每次普通聊天的上下文。</p>
-                </div>
-                <button class="text-slate-400 hover:text-slate-700" @click="showProjectManager = false">✕</button>
-              </div>
-              <div class="grid grid-cols-[72px_1fr] gap-3">
-                <input v-model="projectForm.icon" maxlength="10" class="h-10 rounded-lg border border-slate-200 px-3 text-center" placeholder="图标" />
-                <input v-model="projectForm.name" maxlength="100" class="h-10 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-teal-400" placeholder="项目名称" />
-              </div>
-              <label class="mt-4 block text-xs font-medium text-slate-600">项目颜色</label>
-              <input v-model="projectForm.color" type="color" class="mt-2 h-9 w-20 rounded border border-slate-200 bg-white p-1" />
-              <label class="mt-4 block text-xs font-medium text-slate-600">项目专属指令</label>
-              <textarea
+            <label>项目颜色<input v-model="projectForm.color" type="color" aria-label="项目颜色" /></label
+            ><label
+              >项目专属指令<textarea
+                class="resize-none"
                 v-model="projectForm.instructions"
+                aria-label="项目专属指令"
                 maxlength="4000"
-                class="mt-2 h-44 w-full resize-none rounded-xl border border-slate-200 p-3 text-sm leading-relaxed outline-none focus:border-teal-400"
-                placeholder="例如：你是本项目的产品顾问；回答优先使用中文；涉及方案时先给结论，再列风险和下一步。"
+                placeholder="例如：回答优先使用中文；讨论方案时先给结论，再列出下一步。"
               />
-              <div class="mt-5 flex items-center justify-between">
-                <button
-                  v-if="editingProjectId"
-                  class="text-xs text-red-500 hover:text-red-700"
-                  @click="removeEditingProject"
-                >删除项目</button>
-                <span v-else />
-                <button
-                  class="rounded-lg bg-teal-700 px-5 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-50"
-                  :disabled="!projectForm.name.trim()"
-                  @click="saveProject"
-                >保存项目</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Teleport>
-
-      <Teleport to="body">
-        <div
-          v-if="store.pendingConfirm"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-        >
-          <div class="bg-white rounded-2xl shadow-xl w-96 max-w-[90vw] p-6">
-            <div class="flex items-center gap-3 mb-4">
-              <span class="text-2xl">{{ store.pendingConfirm.riskLevel === 'dangerous' ? '!' : 'i' }}</span>
-              <div>
-                <p class="font-medium text-gray-800 text-sm">
-                  {{ store.pendingConfirm.riskLevel === 'dangerous' ? '危险操作确认' : '写入操作确认' }}
-                </p>
-                <p class="text-xs text-gray-400 mt-0.5">
-                  工具：<code class="bg-gray-100 px-1 rounded">{{ store.pendingConfirm.toolName }}</code>
-                </p>
-              </div>
-            </div>
-            <div
-              v-if="store.pendingConfirm.arguments"
-              class="bg-gray-50 rounded-lg p-2 mb-4 text-xs text-gray-500 max-h-24 overflow-y-auto font-mono"
+            </label>
+            <p class="chat-subtle">专属指令会加入该项目下普通聊天的上下文。</p>
+          </fieldset>
+          <p id="project-error" class="chat-field-error" role="alert">{{ projectError }}</p>
+          <div class="chat-form-actions">
+            <button
+              v-if="editingProjectId"
+              type="button"
+              class="chat-btn chat-danger-text"
+              :disabled="actionBusy"
+              @click="removeEditingProject"
             >
-              {{ store.pendingConfirm.arguments }}
-            </div>
-            <p class="text-sm text-gray-600 mb-5">确认执行此操作吗？</p>
-            <div class="flex gap-3 justify-end">
-              <button
-                class="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
-                @click="store.confirmToolCall(false)"
-              >
-                取消
-              </button>
-              <button
-                class="px-4 py-2 rounded-lg text-sm text-white"
-                :class="store.pendingConfirm.riskLevel === 'dangerous' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-600 hover:bg-teal-700'"
-                @click="store.confirmToolCall(true)"
-              >
-                确认执行
-              </button>
-            </div>
+              删除项目</button
+            ><button class="chat-btn chat-primary" :disabled="actionBusy">
+              {{ actionBusy ? '保存中…' : '保存项目' }}
+            </button>
           </div>
+        </form>
+      </div>
+    </AppDialog>
+    <AppDialog
+      :open="showArchiveManager"
+      title="归档管理"
+      description="暂时收起的对话，需要时可以继续。"
+      @close="showArchiveManager = false"
+      ><div class="chat-archive-list">
+        <div v-if="store.archivedLoading" class="chat-panel-empty" role="status">
+          <IconLoader2 :size="24" class="chat-spin" />正在加载…
         </div>
-      </Teleport>
-
-      <Teleport to="body">
-        <div
-          v-if="showArchiveManager"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-          @click.self="showArchiveManager = false"
+        <div v-else-if="!store.archivedSessions.length" class="chat-panel-empty">
+          <IconArchive :size="32" /><strong>还没有归档对话</strong>
+          <p>归档的对话会在这里保留。</p>
+        </div>
+        <div v-for="s in store.archivedSessions" :key="s.id">
+          <p :title="s.title">
+            {{ s.title }}<small>{{ fmtSessionDate(s.updatedAt) }}</small>
+          </p>
+          <button class="chat-btn" :disabled="restoringId === s.id" @click="restoreSession(s.id)">
+            {{ restoringId === s.id ? '还原中…' : '还原' }}
+          </button>
+        </div>
+      </div></AppDialog
+    >
+    <AppDialog
+      :open="!!store.pendingConfirm"
+      :title="store.pendingConfirm?.riskLevel === 'dangerous' ? '确认执行此操作？' : '确认保存更改？'"
+      description="请查看本次操作内容，确认后继续。"
+      @close="store.confirmToolCall(false)"
+      ><template v-if="store.pendingConfirm"
+        ><p class="chat-subtle">{{ store.pendingConfirm.toolName }}</p>
+        <pre class="chat-confirm-details">{{ store.pendingConfirm.arguments }}</pre></template
+      ><template #footer
+        ><button class="chat-btn" data-dialog-autofocus @click="store.confirmToolCall(false)">取消</button
+        ><button class="chat-btn chat-primary" @click="store.confirmToolCall(true)">
+          确认执行
+        </button></template
+      ></AppDialog
+    >
+    <AppDialog
+      :open="!!dialog"
+      :title="dialog?.title || ''"
+      :description="dialog?.description"
+      :busy="actionBusy"
+      @close="dialog = null"
+      ><div v-if="dialog?.kind === 'rename' || dialog?.kind === 'edit'" class="chat-dialog-field">
+        <label :for="dialog.kind === 'edit' ? 'chat-edit-message' : 'chat-rename'">{{
+          dialog.kind === 'edit' ? '消息内容' : '对话名称'
+        }}</label
+        ><textarea
+          class="resize-none"
+          v-if="dialog.kind === 'edit'"
+          id="chat-edit-message"
+          v-model="dialogText"
+          data-dialog-autofocus
+          :disabled="actionBusy"
+          :aria-invalid="!!dialogError"
+          aria-describedby="chat-dialog-error"
+        /><input
+          v-else
+          id="chat-rename"
+          v-model="dialogText"
+          maxlength="200"
+          data-dialog-autofocus
+          :disabled="actionBusy"
+          :aria-invalid="!!dialogError"
+          aria-describedby="chat-dialog-error"
+          @keydown.enter="!$event.isComposing && submitDialog()"
+        />
+      </div>
+      <p id="chat-dialog-error" class="chat-field-error" role="alert">{{ dialogError }}</p>
+      <template #footer
+        ><button class="chat-btn" :disabled="actionBusy" data-dialog-autofocus @click="dialog = null">
+          取消</button
+        ><button
+          class="chat-btn"
+          :class="
+            dialog?.kind === 'delete' || dialog?.kind === 'project-delete' ? 'chat-danger' : 'chat-primary'
+          "
+          :disabled="actionBusy"
+          @click="submitDialog"
         >
-          <div class="bg-white rounded-2xl shadow-xl w-[420px] max-w-[90vw] max-h-[80vh] flex flex-col p-6">
-            <div class="flex items-center justify-between mb-4 shrink-0">
-              <h3 class="text-sm font-medium text-gray-800">归档管理</h3>
-              <button
-                class="text-gray-400 hover:text-gray-600 text-lg leading-none"
-                aria-label="关闭"
-                @click="showArchiveManager = false"
-              >
-                ✕
-              </button>
-            </div>
-            <div class="flex-1 overflow-y-auto -mx-2 px-2">
-              <div v-if="store.archivedLoading" class="py-8 text-center text-xs text-gray-400">加载中…</div>
-              <div v-else-if="store.archivedSessions.length === 0" class="py-8 text-center text-xs text-gray-400">
-                暂无已归档内容
-              </div>
-              <ul v-else class="space-y-1">
-                <li
-                  v-for="s in store.archivedSessions"
-                  :key="s.id"
-                  class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-gray-50"
-                >
-                  <div class="min-w-0">
-                    <div class="text-sm text-gray-700 truncate">{{ s.title }}</div>
-                    <div class="text-xs text-gray-400 mt-0.5">{{ fmtSessionDate(s.updatedAt) }}</div>
-                  </div>
-                  <button
-                    class="shrink-0 text-xs px-2 py-1 rounded border border-gray-200 text-gray-500 hover:text-teal-600 hover:border-teal-300 disabled:opacity-50"
-                    :disabled="restoringId === s.id"
-                    @click="restoreSession(s.id)"
-                  >
-                    {{ restoringId === s.id ? '还原中…' : '还原' }}
-                  </button>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </Teleport>
-    </div>
+          {{
+            actionBusy
+              ? '处理中…'
+              : dialog?.kind === 'delete' || dialog?.kind === 'project-delete'
+                ? '删除'
+                : dialog?.kind === 'archive'
+                  ? '归档'
+                  : dialog?.kind === 'edit'
+                    ? '创建分支并发送'
+                    : '保存名称'
+          }}
+        </button></template
+      ></AppDialog
+    >
   </div>
 </template>
+
+<style scoped src="./chat.css"></style>

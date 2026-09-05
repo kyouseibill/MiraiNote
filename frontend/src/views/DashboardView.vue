@@ -24,6 +24,8 @@ const auth = useAuthStore()
 const loading = ref(true)
 /** 初始必须为空：禁止把默认句「今天，安静地推进」当首屏 UI */
 const greeting = ref('')
+/** 欢迎语所在区域始终占据固定高度，避免异步返回和逐字显示推动下面内容。 */
+const greetingRevealing = ref(false)
 const LAST_GREETING_KEY_PREFIX = 'mirainote:welcome:lastGreeting:'
 let welcomeAbort: AbortController | null = null
 const quickCapture = ref('')
@@ -166,6 +168,7 @@ async function typewriterReveal(text: string, signal: AbortSignal) {
   const durationMs = 1200 + Math.floor(Math.random() * 800)
   const stepMs = durationMs / chars.length
   greeting.value = ''
+  greetingRevealing.value = true
   for (let i = 0; i < chars.length; i++) {
     if (signal.aborted) return
     greeting.value += chars[i]
@@ -182,12 +185,16 @@ async function typewriterReveal(text: string, signal: AbortSignal) {
       signal.addEventListener('abort', onAbort, { once: true })
     })
   }
+  if (!signal.aborted) greetingRevealing.value = false
 }
 
 async function applyWelcomeContent(content: string | null | undefined, signal: AbortSignal) {
   const text = (content ?? '').trim()
   if (!text) {
-    if (!signal.aborted) greeting.value = '…'
+    if (!signal.aborted) {
+      greeting.value = '今天，安静地推进'
+      greetingRevealing.value = false
+    }
     return
   }
   await typewriterReveal(text, signal)
@@ -201,6 +208,7 @@ async function load() {
 
   loading.value = true
   greeting.value = ''
+  greetingRevealing.value = false
 
   if (isDesignPreview.value) {
     workMemos.value = previewWorkMemos
@@ -228,7 +236,8 @@ async function load() {
   } catch {
     if (!signal.aborted) {
       loading.value = false
-      greeting.value = '…'
+      greeting.value = '今天，安静地推进'
+      greetingRevealing.value = false
     }
   }
 }
@@ -286,9 +295,18 @@ onUnmounted(cancelWelcomeTypewriter)
             <span class="h-[9px] w-[9px] shrink-0 rounded-full bg-[#b4493f]" />
             <span>{{ dateLabel }}</span>
           </div>
-          <h1 class="mt-4 font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]">
-            {{ greeting }}
-          </h1>
+          <div class="greeting-stage mt-4" aria-live="polite" aria-atomic="true">
+            <p v-if="!greeting" class="greeting-placeholder" role="status">
+              正在为今天留一句话<span class="greeting-dots" aria-hidden="true"><i /><i /><i /></span>
+            </p>
+            <h1
+              v-else
+              class="greeting-copy font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]"
+              :title="greeting"
+            >
+              {{ greeting }}<span v-if="greetingRevealing" class="greeting-caret" aria-hidden="true" />
+            </h1>
+          </div>
         </header>
 
         <form class="mt-12 flex h-[52px] w-full" @submit.prevent="createQuickMemo">
@@ -398,3 +416,91 @@ onUnmounted(cancelWelcomeTypewriter)
     </div>
   </div>
 </template>
+
+<style scoped>
+.greeting-stage {
+  position: relative;
+  height: 104px;
+  overflow: hidden;
+}
+
+.greeting-copy,
+.greeting-placeholder {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+}
+
+.greeting-copy {
+  max-width: 720px;
+  overflow: hidden;
+  line-height: 1.62;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  animation: greeting-enter 360ms ease-out both;
+}
+
+.greeting-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 9px;
+  color: #8a857c;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.greeting-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+}
+
+.greeting-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #b4493f;
+  animation: greeting-dot 1.2s ease-in-out infinite;
+}
+
+.greeting-dots i:nth-child(2) { animation-delay: 150ms; }
+.greeting-dots i:nth-child(3) { animation-delay: 300ms; }
+
+.greeting-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  margin-left: 5px;
+  vertical-align: -0.05em;
+  background: #b4493f;
+  animation: greeting-caret 700ms step-end infinite;
+}
+
+@keyframes greeting-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes greeting-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+@keyframes greeting-caret {
+  50% { opacity: 0; }
+}
+
+@media (max-width: 639px) {
+  .greeting-stage { height: 96px; }
+  .greeting-copy { line-height: 1.58; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .greeting-copy,
+  .greeting-dots i,
+  .greeting-caret { animation: none; }
+}
+</style>

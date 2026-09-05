@@ -1121,6 +1121,7 @@ public class ChatService : IChatService
         var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
         var exportedFiles = new List<ExportedFileLink>();
+        var hasDeliveredImage = false;
 
         for (int round = 0; round < 20; round++)
         {
@@ -1153,8 +1154,23 @@ public class ChatService : IChatService
             if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
 
             if (finishReason == "stop" || finishReason == "length")
+            {
+                if (AgentCompletionGuard.RequiresContinuation(userQuery, content, hasDeliveredImage) && round < 19)
+                {
+                    // Some providers return stop after a planning sentence. Keep that sentence in context,
+                    // then require the model to finish the requested download before it can answer.
+                    messages.Add(new { role = "assistant", content = string.IsNullOrEmpty(content) ? null : content });
+                    messages.Add(new
+                    {
+                        role = "user",
+                        content = "系统校验：用户要求下载并交付图片，但尚未得到可展示的图片文件。上一轮不能结束；请立即继续调用必要工具，下载到工作区后调用 publish_workspace_file。若所有来源均失败，请完成必要的替代尝试后再明确说明失败原因。"
+                    });
+                    continue;
+                }
+
                 return await EnsureRequestedExportAsync(
                     userId, request, fullContent.ToString(), exportedFiles, callback, ct);
+            }
 
             if (finishReason == "tool_calls" && toolCalls.Count > 0)
             {
@@ -1212,6 +1228,7 @@ public class ChatService : IChatService
                     var result = await ExecuteToolWithProgressAsync(
                         userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
                     CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
+                    hasDeliveredImage |= AgentCompletionGuard.IsPublishedImageResult(tc.FunctionName, result);
 
                     await callback("tool_result", JsonSerializer.Serialize(new
                     {
@@ -2481,6 +2498,11 @@ public class ChatService : IChatService
               实现网页登录、页面抓取、自动化操作等任务。
               用户提供 URL、用户名、密码时，可用 requests 或 playwright 脚本完成登录和页面操作。
             所有文件操作限定在工作区目录内，无法访问系统敏感路径。
+
+            【网络图片下载交付闭环】
+            - 用户要求下载、保存或获取网络图片/照片时，必须实际将图片下载到私有工作区，并调用 publish_workspace_file 交付可展示的链接。
+            - 单个网站、链接或命令失败时，继续尝试其他公开来源；不能把“准备继续”“我再尝试”当作最终回复。
+            - 只有 publish_workspace_file 成功返回 markdown，或已经完成必要的替代尝试并能明确说明失败原因时，才能结束回复。
 
             【Python 生成图形的展示规则】
             - 生成图形时优先使用已安装的 matplotlib/numpy/pandas。不要在未尝试 import 前说“需要先安装 matplotlib”。
