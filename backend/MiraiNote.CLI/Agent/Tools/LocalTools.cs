@@ -370,7 +370,7 @@ public class ShellTool : IAgentTool
     public ToolRiskLevel RiskLevel => ToolRiskLevel.Dangerous;
     public string Description =>
         "执行 Shell 命令并返回输出。支持常用的开发命令：dotnet、git、npm、dir/ls、type/cat 等。" +
-        "禁止执行破坏性命令（rm -rf、format 等）。超时 30 秒。";
+        "禁止执行破坏性命令（rm -rf、format 等）。命令会持续运行直到完成，也可由用户主动停止。";
 
     public ToolParameterSchema Parameters => new()
     {
@@ -412,16 +412,21 @@ public class ShellTool : IAgentTool
             };
 
             using var process = Process.Start(psi)!;
-            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
-            var stderr = await process.StandardError.ReadToEndAsync(ct);
-
-            // 30 秒超时
-            var exited = process.WaitForExit(30_000);
-            if (!exited)
+            // 不设置固定时限：长时间下载/构建命令持续运行，用户取消时由 ct 终止等待。
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            try
             {
-                process.Kill(entireProcessTree: true);
-                return "命令执行超时（30 秒）。";
+                await process.WaitForExitAsync(ct);
             }
+            catch
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+                throw;
+            }
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
 
             var output = stdout.TrimEnd();
             if (!string.IsNullOrEmpty(stderr))
