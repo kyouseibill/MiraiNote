@@ -13,6 +13,8 @@ import { chatApi } from '@/api/chat'
 import { agentApi } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
 
+export type ChatSendOutcome = 'completed' | 'stopped' | 'failed'
+
 export const useChatStore = defineStore('chat', () => {
   const toast = useToast()
   const sessions = ref<ChatSession[]>([])
@@ -20,6 +22,7 @@ export const useChatStore = defineStore('chat', () => {
   const isTemporary = ref(false)
   const temporaryId = ref(createTemporaryId())
   const loading = ref(false)
+  const sessionsLoading = ref(false)
   const sending = ref(false)
   const projects = ref<ChatProject[]>([])
   const selectedProjectId = ref<number | null>(null)
@@ -60,26 +63,55 @@ export const useChatStore = defineStore('chat', () => {
 
   // 待发送的附件列表（用户选择文件后上传解析，随下次发送一起提交给 AI）
   const pendingAttachments = ref<ChatAttachmentContent[]>([])
+  // 附件和文字草稿一样属于具体会话。切换会话、临时聊天或分支时不能把它带到别处。
+  const attachmentDrafts = new Map<string, ChatAttachmentContent[]>()
 
   const sessionDetailsCache = new Map<number, ChatSessionDetail>()
+  let sessionsRequestVersion = 0
+  let selectionVersion = 0
+
+  function attachmentDraftKey(
+    session = currentSession.value,
+    temporary = isTemporary.value,
+    temporarySessionId = temporaryId.value,
+  ) {
+    if (!session) return null
+    return temporary ? `temporary:${temporarySessionId}` : `session:${session.id}`
+  }
+
+  function savePendingAttachments() {
+    const key = attachmentDraftKey()
+    if (key) attachmentDrafts.set(key, [...pendingAttachments.value])
+  }
+
+  function restorePendingAttachments() {
+    const key = attachmentDraftKey()
+    pendingAttachments.value = key ? [...(attachmentDrafts.get(key) ?? [])] : []
+  }
 
   async function fetchSessions() {
-    loading.value = true
+    const requestVersion = ++sessionsRequestVersion
+    sessionsLoading.value = true
     try {
-      sessions.value = await chatApi.getSessions(selectedProjectId.value)
+      const result = await chatApi.getSessions(selectedProjectId.value)
+      if (requestVersion === sessionsRequestVersion) sessions.value = result
     } finally {
-      loading.value = false
+      if (requestVersion === sessionsRequestVersion) sessionsLoading.value = false
     }
   }
 
   async function openSession(sessionId: number) {
+    savePendingAttachments()
+    const requestVersion = ++selectionVersion
     isTemporary.value = false
     const cached = sessionDetailsCache.get(sessionId)
     if (cached) {
       loading.value = false
       currentSession.value = cached
+      restorePendingAttachments()
       chatApi.getSession(sessionId)
         .then((fresh) => {
+          if (requestVersion !== selectionVersion) return
           // 若该会话正在流式生成回复，跳过本次刷新：
           // 避免用不含新消息的旧数据覆盖 currentSession，导致回复完成后界面显示空白
           // （需重新进入会话才能看到内容）。
@@ -98,20 +130,37 @@ export const useChatStore = defineStore('chat', () => {
     loading.value = true
     try {
       const detail = await chatApi.getSession(sessionId)
+      if (requestVersion !== selectionVersion) return
       sessionDetailsCache.set(sessionId, detail)
       currentSession.value = detail
+      restorePendingAttachments()
     } finally {
-      loading.value = false
+      if (requestVersion === selectionVersion) loading.value = false
     }
   }
 
   async function createSession(title?: string) {
+    const startedWithoutSession = currentSession.value == null
+    const detachedAttachments = startedWithoutSession ? [...pendingAttachments.value] : []
+    savePendingAttachments()
+    const requestVersion = ++selectionVersion
+    loading.value = false
     isTemporary.value = false
     const session = await chatApi.createSession({ title, projectId: selectedProjectId.value })
-    sessions.value.unshift(session)
+    if (selectedProjectId.value == null || session.projectId === selectedProjectId.value) {
+      sessions.value.unshift(session)
+    }
     const detail: ChatSessionDetail = { ...session, messages: [] }
     sessionDetailsCache.set(session.id, detail)
-    currentSession.value = detail
+    if (requestVersion === selectionVersion) {
+      currentSession.value = detail
+      if (startedWithoutSession) {
+        pendingAttachments.value = detachedAttachments
+        attachmentDrafts.set(`session:${detail.id}`, detachedAttachments)
+      } else {
+        restorePendingAttachments()
+      }
+    }
     return session
   }
 
@@ -121,17 +170,24 @@ export const useChatStore = defineStore('chat', () => {
       await fetchSessions()
       return
     }
-    loading.value = true
+    const requestVersion = ++sessionsRequestVersion
+    sessionsLoading.value = true
     try {
-      sessions.value = await chatApi.searchSessions(normalized, selectedProjectId.value)
+      const result = await chatApi.searchSessions(normalized, selectedProjectId.value)
+      if (requestVersion === sessionsRequestVersion) sessions.value = result
     } finally {
-      loading.value = false
+      if (requestVersion === sessionsRequestVersion) sessionsLoading.value = false
     }
   }
 
   async function selectProject(projectId: number | null) {
+    savePendingAttachments()
+    ++selectionVersion
+    loading.value = false
+    isTemporary.value = false
     selectedProjectId.value = projectId
     currentSession.value = null
+    restorePendingAttachments()
     await fetchSessions()
   }
 
@@ -140,6 +196,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function startTemporarySession() {
+    savePendingAttachments()
+    ++selectionVersion
+    loading.value = false
     const now = new Date().toISOString()
     isTemporary.value = true
     temporaryId.value = createTemporaryId()
@@ -164,7 +223,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingConfirm.value = null
     pendingConfirmSessionId = null
     pendingConfirmTemporaryId = null
-    pendingAttachments.value = []
+    restorePendingAttachments()
   }
 
   function replaceSessionSummary(updated: ChatSession) {
@@ -188,10 +247,12 @@ export const useChatStore = defineStore('chat', () => {
 
   async function branchSession(payload: BranchSessionPayload = {}) {
     if (!currentSession.value || isTemporary.value) return null
+    savePendingAttachments()
     const detail = await chatApi.branchSession(currentSession.value.id, payload)
     isTemporary.value = false
     sessionDetailsCache.set(detail.id, detail)
     currentSession.value = detail
+    restorePendingAttachments()
     await fetchSessions()
     return detail
   }
@@ -223,15 +284,23 @@ export const useChatStore = defineStore('chat', () => {
   async function deleteSession(sessionId: number) {
     await chatApi.deleteSession(sessionId)
     sessionDetailsCache.delete(sessionId)
+    attachmentDrafts.delete(`session:${sessionId}`)
     sessions.value = sessions.value.filter((s) => s.id !== sessionId)
-    if (currentSession.value?.id === sessionId) currentSession.value = null
+    if (currentSession.value?.id === sessionId) {
+      currentSession.value = null
+      restorePendingAttachments()
+    }
   }
 
   async function archiveSession(sessionId: number) {
     await chatApi.archiveSession(sessionId)
     sessionDetailsCache.delete(sessionId)
     sessions.value = sessions.value.filter((s) => s.id !== sessionId)
-    if (currentSession.value?.id === sessionId) currentSession.value = null
+    if (currentSession.value?.id === sessionId) {
+      savePendingAttachments()
+      currentSession.value = null
+      restorePendingAttachments()
+    }
   }
 
   // 归档管理：仅在打开归档管理面板时按需加载，避免每次进入页面都拉取归档内容。
@@ -282,11 +351,13 @@ export const useChatStore = defineStore('chat', () => {
    * 流式发送消息。
    * 通过 SSE 接收逐 token 推送，实时更新界面。
    */
-  async function sendMessageStream(content: string) {
-    if (!currentSession.value) return
+  async function sendMessageStream(content: string): Promise<ChatSendOutcome> {
+    if (!currentSession.value) return 'failed'
+    const result: { outcome: ChatSendOutcome } = { outcome: 'failed' }
     const targetSession = currentSession.value
     const sessionId = targetSession.id
     const temporary = isTemporary.value
+    const sendingTemporaryId = temporaryId.value
     const temporaryHistory = temporary
       ? targetSession.messages.map(({ role, content }) => ({ role, content }))
       : []
@@ -297,8 +368,10 @@ export const useChatStore = defineStore('chat', () => {
     streamSessionId.value = sessionId
 
     // 1. 添加临时用户消息
+    const sendingAttachmentDraftKey = attachmentDraftKey(targetSession, temporary, sendingTemporaryId)
     const attachmentsToSend = [...pendingAttachments.value]
     pendingAttachments.value = []
+    if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, [])
     let persistedUserMessage = false
     let shouldRestoreAttachments = false
     const attachmentNote = attachmentsToSend.length > 0
@@ -392,6 +465,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'done':
+            result.outcome = 'completed'
             // done 自带完整正文。即使临时渲染对象被刷新/替换，也能可靠落入消息列表。
             const finalMsg: ChatMessage = {
               id: temporary ? nextTemporaryMessageId-- : event.data.messageId,
@@ -423,6 +497,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'error':
+            result.outcome = 'failed'
             // 出错时清除 streamMessage 占位，给用户提示
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
@@ -434,6 +509,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       await sendStream
     } catch (e: any) {
+      result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
       const wasExecutingTool = toolCalls.value.length > 0
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
@@ -445,8 +521,20 @@ export const useChatStore = defineStore('chat', () => {
           : '对话连接意外中断，请重试；已发送的用户消息仍会保留')
       }
     } finally {
+      if (abortController.signal.aborted && result.outcome !== 'completed') result.outcome = 'stopped'
+      if (result.outcome === 'failed' && !persistedUserMessage) {
+        const index = targetSession.messages.findIndex((message) => message.id === tempUserMsg.id)
+        if (index >= 0) targetSession.messages.splice(index, 1)
+      }
+      const stillInSendingSession = currentSession.value?.id === sessionId
+        && (!temporary || temporaryId.value === sendingTemporaryId)
       if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
-        pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
+        const existing = sendingAttachmentDraftKey
+          ? attachmentDrafts.get(sendingAttachmentDraftKey) ?? []
+          : []
+        const restored = [...attachmentsToSend, ...existing]
+        if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, restored)
+        if (stillInSendingSession) pendingAttachments.value = restored
       }
       sending.value = false
       currentToolCall.value = ''
@@ -465,6 +553,7 @@ export const useChatStore = defineStore('chat', () => {
         currentSession.value = targetSession
       }
     }
+    return result.outcome
   }
 
   async function updateTitle(sessionId: number, title: string) {
@@ -481,11 +570,13 @@ export const useChatStore = defineStore('chat', () => {
    * Agent 模式流式发送消息。
    * 执行工具调用并流式返回结果。
    */
-  async function sendAgentMessageStream(content: string) {
-    if (!currentSession.value) return
+  async function sendAgentMessageStream(content: string): Promise<ChatSendOutcome> {
+    if (!currentSession.value) return 'failed'
+    const result: { outcome: ChatSendOutcome } = { outcome: 'failed' }
     const targetSession = currentSession.value
     const sessionId = targetSession.id
     const temporary = isTemporary.value
+    const sendingTemporaryId = temporaryId.value
     const temporaryHistory = temporary
       ? targetSession.messages.map(({ role, content }) => ({ role, content }))
       : []
@@ -497,8 +588,10 @@ export const useChatStore = defineStore('chat', () => {
     pendingConfirm.value = null
     streamSessionId.value = sessionId
 
+    const sendingAttachmentDraftKey = attachmentDraftKey(targetSession, temporary, sendingTemporaryId)
     const attachmentsToSend = [...pendingAttachments.value]
     pendingAttachments.value = []
+    if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, [])
     let persistedUserMessage = false
     let shouldRestoreAttachments = false
     const agentAttachmentNote = attachmentsToSend.length > 0
@@ -601,6 +694,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'done':
+            result.outcome = 'completed'
             const finalMsg: ChatMessage = {
               id: temporary ? nextTemporaryMessageId-- : event.data.messageId,
               role: 'assistant',
@@ -630,6 +724,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'error':
+            result.outcome = 'failed'
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
             }
@@ -649,6 +744,7 @@ export const useChatStore = defineStore('chat', () => {
         await agentApi.sendAgentMessageStream(sessionId, payload, onEvent, abortController.signal)
       }
     } catch (e: any) {
+      result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
       const wasExecutingTool = toolCalls.value.length > 0
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
@@ -660,8 +756,20 @@ export const useChatStore = defineStore('chat', () => {
           : 'Agent 连接意外中断，请重试')
       }
     } finally {
+      if (abortController.signal.aborted && result.outcome !== 'completed') result.outcome = 'stopped'
+      if (result.outcome === 'failed' && !persistedUserMessage) {
+        const index = targetSession.messages.findIndex((message) => message.id === tempUserMsg.id)
+        if (index >= 0) targetSession.messages.splice(index, 1)
+      }
+      const stillInSendingSession = currentSession.value?.id === sessionId
+        && (!temporary || temporaryId.value === sendingTemporaryId)
       if (shouldRestoreAttachments && attachmentsToSend.length > 0) {
-        pendingAttachments.value = [...attachmentsToSend, ...pendingAttachments.value]
+        const existing = sendingAttachmentDraftKey
+          ? attachmentDrafts.get(sendingAttachmentDraftKey) ?? []
+          : []
+        const restored = [...attachmentsToSend, ...existing]
+        if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, restored)
+        if (stillInSendingSession) pendingAttachments.value = restored
       }
       sending.value = false
       currentToolCall.value = ''
@@ -678,6 +786,7 @@ export const useChatStore = defineStore('chat', () => {
         currentSession.value = targetSession
       }
     }
+    return result.outcome
   }
 
   /** 用户确认/取消危险操作 */
@@ -788,6 +897,7 @@ export const useChatStore = defineStore('chat', () => {
     currentSession,
     isTemporary,
     loading,
+    sessionsLoading,
     sending,
     streamMessage,
     streamSessionId,

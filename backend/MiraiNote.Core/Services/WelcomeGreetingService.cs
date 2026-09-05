@@ -18,7 +18,7 @@ public interface IWelcomeGreetingService
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
     /// <summary>文案池首句；保留常量名供兼容旧测试/引用。</summary>
-    public const string FallbackGreeting = "今天，安静地推进";
+    public const string FallbackGreeting = "今天，AI 正在把不可能改写成日常";
     private const int MaxLength = 60;
     private const string PoolCacheKey = "welcome-greeting-pool";
     private static readonly TimeSpan PoolCacheDuration = TimeSpan.FromMinutes(5);
@@ -30,46 +30,46 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     /// </summary>
     public static readonly string[] GreetingPool =
     [
-        "今天，安静地推进",
-        "今天，只把一件重要的事做好",
-        "慢慢来，但不要停",
-        "先写下一行，再谈后面的事",
-        "今天的节奏，由你自己定",
-        "把注意力收回到眼前这一步",
-        "不必赶完所有，完成最要紧的就好",
-        "深呼吸一次，然后开始",
-        "今天适合稳步向前",
-        "小事做好，也是前进",
-        "给专注留一段不被打断的时间",
-        "今天，少一点焦虑，多一点行动",
-        "先开始，完美稍后再说",
-        "把复杂的事拆小一点",
-        "今天也值得认真对待",
-        "安静工作，比匆忙更有效",
-        "记住你为什么开始",
-        "今天，把能量用在刀刃上",
-        "完成比完美更靠近目标",
-        "允许自己按自己的速度走",
-        "先清理桌面，再清理思绪",
-        "今天，留下一点可见的进展",
-        "不必一次走完，迈出下一步即可",
-        "把今天过成自己能复盘的一天",
-        "少开几个标签页，多做一件实事",
-        "今天适合把拖延换成开始",
-        "专注当下这一刻就够了",
-        "温柔对待自己，认真对待工作",
-        "今天，写清楚再动手",
-        "进展不一定很大，但要真实",
-        "把干扰先放到一边",
-        "今天，做能积累的事",
-        "慢一点，也要把路走对",
-        "先兑现对自己的一个小承诺",
-        "今天的你，比昨天多一点清晰",
-        "把待办收束到三件以内",
-        "安静里，更容易想明白",
-        "今天，给重要的事留出主场",
-        "做完一件，再打开下一件",
-        "今天，也请好好照顾自己的节奏",
+        "今天，AI 正在把不可能改写成日常",
+        "下一个超级个体，或许只差一个会行动的 AI",
+        "AI 的下一站不是回答，而是替你完成",
+        "当 AI 开始理解意图，搜索框就会消失",
+        "未来的办公室，可能只剩人类和一群智能代理",
+        "今天的模型，正在偷偷学会你的工作方式",
+        "最先被 AI 改写的，也许是我们对时间的想象",
+        "AI 不会取代所有人，但会取代拒绝使用它的人",
+        "下一场技术革命，可能从一个私人 AI 开始",
+        "真正的 AI 入口，也许不是屏幕，而是生活本身",
+        "模型越会说话，真正稀缺的越是好问题",
+        "AI 正从工具变成同事，边界正在变薄",
+        "有一天，AI 会比你的待办清单更懂你",
+        "今天训练的每个模型，都在预演一种新文明",
+        "AI 的黄金时代，可能比我们想的更近",
+        "当机器拥有长期记忆，个人知识将变成超能力",
+        "未来最贵的能力，也许是判断什么不该交给 AI",
+        "AI 正在把一个人的想法放大成一支团队",
+        "下一个爆发点，可能是会自己使用工具的模型",
+        "如果 AI 能替你行动，选择将比执行更重要",
+        "模型在变小，能力却在变大，这只是开始",
+        "AI 代理正在醒来，软件将从等待命令变成主动协作",
+        "未来的个人电脑，可能是一位住在云端的伙伴",
+        "AI 让知识变便宜，也让独立思考更昂贵",
+        "下一代应用不会打开，它们会主动出现在你需要时",
+        "AI 的真正终局，或许是让每个人拥有自己的研究院",
+        "今天的自动化，可能是明天的日常生活",
+        "当 AI 开始做梦，人类会重新定义创造力吗",
+        "未来不是人类对抗 AI，而是人类选择与谁协作",
+        "AI 正在重写软件，下一页可能由它自己来写",
+        "一个人的生产力上限，正在被 AI 重新估算",
+        "最危险的 AI 不是最聪明的，而是最容易被信任的",
+        "AI 会让普通人的想法第一次拥有工业级执行力",
+        "如果未来突然提前，今天可能就是它的序章",
+        "AI 正在从云端下沉到每一台设备、每一个日常决定",
+        "真正的智能，不是知道答案，而是知道下一步",
+        "AI 的速度已经超过共识，社会正在追赶它",
+        "未来的竞争，不是有没有 AI，而是谁更会定义目标",
+        "当每个人都有 AI 助手，稀缺的将是独特的愿景",
+        "今天，给你的 AI 一个值得完成的任务",
     ];
 
     private readonly MiraiNoteDbContext _db;
@@ -111,9 +111,10 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
                 new
                 {
                     role = "system",
-                    content = "你为 MiraiNote 首页写一句中文欢迎语。只输出文案本身，不要解释、标题或 Markdown。" +
-                              "默认原创，单行且不超过 60 个汉字或字符，语气安静、克制、鼓励行动。" +
-                              "只有在准确知道作者时才可引用名言；引用必须在末尾以“——作者”落款。"
+                    content = "你是 MiraiNote 首页的 AI 前沿观察者与未来预言者，请写一句中文欢迎语。只输出文案本身，不要解释、标题或 Markdown。" +
+                              "内容要贴近当下人工智能产业的真实进展与下一步可能：可关注 OpenAI、Anthropic、Google、SpaceX 等机构的模型、智能体、机器人、算力与航天 AI 动向，也可把这些趋势延伸成大胆预言。" +
+                              "优先写出具体而有画面的技术变化、竞争信号或时代转折；不要捏造未经确认的新闻、产品发布、人物言论或数字。无法确认的内容必须使用‘可能’‘也许’‘正在逼近’‘未来’等推演语气。" +
+                              "默认原创，单行且不超过 60 个汉字或字符，语言简洁、有冲击力和悬念感，让人想继续思考。"
                 },
                 new
                 {
@@ -123,10 +124,17 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
             };
             var greeting = await DeepSeekJsonClient.CompleteAsync(
                 client, _options.Model, messages,
-                temperature: 0.8, maxTokens: 100, jsonObject: false,
-                timeout: GenerateTimeout, ct);
+                temperature: 0.8, maxTokens: 256, jsonObject: false,
+                timeout: GenerateTimeout, ct, disableThinking: true);
 
-            return IsValid(greeting) ? greeting.Trim() : await PickFromPoolAsync(exclude, ct);
+            if (IsValid(greeting))
+                return greeting.Trim();
+
+            _logger.LogWarning(
+                "今日欢迎语生成结果无效，已回退文案池：内容长度 {Length}，包含换行 {HasLineBreak}",
+                greeting.Length,
+                greeting.Contains('\n') || greeting.Contains('\r'));
+            return await PickFromPoolAsync(exclude, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {

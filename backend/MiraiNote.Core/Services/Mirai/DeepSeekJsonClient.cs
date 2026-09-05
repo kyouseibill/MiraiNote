@@ -21,6 +21,7 @@ internal static class DeepSeekJsonClient
     /// <param name="temperature">温度。</param>
     /// <param name="maxTokens">max_tokens。</param>
     /// <param name="jsonObject">true 时携带 response_format=json_object。</param>
+    /// <param name="disableThinking">true 时显式关闭 DeepSeek 思考模式，避免短文案请求只消耗推理预算而没有正文。</param>
     /// <param name="timeout">本次调用整体超时。</param>
     /// <param name="ct">外部取消令牌。</param>
     public static async Task<string> CompleteAsync(
@@ -31,7 +32,8 @@ internal static class DeepSeekJsonClient
         int maxTokens,
         bool jsonObject,
         TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool disableThinking = false)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
@@ -44,6 +46,7 @@ internal static class DeepSeekJsonClient
             ["max_tokens"] = maxTokens,
             ["stream"] = false
         };
+        if (disableThinking) body["thinking"] = new { type = "disabled" };
         if (jsonObject) body["response_format"] = new { type = "json_object" };
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
