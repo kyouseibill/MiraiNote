@@ -8,7 +8,7 @@ const router = useRouter()
 const toast = useToast()
 
 async function handleLogout() {
-  if (!confirm('确定要退出登录吗？')) return
+  // 不用 window.confirm：自动化/部分浏览器会默认取消，导致退出点击无效果。
   try {
     await auth.logout()
     toast.success('已退出登录')
@@ -33,7 +33,7 @@ async function handleLogout() {
           </span>
           <button
             class="px-3 py-1.5 rounded-md text-gray-700 hover:bg-gray-100 transition"
-            @click="handleLogout"
+            data-testid="logout-button" @click="handleLogout"
           >
             退出
           </button>
