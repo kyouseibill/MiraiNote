@@ -8,6 +8,7 @@ import type {
   ChatProject,
   ChatProjectPayload,
   BranchSessionPayload,
+  ToolCallEvent,
 } from '@/types/chat'
 import { chatApi } from '@/api/chat'
 import { agentApi } from '@/api/agent'
@@ -43,14 +44,8 @@ export const useChatStore = defineStore('chat', () => {
   // 流式回复所属的会话 ID（用于防止切换会话时内容显示到错误会话）
   const streamSessionId = ref<number | null>(null)
 
-  // 并行工具调用列表
-  const toolCalls = ref<{
-    id: string
-    name: string
-    label: string
-    detail?: string
-    elapsedSeconds?: number
-  }[]>([])
+  // 并行/串行工具调用事件（含已完成，供 Work 模式事件卡展示）
+  const toolCalls = ref<ToolCallEvent[]>([])
 
   // 上下文用量
   const contextUsage = ref<{ estimatedTokens: number; maxTokens: number; percentUsed: number; messageCount: number } | null>(null)
@@ -436,12 +431,7 @@ export const useChatStore = defineStore('chat', () => {
           case 'tool_call': {
             const label = getToolLabel(event.data.name)
             currentToolCall.value = `🔧 正在${label}…`
-            toolCalls.value.push({
-              id: event.data.id || event.data.name,
-              name: event.data.name,
-              label,
-              detail: '正在启动…',
-            })
+            upsertRunningToolCall(event.data, label)
             break
           }
 
@@ -452,16 +442,16 @@ export const useChatStore = defineStore('chat', () => {
           }
 
           case 'heartbeat':
-            if (!streamedContent && toolCalls.value.length === 0) {
+            if (!streamedContent && !hasRunningToolCalls()) {
               currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             }
             break
 
           case 'tool_result':
-            // 工具执行完成，清除提示
+            // 工具执行完成：保留事件卡并更新状态，供 Work 模式独立展示
             currentToolCall.value = ''
             collectExportedFile(event.data, exportedFiles)
-            removeCompletedToolCall(event.data)
+            completeToolCall(event.data)
             break
 
           case 'done':
@@ -475,6 +465,7 @@ export const useChatStore = defineStore('chat', () => {
                 exportedFiles,
               ),
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
+              toolEvents: snapshotToolEvents(),
             }
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
             if (finalIdx >= 0) {
@@ -510,7 +501,7 @@ export const useChatStore = defineStore('chat', () => {
       await sendStream
     } catch (e: any) {
       result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
-      const wasExecutingTool = toolCalls.value.length > 0
+      const wasExecutingTool = hasRunningToolCalls()
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
       }
@@ -649,12 +640,7 @@ export const useChatStore = defineStore('chat', () => {
           case 'tool_call': {
             const label = getToolLabel(event.data.name)
             currentToolCall.value = `🔧 正在${label}…`
-            toolCalls.value.push({
-              id: event.data.id || event.data.name,
-              name: event.data.name,
-              label,
-              detail: '正在启动…',
-            })
+            upsertRunningToolCall(event.data, label)
             break
           }
 
@@ -664,7 +650,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'heartbeat':
-            if (!streamedContent && toolCalls.value.length === 0) {
+            if (!streamedContent && !hasRunningToolCalls()) {
               currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             }
             break
@@ -672,7 +658,7 @@ export const useChatStore = defineStore('chat', () => {
           case 'tool_result':
             currentToolCall.value = ''
             collectExportedFile(event.data, exportedFiles)
-            removeCompletedToolCall(event.data)
+            completeToolCall(event.data)
             break
 
           case 'confirm':
@@ -703,6 +689,7 @@ export const useChatStore = defineStore('chat', () => {
                 exportedFiles,
               ),
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
+              toolEvents: snapshotToolEvents(),
             }
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
             if (finalIdx >= 0) {
@@ -745,7 +732,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     } catch (e: any) {
       result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
-      const wasExecutingTool = toolCalls.value.length > 0
+      const wasExecutingTool = hasRunningToolCalls()
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
       }
@@ -811,18 +798,61 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function hasRunningToolCalls() {
+    return toolCalls.value.some((tool) => tool.status === 'running')
+  }
+
+  function snapshotToolEvents(): ToolCallEvent[] | undefined {
+    if (toolCalls.value.length === 0) return undefined
+    return toolCalls.value.map((tool) => ({ ...tool }))
+  }
+
+  function findToolCallIndex(data: any) {
+    const id = String(data?.id || data?.toolCallId || '')
+    const name = String(data?.name || '')
+    return toolCalls.value.findIndex((tool) =>
+      (id && tool.id === id) || (name && tool.name === name),
+    )
+  }
+
+  function upsertRunningToolCall(data: any, label: string) {
+    const id = String(data?.id || data?.name || '')
+    const name = String(data?.name || '')
+    const inputSummary = summarizeToolInput(name, data?.arguments)
+    const index = findToolCallIndex(data)
+    const next: ToolCallEvent = {
+      id: id || name,
+      name,
+      label,
+      status: 'running',
+      detail: '正在启动…',
+      inputSummary: inputSummary || undefined,
+    }
+    if (index >= 0) {
+      toolCalls.value[index] = {
+        ...toolCalls.value[index],
+        ...next,
+        // 保留已有进度文案（极少见的重复 tool_call）
+        detail: toolCalls.value[index].status === 'running'
+          ? (toolCalls.value[index].detail || next.detail)
+          : next.detail,
+      }
+      return
+    }
+    toolCalls.value.push(next)
+  }
+
   function updateToolProgress(data: any) {
     const id = String(data?.id || data?.toolCallId || data?.name || '')
     const name = String(data?.name || '')
-    const index = toolCalls.value.findIndex((tool) =>
-      (id && tool.id === id) || (name && tool.name === name),
-    )
+    const index = findToolCallIndex(data)
     const detail = String(data?.message || '任务仍在处理中…')
     const elapsedSeconds = Number(data?.elapsedSeconds || 0)
 
     if (index >= 0) {
       toolCalls.value[index] = {
         ...toolCalls.value[index],
+        status: 'running',
         detail,
         elapsedSeconds,
       }
@@ -833,21 +863,41 @@ export const useChatStore = defineStore('chat', () => {
       id: id || name,
       name,
       label: getToolLabel(name),
+      status: 'running',
       detail,
       elapsedSeconds,
     })
   }
 
-  function removeCompletedToolCall(data: any) {
-    const id = String(data?.toolCallId || '')
+  function completeToolCall(data: any) {
+    const id = String(data?.toolCallId || data?.id || '')
     const name = String(data?.name || '')
-    if (!id && !name) {
-      toolCalls.value = []
+    const { summary, failed, detail } = summarizeToolResult(data?.result)
+    const index = findToolCallIndex(data)
+
+    if (index >= 0) {
+      const prev = toolCalls.value[index]
+      toolCalls.value[index] = {
+        ...prev,
+        status: failed ? 'failure' : 'success',
+        detail: failed ? (prev.detail || '执行失败') : (prev.detail || '已完成'),
+        resultSummary: summary,
+        errorDetail: failed ? detail : undefined,
+      }
       return
     }
-    toolCalls.value = toolCalls.value.filter((tool) =>
-      !((id && tool.id === id) || (name && tool.name === name)),
-    )
+
+    if (!id && !name) return
+
+    toolCalls.value.push({
+      id: id || name,
+      name,
+      label: getToolLabel(name),
+      status: failed ? 'failure' : 'success',
+      detail: failed ? '执行失败' : '已完成',
+      resultSummary: summary,
+      errorDetail: failed ? detail : undefined,
+    })
   }
 
   /** 工具名称 → 中文描述 */
@@ -945,6 +995,87 @@ interface ExportedFileLink {
   fileName: string
   url: string
   markdown: string
+}
+
+
+function summarizeToolInput(_name: string, argsRaw: unknown): string {
+  try {
+    const args = typeof argsRaw === 'string'
+      ? (argsRaw.trim() ? JSON.parse(argsRaw) : null)
+      : argsRaw
+    if (!args || typeof args !== 'object') {
+      const raw = String(argsRaw ?? '').replace(/\s+/g, ' ').trim()
+      return raw.length > 120 ? `${raw.slice(0, 120)}…` : raw
+    }
+    const record = args as Record<string, unknown>
+    const preferred = [
+      'query', 'keyword', 'q', 'command', 'path', 'filePath', 'filename', 'fileName',
+      'url', 'content', 'title', 'expression', 'city', 'to', 'subject', 'id',
+      'memoId', 'logId', 'status', 'format',
+    ]
+    const parts: string[] = []
+    for (const key of preferred) {
+      if (record[key] == null) continue
+      let value = String(record[key]).replace(/\s+/g, ' ').trim()
+      if (!value) continue
+      if (value.length > 80) value = `${value.slice(0, 80)}…`
+      parts.push(`${key}: ${value}`)
+      if (parts.length >= 2) break
+    }
+    if (parts.length === 0) {
+      for (const [key, raw] of Object.entries(record).slice(0, 2)) {
+        let value = String(raw).replace(/\s+/g, ' ').trim()
+        if (!value) continue
+        if (value.length > 60) value = `${value.slice(0, 60)}…`
+        parts.push(`${key}: ${value}`)
+      }
+    }
+    return parts.join(' · ')
+  } catch {
+    const raw = String(argsRaw ?? '').replace(/\s+/g, ' ').trim()
+    return raw.length > 120 ? `${raw.slice(0, 120)}…` : raw
+  }
+}
+
+function isToolFailureResult(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  const head = t.slice(0, 240)
+  if (/^用户拒绝/.test(t)) return true
+  if (/^(导出失败|工具执行失败|执行失败|错误[:：]|Error\b|Exception\b)/i.test(t)) return true
+  try {
+    const parsed = JSON.parse(t)
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.success === false || parsed.ok === false) return true
+      if (typeof parsed.error === 'string' && parsed.error.trim()) return true
+    }
+  } catch {
+    // not JSON
+  }
+  // 开头明确失败语义；避免正文里偶然出现「错误」误判
+  if (/(失败|出错|异常|拒绝了此操作|Traceback|PERMISSION_DENIED)/i.test(head)
+    && !/(已成功|成功完成|创建成功|更新成功|删除成功|找到\s*\d+)/i.test(head.slice(0, 80))) {
+    return true
+  }
+  return false
+}
+
+function summarizeToolResult(result: unknown): { summary: string; failed: boolean; detail?: string } {
+  let text = ''
+  if (typeof result === 'string') text = result
+  else if (result == null) text = ''
+  else {
+    try { text = JSON.stringify(result) } catch { text = String(result) }
+  }
+  const failed = isToolFailureResult(text)
+  let summary = text.replace(/\s+/g, ' ').trim()
+  if (summary.length > 140) summary = `${summary.slice(0, 140)}…`
+  if (!summary) summary = failed ? '执行失败' : '已完成'
+  return {
+    summary,
+    failed,
+    detail: failed ? text.slice(0, 4000) : undefined,
+  }
 }
 
 function collectExportedFile(data: any, target: ExportedFileLink[]) {

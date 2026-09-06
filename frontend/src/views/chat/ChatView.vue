@@ -15,7 +15,7 @@ import {
 import { chatApi } from '@/api/chat'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
-import type { ChatMessage, ChatProject } from '@/types/chat'
+import type { ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -192,6 +192,29 @@ function readInitialUiMode(): ChatUiMode {
 }
 const uiMode = ref<ChatUiMode>(readInitialUiMode())
 const isWorkMode = computed(() => uiMode.value === 'work')
+
+const toolStatusLabel: Record<ToolCallEvent['status'], string> = {
+  running: '运行中',
+  success: '成功',
+  failure: '失败',
+}
+
+function toolEventsForMessage(msg: { streaming?: boolean; toolEvents?: ToolCallEvent[] }): ToolCallEvent[] {
+  if (msg.streaming) return store.toolCalls
+  return msg.toolEvents ?? []
+}
+
+function toolEventsSummary(events: ToolCallEvent[]) {
+  const running = events.filter((e) => e.status === 'running').length
+  const success = events.filter((e) => e.status === 'success').length
+  const failure = events.filter((e) => e.status === 'failure').length
+  const parts: string[] = [`${events.length} 项`]
+  if (running) parts.push(`${running} 运行中`)
+  if (success) parts.push(`${success} 成功`)
+  if (failure) parts.push(`${failure} 失败`)
+  return parts.join(' · ')
+}
+
 function setUiMode(mode: ChatUiMode) {
   if (uiMode.value === mode) return
   uiMode.value = mode
@@ -1105,7 +1128,7 @@ watch(
   [
     () => store.currentSession?.messages.length,
     () => store.streamMessage?.content,
-    () => store.toolCalls.length,
+    () => store.toolCalls.map((t) => `${t.id}:${t.status}:${t.detail ?? ''}:${t.resultSummary ?? ''}`).join('|'),
   ],
   () => {
     if (atBottom.value) void scrollToBottom()
@@ -1442,37 +1465,90 @@ async function reloadConversations() {
                     </summary>
                     <div class="chat-markdown" v-html="safeMarkdown(msg.thinking)" @click="onMessageLinkClick" />
                   </details>
+                  <div
+                    v-if="toolEventsForMessage(msg).length && isWorkMode"
+                    class="chat-tool-events"
+                    data-testid="chat-tool-list"
+                  >
+                    <article
+                      v-for="tc in toolEventsForMessage(msg)"
+                      :key="tc.id"
+                      class="chat-tool-card"
+                      :class="'is-' + tc.status"
+                      :data-tool-status="tc.status"
+                      :data-tool-name="tc.name"
+                    >
+                      <header class="chat-tool-card-head">
+                        <IconLoader2 v-if="tc.status === 'running'" :size="15" class="chat-spin" />
+                        <IconCheck v-else-if="tc.status === 'success'" :size="15" />
+                        <IconX v-else :size="15" />
+                        <div class="chat-tool-card-title">
+                          <strong>{{ tc.label }}</strong>
+                          <code v-if="tc.name && tc.name !== tc.label" class="chat-tool-card-name">{{
+                            tc.name
+                          }}</code>
+                        </div>
+                        <span class="chat-tool-card-status">{{ toolStatusLabel[tc.status] }}</span>
+                        <small v-if="tc.elapsedSeconds" class="chat-tool-card-elapsed"
+                          >{{ tc.elapsedSeconds }}s</small
+                        >
+                      </header>
+                      <p v-if="tc.inputSummary" class="chat-tool-card-meta">
+                        <span class="chat-tool-card-k">参数</span>{{ tc.inputSummary }}
+                      </p>
+                      <p
+                        v-if="tc.status === 'running' && tc.detail"
+                        class="chat-tool-card-meta is-progress"
+                      >
+                        <span class="chat-tool-card-k">进度</span>{{ tc.detail }}
+                      </p>
+                      <p v-if="tc.resultSummary && tc.status !== 'running'" class="chat-tool-card-meta">
+                        <span class="chat-tool-card-k">结果</span>{{ tc.resultSummary }}
+                      </p>
+                      <details
+                        v-if="tc.status === 'failure' && tc.errorDetail"
+                        class="chat-tool-card-error"
+                      >
+                        <summary>失败详情</summary>
+                        <pre>{{ tc.errorDetail }}</pre>
+                      </details>
+                    </article>
+                  </div>
+                  <details
+                    v-else-if="toolEventsForMessage(msg).length && !isWorkMode"
+                    class="chat-tool-events is-collapsed"
+                    data-testid="chat-tool-list-collapsed"
+                  >
+                    <summary
+                      >工具过程（已折叠）· {{ toolEventsSummary(toolEventsForMessage(msg)) }}</summary
+                    >
+                    <article
+                      v-for="tc in toolEventsForMessage(msg)"
+                      :key="tc.id"
+                      class="chat-tool-card is-compact"
+                      :class="'is-' + tc.status"
+                      :data-tool-status="tc.status"
+                    >
+                      <header class="chat-tool-card-head">
+                        <IconLoader2 v-if="tc.status === 'running'" :size="14" class="chat-spin" />
+                        <IconCheck v-else-if="tc.status === 'success'" :size="14" />
+                        <IconX v-else :size="14" />
+                        <div class="chat-tool-card-title">
+                          <strong>{{ tc.label }}</strong>
+                        </div>
+                        <span class="chat-tool-card-status">{{ toolStatusLabel[tc.status] }}</span>
+                      </header>
+                      <p v-if="tc.inputSummary || tc.resultSummary" class="chat-tool-card-meta">
+                        {{ tc.inputSummary || tc.resultSummary }}
+                      </p>
+                    </article>
+                  </details>
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
                   <div v-if="msg.streaming && !msg.answer" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{
                       store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
                     }}</span>
                   </div>
-                  <div
-                    v-if="msg.streaming && store.toolCalls.length && isWorkMode"
-                    class="chat-tool-list"
-                    data-testid="chat-tool-list"
-                  >
-                    <div v-for="tc in store.toolCalls" :key="tc.id">
-                      <IconLoader2 :size="14" class="chat-spin" /><span
-                        ><strong>{{ tc.label }}</strong
-                        ><small>{{ tc.detail || '正在处理，请稍候…' }}</small></span
-                      >
-                    </div>
-                  </div>
-                  <details
-                    v-else-if="msg.streaming && store.toolCalls.length && !isWorkMode"
-                    class="chat-tool-list is-collapsed"
-                    data-testid="chat-tool-list-collapsed"
-                  >
-                    <summary>工具过程（已折叠）· {{ store.toolCalls.length }} 项</summary>
-                    <div v-for="tc in store.toolCalls" :key="tc.id">
-                      <IconLoader2 :size="14" class="chat-spin" /><span
-                        ><strong>{{ tc.label }}</strong
-                        ><small>{{ tc.detail || '正在处理，请稍候…' }}</small></span
-                      >
-                    </div>
-                  </details>
                 </div>
                 <div v-if="!msg.streaming" class="chat-message-actions">
                   <button
