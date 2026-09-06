@@ -397,6 +397,58 @@
   color: var(--chat-text-secondary);
   font-size: 10px;
 }
+.chat-mode-switch {
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--mn-line);
+  border-radius: 7px;
+  background: var(--mn-paper-light);
+}
+.chat-mode-switch button {
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--chat-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chat-mode-switch button.is-active {
+  background: #fff;
+  color: var(--mn-indigo-dark);
+  box-shadow: 0 0 0 1px rgba(76, 97, 120, 0.12);
+}
+.chat-mode-switch button:focus-visible {
+  outline: 2px solid var(--mn-indigo);
+  outline-offset: 1px;
+}
+.chat-files-button.is-emphasized {
+  border-color: rgba(76, 97, 120, 0.35);
+  color: var(--mn-indigo-dark);
+  background: #edf0f2;
+}
+.chat-tool-list.is-collapsed {
+  margin-top: 12px;
+  border: 1px solid var(--mn-line);
+  border-radius: 6px;
+  background: var(--mn-paper-light);
+  padding: 0 10px 8px;
+}
+.chat-tool-list.is-collapsed > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 2px;
+  font-size: 11px;
+  color: var(--chat-text-secondary);
+}
+.chat-tool-list.is-collapsed > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-shell.is-mode-work .chat-files-button {
+  font-weight: 500;
+}
 .chat-files-button {
   flex-shrink: 0;
   display: flex;

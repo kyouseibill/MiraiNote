@@ -204,6 +204,30 @@ const projectForm = reactive({ name: '', instructions: '', color: '#4c6178', ico
 const showArtifacts = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 const sidebarCollapsed = ref(false)
+
+/** Chat / Work 双模式：会话数据共用，只改默认 UI 侧重。 */
+const CHAT_UI_MODE_KEY = 'mirainote:chat:uiMode'
+type ChatUiMode = 'chat' | 'work'
+function readInitialUiMode(): ChatUiMode {
+  try {
+    const saved = localStorage.getItem(CHAT_UI_MODE_KEY)
+    if (saved === 'chat' || saved === 'work') return saved
+  } catch {
+    // private mode / quota
+  }
+  return 'chat'
+}
+const uiMode = ref<ChatUiMode>(readInitialUiMode())
+const isWorkMode = computed(() => uiMode.value === 'work')
+function setUiMode(mode: ChatUiMode) {
+  if (uiMode.value === mode) return
+  uiMode.value = mode
+  try {
+    localStorage.setItem(CHAT_UI_MODE_KEY, mode)
+  } catch {
+    // ignore
+  }
+}
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const searchRef = ref<HTMLInputElement | null>(null)
 const searchComposing = ref(false)
@@ -1072,7 +1096,7 @@ async function reloadConversations() {
 </script>
 
 <template>
-  <div class="chat-shell" data-testid="chat-shell" @keydown.esc="closeSessionMenu">
+  <div class="chat-shell" data-testid="chat-shell" :class="isWorkMode ? 'is-mode-work' : 'is-mode-chat'" :data-chat-mode="uiMode" @keydown.esc="closeSessionMenu">
     <div v-if="renderError" class="chat-render-error" role="alert">
       <p>{{ renderError }}</p>
       <button class="chat-btn" @click="renderError = null">重试</button>
@@ -1273,12 +1297,35 @@ async function reloadConversations() {
                 ? '临时聊天 · 内容不保存'
                 : isCurrentStreaming
                   ? '正在回复…'
-                  : '给想法一点生长的空间'
+                  : isWorkMode
+                    ? '工作台 · 工具与文件更醒目'
+                    : '给想法一点生长的空间'
             }}
           </p>
         </div>
+        <div class="chat-mode-switch" role="group" aria-label="对话模式">
+          <button
+            type="button"
+            data-testid="chat-mode-chat"
+            :class="{ 'is-active': !isWorkMode }"
+            :aria-pressed="!isWorkMode"
+            @click="setUiMode('chat')"
+          >
+            对话
+          </button>
+          <button
+            type="button"
+            data-testid="chat-mode-work"
+            :class="{ 'is-active': isWorkMode }"
+            :aria-pressed="isWorkMode"
+            @click="setUiMode('work')"
+          >
+            工作
+          </button>
+        </div>
         <button
           class="chat-files-button"
+          :class="{ 'is-emphasized': isWorkMode }"
           aria-label="对话文件"
           :aria-expanded="showArtifacts"
           @click="showArtifacts = true"
@@ -1354,7 +1401,11 @@ async function reloadConversations() {
                       store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
                     }}</span>
                   </div>
-                  <div v-if="msg.streaming && store.toolCalls.length" class="chat-tool-list">
+                  <div
+                    v-if="msg.streaming && store.toolCalls.length && isWorkMode"
+                    class="chat-tool-list"
+                    data-testid="chat-tool-list"
+                  >
                     <div v-for="tc in store.toolCalls" :key="tc.id">
                       <IconLoader2 :size="14" class="chat-spin" /><span
                         ><strong>{{ tc.label }}</strong
@@ -1362,6 +1413,19 @@ async function reloadConversations() {
                       >
                     </div>
                   </div>
+                  <details
+                    v-else-if="msg.streaming && store.toolCalls.length && !isWorkMode"
+                    class="chat-tool-list is-collapsed"
+                    data-testid="chat-tool-list-collapsed"
+                  >
+                    <summary>工具过程（已折叠）· {{ store.toolCalls.length }} 项</summary>
+                    <div v-for="tc in store.toolCalls" :key="tc.id">
+                      <IconLoader2 :size="14" class="chat-spin" /><span
+                        ><strong>{{ tc.label }}</strong
+                        ><small>{{ tc.detail || '正在处理，请稍候…' }}</small></span
+                      >
+                    </div>
+                  </details>
                 </div>
                 <div v-if="!msg.streaming" class="chat-message-actions">
                   <button
