@@ -575,8 +575,24 @@ public class ChatService : IChatService
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
         // 3. 流式调用 DeepSeek（含 Function Calling 循环）
-        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
-            userId, history, request, callback, ct);
+        var partial = new StringBuilder();
+        var trackingCallback = TrackTokenCallback(callback, partial);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAsync(
+                userId, history, request, trackingCallback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await PersistStoppedAssistantAsync(sessionId, session, partial.ToString(), callback);
+            return;
+        }
+        if (ct.IsCancellationRequested)
+        {
+            await PersistStoppedAssistantAsync(sessionId, session, partial.ToString(), callback);
+            return;
+        }
 
         // 4. 存储 AI 回复
         var assistantMsg = new ChatMessage
@@ -622,8 +638,17 @@ public class ChatService : IChatService
             return;
         }
         var history = BuildTemporaryHistory(request);
-        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
-            userId, history, request, callback, ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAsync(
+                userId, history, request, callback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         await callback("done", JsonSerializer.Serialize(new
         {
@@ -704,14 +729,30 @@ public class ChatService : IChatService
         int toolCallCount = 0;
         bool skipConfirm = request.SkipConfirmation;
 
-        async Task WrappedCallback(string eventType, string data)
+        var partial = new StringBuilder();
+        async Task TrackingWrapped(string eventType, string data)
         {
             if (eventType == "tool_call") toolCallCount++;
+            if (eventType == "token") AppendTokenContent(partial, data);
             await callback(eventType, data);
         }
 
-        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId, history, request, WrappedCallback, skipConfirm, confirmCallback, ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+                userId, history, request, TrackingWrapped, skipConfirm, confirmCallback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await PersistStoppedAssistantAsync(sessionId, session, partial.ToString(), callback);
+            return;
+        }
+        if (ct.IsCancellationRequested)
+        {
+            await PersistStoppedAssistantAsync(sessionId, session, partial.ToString(), callback);
+            return;
+        }
 
         // 存储 AI 回复
         var assistantMsg = new ChatMessage { SessionId = sessionId, Role = "assistant", Content = assistantContent };
@@ -798,14 +839,23 @@ public class ChatService : IChatService
             }
         }
 
-        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId,
-            history,
-            request,
-            callback,
-            request.SkipConfirmation,
-            confirmCallback,
-            ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+                userId,
+                history,
+                request,
+                callback,
+                request.SkipConfirmation,
+                confirmCallback,
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         // 临时聊天刻意跳过 AutoExtractAsync，避免从临时内容生成长期记忆。
         await callback("done", JsonSerializer.Serialize(new
@@ -1125,6 +1175,8 @@ public class ChatService : IChatService
 
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var body = new
             {
                 model = _deepSeekOptions.Model,
@@ -1225,6 +1277,7 @@ public class ChatService : IChatService
                         }
                     }
 
+                    ct.ThrowIfCancellationRequested();
                     var result = await ExecuteToolWithProgressAsync(
                         userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
                     CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
@@ -1493,6 +1546,8 @@ public class ChatService : IChatService
 
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var body = new
             {
                 model = _deepSeekOptions.Model,
@@ -1567,6 +1622,7 @@ public class ChatService : IChatService
                         id = tc.Id
                     }));
 
+                    ct.ThrowIfCancellationRequested();
                     var result = await ExecuteToolWithProgressAsync(
                         userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
                     CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
@@ -1616,6 +1672,7 @@ public class ChatService : IChatService
 
         while (await reader.ReadLineAsync(idleCts.Token) is { } line)
         {
+            ct.ThrowIfCancellationRequested();
             idleCts.CancelAfter(TimeSpan.FromMinutes(5));
             if (string.IsNullOrEmpty(line)) continue;
 
@@ -1848,6 +1905,8 @@ public class ChatService : IChatService
         var exportedFiles = new List<ExportedFileLink>();
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var bodyJson = JsonSerializer.Serialize(new
             {
                 model = _deepSeekOptions.Model,
@@ -2878,6 +2937,76 @@ public class ChatService : IChatService
         CreatedAt = s.CreatedAt,
         UpdatedAt = s.UpdatedAt
     };
+
+    private const string StoppedAssistantMarker = "（已停止）";
+
+    private static ChatStreamCallback TrackTokenCallback(ChatStreamCallback inner, StringBuilder partial) =>
+        (eventType, data) =>
+        {
+            if (eventType == "token") AppendTokenContent(partial, data);
+            return inner(eventType, data);
+        };
+
+    private static void AppendTokenContent(StringBuilder partial, string data)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(data);
+            if (doc.RootElement.TryGetProperty("content", out var contentEl) &&
+                contentEl.ValueKind == JsonValueKind.String)
+            {
+                var token = contentEl.GetString();
+                if (!string.IsNullOrEmpty(token))
+                    partial.Append(token);
+            }
+        }
+        catch (JsonException)
+        {
+            // ignore malformed token frames
+        }
+    }
+
+    /// <summary>
+    /// 用户已落库但生成被取消时，写入一条「已停止」助手消息，封闭未完成回合，
+    /// 避免下一条短消息在历史里继续挂靠旧长任务。
+    /// </summary>
+    private async Task PersistStoppedAssistantAsync(
+        int sessionId,
+        ChatSession session,
+        string partialContent,
+        ChatStreamCallback callback)
+    {
+        var body = string.IsNullOrWhiteSpace(partialContent)
+            ? StoppedAssistantMarker
+            : partialContent.TrimEnd() + "\n\n" + StoppedAssistantMarker;
+
+        var assistantMsg = new ChatMessage
+        {
+            SessionId = sessionId,
+            Role = "assistant",
+            Content = body
+        };
+        _db.ChatMessages.Add(assistantMsg);
+        session.UpdatedAt = DateTime.UtcNow;
+        // ct 可能已取消：持久化必须用独立 token，否则会丢停止标记。
+        await _db.SaveChangesAsync(CancellationToken.None);
+
+        try
+        {
+            await callback("stopped", JsonSerializer.Serialize(new
+            {
+                message = "已停止",
+                messageId = assistantMsg.Id,
+                content = body,
+                title = session.Title,
+                createdAt = assistantMsg.CreatedAt
+            }));
+        }
+        catch
+        {
+            // 客户端可能已断开，忽略写帧失败。
+        }
+    }
 
     private static ChatMessageDto MapMessage(ChatMessage m) => new()
     {

@@ -13,6 +13,7 @@ export type AgentSseEventType =
   | 'confirm'
   | 'context'
   | 'done'
+  | 'stopped'
   | 'error'
 
 export interface AgentPlanData {

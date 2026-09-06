@@ -28,6 +28,8 @@ export const useChatStore = defineStore('chat', () => {
   const projects = ref<ChatProject[]>([])
   const selectedProjectId = ref<number | null>(null)
   let activeAbortController: AbortController | null = null
+  /** 递增世代号：停止/新发送后丢弃旧 SSE 事件，防止旧 run 继续写 UI。 */
+  let activeRunId = 0
 
   /**
    * 当前 AI 回复中用于流式显示的临时消息对象。
@@ -272,8 +274,46 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function stopGeneration() {
+    const wasSending = sending.value || !!activeAbortController
+    const session = currentSession.value
+    const temporary = isTemporary.value
+    const tempId = temporaryId.value
+    const partial = streamMessage.value?.content?.trim() ?? ''
+    const streamCreatedAt = streamMessage.value?.createdAt || new Date().toISOString()
+    // 先作废当前 run，再 abort；即使旧 SSE 仍有缓冲帧也不会写入 UI。
+    activeRunId += 1
     activeAbortController?.abort()
     activeAbortController = null
+    pendingConfirm.value = null
+    pendingConfirmSessionId = null
+    pendingConfirmTemporaryId = null
+    const stoppedEvents = snapshotToolEvents()
+    currentToolCall.value = ''
+    toolCalls.value = []
+    streamMessage.value = null
+    streamSessionId.value = null
+    sending.value = false
+
+    // 本地立即封闭本轮，避免下一条短消息在 UI/临时历史上挂靠旧长任务。
+    // 持久会话服务端还会再写一条「已停止」；随后 openSession 刷新会对齐 id。
+    if (wasSending && session) {
+      const content = partial ? `${partial}\n\n（已停止）` : '（已停止）'
+      const stoppedMsg: ChatMessage = {
+        id: temporary ? nextTemporaryMessageId-- : -Date.now(),
+        role: 'assistant',
+        content,
+        createdAt: streamCreatedAt,
+        toolEvents: stoppedEvents,
+      }
+      session.messages.push(stoppedMsg)
+      if (!temporary) sessionDetailsCache.set(session.id, session)
+
+      const stopPromise = temporary
+        ? chatApi.stopTemporaryGeneration(tempId)
+        : chatApi.stopSessionGeneration(session.id)
+      void stopPromise.catch(() => { /* 忽略网络错误，本地已停止 */ })
+    }
+    if (wasSending) toast.info('已停止')
   }
 
   async function deleteSession(sessionId: number) {
@@ -357,6 +397,10 @@ export const useChatStore = defineStore('chat', () => {
       ? targetSession.messages.map(({ role, content }) => ({ role, content }))
       : []
 
+    // 新发送先中止旧本地流；服务端旧 run 由 ChatSessionRunGate.Enter 抢占取消。
+    activeAbortController?.abort()
+    activeAbortController = null
+
     sending.value = true
     currentToolCall.value = ''
     toolCalls.value = []
@@ -392,6 +436,7 @@ export const useChatStore = defineStore('chat', () => {
     const exportedFiles: ExportedFileLink[] = []
     const abortController = new AbortController()
     activeAbortController = abortController
+    const runId = ++activeRunId
 
     // 3. 用 SSE 向服务器发送请求
     try {
@@ -408,6 +453,7 @@ export const useChatStore = defineStore('chat', () => {
         : chatApi.sendMessageStream(sessionId, payload, (event) => handleEvent(event), abortController.signal)
 
       function handleEvent(event: { type: string; data: any }) {
+        if (runId !== activeRunId || abortController.signal.aborted) return
         switch (event.type) {
           case 'user_msg':
             persistedUserMessage = true
@@ -487,6 +533,20 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
+          case 'stopped':
+            result.outcome = 'stopped'
+            commitStoppedAssistant(
+              targetSession,
+              temporary,
+              streamedContent,
+              event.data,
+              activeStreamMessage,
+              exportedFiles,
+            )
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            break
           case 'error':
             result.outcome = 'failed'
             // 出错时清除 streamMessage 占位，给用户提示
@@ -572,6 +632,9 @@ export const useChatStore = defineStore('chat', () => {
       ? targetSession.messages.map(({ role, content }) => ({ role, content }))
       : []
 
+    activeAbortController?.abort()
+    activeAbortController = null
+
     sending.value = true
     currentToolCall.value = ''
     toolCalls.value = []
@@ -608,6 +671,7 @@ export const useChatStore = defineStore('chat', () => {
     const exportedFiles: ExportedFileLink[] = []
     const abortController = new AbortController()
     activeAbortController = abortController
+    const runId = ++activeRunId
 
     try {
       const payload = {
@@ -619,6 +683,7 @@ export const useChatStore = defineStore('chat', () => {
           attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
       }
       const onEvent = (event: { type: string; data: any }) => {
+        if (runId !== activeRunId || abortController.signal.aborted) return
         switch (event.type) {
           case 'user_msg':
             persistedUserMessage = true
@@ -710,6 +775,20 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
+          case 'stopped':
+            result.outcome = 'stopped'
+            commitStoppedAssistant(
+              targetSession,
+              temporary,
+              streamedContent,
+              event.data,
+              activeStreamMessage,
+              exportedFiles,
+            )
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            break
           case 'error':
             result.outcome = 'failed'
             if (streamMessage.value?.id === activeStreamMessage.id) {
@@ -796,6 +875,36 @@ export const useChatStore = defineStore('chat', () => {
         // 忽略网络错误
       }
     }
+  }
+
+
+  function commitStoppedAssistant(
+    targetSession: ChatSessionDetail,
+    temporary: boolean,
+    streamedContent: string,
+    data: any,
+    activeStreamMessage: ChatMessage,
+    exportedFiles: ExportedFileLink[],
+  ) {
+    const serverContent = typeof data?.content === 'string' ? data.content : ''
+    const content = appendExportedFileLinks(
+      preferCompleteContent(streamedContent, serverContent) || '（已停止）',
+      exportedFiles,
+    )
+    const finalContent = content.includes('（已停止）') ? content : `${content.trimEnd()}\n\n（已停止）`
+    const finalMsg: ChatMessage = {
+      id: temporary
+        ? (typeof data?.messageId === 'number' ? data.messageId : nextTemporaryMessageId--)
+        : (typeof data?.messageId === 'number' ? data.messageId : -Date.now()),
+      role: 'assistant',
+      content: finalContent,
+      createdAt: data?.createdAt || activeStreamMessage.createdAt,
+      toolEvents: snapshotToolEvents(),
+    }
+    const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
+    if (finalIdx >= 0) targetSession.messages[finalIdx] = finalMsg
+    else targetSession.messages.push(finalMsg)
+    if (!temporary) sessionDetailsCache.set(targetSession.id, targetSession)
   }
 
   function hasRunningToolCalls() {

@@ -28,13 +28,18 @@ function detail(id, title = `Session ${id}`, projectId = null) {
 }
 
 function createStore(chatOverrides = {}, agentOverrides = {}) {
-  const chatApi = { getSessions: async () => [], ...chatOverrides }
+  const chatApi = {
+    getSessions: async () => [],
+    stopSessionGeneration: async () => {},
+    stopTemporaryGeneration: async () => {},
+    ...chatOverrides,
+  }
   const errors = []
   const module = { exports: {} }
   const load = (id) => {
     if (id === '@/api/chat') return { chatApi }
     if (id === '@/api/agent') return { agentApi: agentOverrides }
-    if (id === '@/composables/useToast') return { useToast: () => ({ error: (text) => errors.push(text) }) }
+    if (id === '@/composables/useToast') return { useToast: () => ({ error: (text) => errors.push(text), info: (text) => errors.push(`info:${text}`), success: () => {}, warning: () => {} }) }
     return require(id)
   }
   vm.runInThisContext(`(function(require, module, exports) { ${outputText}\n})`)(load, module, module.exports)
