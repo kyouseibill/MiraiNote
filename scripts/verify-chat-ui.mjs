@@ -415,7 +415,7 @@ async function runRegression(page, state) {
   await check('temporary-conversation-is-clear-and-not-persisted', async () => {
     const count = state.sessions.length
     await page.getByTestId('chat-sidebar').getByRole('button', { name: /临时聊天/ }).click()
-    await page.getByText('这段对话只留在此刻。关闭或切换后，内容会丢失，不会保存到历史记录。', { exact: true }).waitFor()
+    await page.getByText('关闭即丢、不进列表。关闭或切换后内容不会保存，也不会出现在左侧对话列表。', { exact: true }).waitFor()
     await screenshot(page, 'temporary-desktop')
     await input.fill('你好，这是临时对话')
     await page.getByTestId('chat-send').click()

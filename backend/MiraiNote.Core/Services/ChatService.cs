@@ -2349,6 +2349,18 @@ public class ChatService : IChatService
         var systemPrompt = BuildSystemPrompt(autoMode);
         if (!string.IsNullOrWhiteSpace(request.ContextSnapshot))
             systemPrompt += $"\n\n{request.ContextSnapshot.Trim()}";
+        if (request is TemporaryChatRequest)
+        {
+            systemPrompt += """
+
+                【临时聊天模式 — 必须遵守】
+                - 当前是临时聊天：关闭或切换对话后内容即丢弃，不会保存，也不会进入左侧对话列表。
+                - 向用户说明保存策略时，使用「关闭即丢、不进列表」的明确表述。
+                - 严禁说「无法保证是否保存」「可能不会保存」「不确定是否会保留」等含糊话术。
+                - 不要承诺保存对话、写入历史记录或长期记忆；记忆相关工具在此模式不可用。
+                - 导出文件等写入工作区/exports 的成品仍可生成；那是文件交付，不是对话历史保存。
+                """;
+        }
         if (string.IsNullOrWhiteSpace(request.ProjectInstructions))
             return systemPrompt;
 

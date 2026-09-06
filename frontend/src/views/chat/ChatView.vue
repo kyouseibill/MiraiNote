@@ -11,7 +11,15 @@ import {
   isExportPreviewable,
   isMarkdownExport,
   type ExportPreviewResult,
+  exportApiPath,
 } from '@/composables/useExportDownload'
+import {
+  ACCOUNT_TIMEZONE,
+  ACCOUNT_TIMEZONE_HINT,
+  formatAccountDate,
+  formatAccountDateTime,
+  sessionDateGroup as sessionDateGroupByAccountTz,
+} from '@/utils/accountTime'
 import { chatApi } from '@/api/chat'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
@@ -527,16 +535,7 @@ function artifactPreviewKind(url: string): ExportPreviewResult['kind'] | undefin
 }
 
 function sessionDateGroup(iso: string): string {
-  const date = new Date(iso)
-  const today = new Date()
-  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const days = Math.floor((startToday.getTime() - startDate.getTime()) / 86_400_000)
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7) return '最近 7 天'
-  if (date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth()) return '本月'
-  return `${date.getFullYear()}年${date.getMonth() + 1}月`
+  return sessionDateGroupByAccountTz(iso, ACCOUNT_TIMEZONE)
 }
 
 async function changeProject(event: Event) {
@@ -947,20 +946,31 @@ function onWorkspaceAttach(file: {
 }
 
 function fmtSessionDate(iso: string): string {
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return formatAccountDate(iso, ACCOUNT_TIMEZONE)
 }
 
 function fmtMsgTime(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  const isToday =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
-  if (isToday) return time
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`
+  return formatAccountDateTime(iso, ACCOUNT_TIMEZONE)
+}
+
+const copiedArtifactUrl = ref<string | null>(null)
+
+function artifactPath(url: string): string {
+  return exportApiPath(url) || url
+}
+
+async function copyArtifactPath(url: string) {
+  const path = artifactPath(url)
+  try {
+    await navigator.clipboard.writeText(path)
+    copiedArtifactUrl.value = url
+    toast.success('已复制路径')
+    window.setTimeout(() => {
+      if (copiedArtifactUrl.value === url) copiedArtifactUrl.value = null
+    }, 1600)
+  } catch {
+    toast.error('复制失败，请手动选择路径文字后复制')
+  }
 }
 
 async function scrollToBottom() {
@@ -1254,6 +1264,7 @@ async function reloadConversations() {
           </div>
         </div>
         <div class="chat-session-scroll">
+          <p class="chat-tz-hint" :title="`历史分组按账户时区 ${ACCOUNT_TIMEZONE} 日切`">{{ ACCOUNT_TIMEZONE_HINT }}</p>
           <div v-if="store.sessionsLoading" class="chat-list-state" role="status">
             <IconLoader2 :size="18" class="chat-spin" />正在查找对话…
           </div>
@@ -1322,10 +1333,10 @@ async function reloadConversations() {
           <button
             :class="{ 'is-selected': store.isTemporary }"
             :disabled="store.sending || creatingSession || uploadingFiles.size > 0"
-            title="消息不保存到历史记录"
+            title="关闭即丢、不进列表"
             @click="newTemporarySession"
           >
-            <IconCircleDashed :size="17" /><span>临时聊天</span><span class="chat-subtle">不保存</span>
+            <IconCircleDashed :size="17" /><span>临时聊天</span><span class="chat-subtle">关闭即丢</span>
           </button>
           <button @click="openArchiveManager"><IconArchive :size="17" /><span>归档管理</span></button>
         </div>
@@ -1384,7 +1395,7 @@ async function reloadConversations() {
             <span v-if="currentProject">{{ currentProject.name }}<span aria-hidden="true"> · </span></span
             >{{
               store.isTemporary
-                ? '临时聊天 · 内容不保存'
+                ? '临时聊天 · 关闭即丢、不进列表'
                 : isCurrentStreaming
                   ? '正在回复…'
                   : isWorkMode
@@ -1416,7 +1427,7 @@ async function reloadConversations() {
           <div class="chat-reading-column">
             <div v-if="store.isTemporary" class="chat-temporary-note">
               <IconCircleDashed :size="18" />
-              <p>这段对话只留在此刻。关闭或切换后，内容会丢失，不会保存到历史记录。</p>
+              <p>关闭即丢、不进列表。关闭或切换后内容不会保存，也不会出现在左侧对话列表。</p>
             </div>
             <div v-if="store.loading" class="chat-loading" role="status">
               <IconLoader2 :size="20" class="chat-spin" />正在打开对话…
@@ -1750,6 +1761,17 @@ async function reloadConversations() {
             <p :title="artifact.name">
               {{ artifact.name }}<small>{{ fmtMsgTime(artifact.createdAt) }}</small>
             </p>
+            <button
+              type="button"
+              class="chat-btn chat-artifact-copy"
+              :aria-label="copiedArtifactUrl === artifact.url ? `已复制 ${artifact.name} 路径` : `复制 ${artifact.name} 路径`"
+              :title="copiedArtifactUrl === artifact.url ? '已复制路径' : '复制路径'"
+              @click="copyArtifactPath(artifact.url)"
+            >
+              <IconCheck v-if="copiedArtifactUrl === artifact.url" :size="15" />
+              <IconCopy v-else :size="15" />
+              <span>{{ copiedArtifactUrl === artifact.url ? '已复制' : '复制路径' }}</span>
+            </button>
             <a
               :href="staticUrl(artifact.url)"
               download
@@ -1759,6 +1781,9 @@ async function reloadConversations() {
               ><IconDownload :size="18"
             /></a>
           </div>
+          <code class="chat-artifact-path" :title="artifactPath(artifact.url)">{{
+            artifactPath(artifact.url)
+          }}</code>
           <template v-if="isExportPreviewable(artifact.extension)">
             <p
               v-if="!artifactPreviewOf(artifact.url) || artifactPreviewOf(artifact.url)?.status === 'loading'"
