@@ -71,7 +71,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-[#f6f3ec] text-[#262521]">
+  <div
+    class="flex bg-[#f6f3ec] text-[#262521]"
+    :class="isChatRoute ? 'h-dvh max-h-dvh overflow-hidden' : 'min-h-screen'"
+  >
     <div
       v-if="mobileMenuOpen"
       class="fixed inset-0 z-30 bg-[#262521]/20 backdrop-blur-[2px] lg:hidden"
@@ -128,7 +131,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col" :class="isChatRoute ? 'overflow-hidden' : ''">
       <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-[#e2ddd5] bg-[#fcfbf8]/95 px-4 backdrop-blur-lg lg:hidden">
         <div class="flex min-w-0 items-center gap-3">
           <button
@@ -144,7 +147,7 @@ onBeforeUnmount(() => {
 
       <main
         class="min-h-0 flex-1 bg-[#fcfbf8]"
-        :class="isChatRoute ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'"
+        :class="isChatRoute ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto'"
       >
         <RouterView />
       </main>
