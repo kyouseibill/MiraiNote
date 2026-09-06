@@ -33,4 +33,15 @@ public class ChatSessionRunGateTests
         Assert.False(runA.IsCancellationRequested);
         Assert.False(runB.IsCancellationRequested);
     }
+
+    [Fact]
+    public void Cancel_StopsActiveRunWithoutNewEnter()
+    {
+        var gate = new ChatSessionRunGate();
+        using var linked = new CancellationTokenSource();
+        using var lease = gate.Enter(ChatSessionRunGate.SessionKey(2, 5), linked.Token, out var run);
+        Assert.True(gate.Cancel(ChatSessionRunGate.SessionKey(2, 5)));
+        Assert.True(run.IsCancellationRequested);
+        Assert.False(gate.Cancel(ChatSessionRunGate.SessionKey(2, 5)));
+    }
 }

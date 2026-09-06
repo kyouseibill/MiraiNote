@@ -21,6 +21,7 @@ export type SseEventType =
   | 'tool_result'
   | 'heartbeat'
   | 'done'
+  | 'stopped'
   | 'error'
 
 export interface SseEvent {
@@ -131,6 +132,28 @@ export const chatApi = {
     await consumeSseResponseUntilTerminal(response, (event) => {
       onEvent({ type: event.type as SseEventType, data: event.data })
     }, signal)
+  },
+
+  stopSessionGeneration: async (sessionId: number): Promise<void> => {
+    const token = getAccessToken()
+    await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}/stop`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    })
+  },
+
+  stopTemporaryGeneration: async (temporaryId: string): Promise<void> => {
+    const token = getAccessToken()
+    await fetch(`${API_BASE_URL}/chat/temporary/${encodeURIComponent(temporaryId)}/stop`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    })
   },
 
   /** 无状态临时聊天：上下文随请求发送，服务端不创建会话或保存消息。 */

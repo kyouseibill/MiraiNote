@@ -319,6 +319,32 @@ public class ChatController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 主动停止指定会话当前生成 run（不依赖客户端断开 SSE）。
+    /// </summary>
+    [HttpPost("sessions/{sessionId:int}/stop")]
+    public ActionResult StopSessionGeneration(int sessionId)
+    {
+        var userId = _currentUser.UserId;
+        var cancelled = _runGate.Cancel(ChatSessionRunGate.SessionKey(userId, sessionId));
+        if (_pendingConfirms.TryRemove(sessionId, out var tcs))
+            tcs.TrySetResult(false);
+        return Ok(ApiResponse.Ok(cancelled ? "已停止" : "没有进行中的生成"));
+    }
+
+    /// <summary>
+    /// 主动停止临时聊天当前生成 run。
+    /// </summary>
+    [HttpPost("temporary/{temporaryId}/stop")]
+    public ActionResult StopTemporaryGeneration(string temporaryId)
+    {
+        var userId = _currentUser.UserId;
+        var cancelled = _runGate.Cancel(ChatSessionRunGate.TemporaryKey(userId, temporaryId));
+        if (_temporaryPendingConfirms.TryRemove(temporaryId, out var tcs))
+            tcs.TrySetResult(false);
+        return Ok(ApiResponse.Ok(cancelled ? "已停止" : "没有进行中的生成"));
+    }
+
     [HttpPost("temporary/{temporaryId}/confirm")]
     public ActionResult ConfirmTemporaryToolCall(
         string temporaryId,

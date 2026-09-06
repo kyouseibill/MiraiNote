@@ -28,7 +28,12 @@ function detail(id, title = `Session ${id}`, projectId = null) {
 }
 
 function createStore(chatOverrides = {}, agentOverrides = {}) {
-  const chatApi = { getSessions: async () => [], ...chatOverrides }
+  const chatApi = {
+    getSessions: async () => [],
+    stopSessionGeneration: async () => {},
+    stopTemporaryGeneration: async () => {},
+    ...chatOverrides,
+  }
   const errors = []
   const module = { exports: {} }
   const load = (id) => {

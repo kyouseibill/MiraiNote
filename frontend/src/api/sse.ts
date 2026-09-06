@@ -20,12 +20,20 @@ export class IncompleteSseStreamError extends Error {
 export async function consumeSseResponse(
   response: Response,
   onEvent: ParsedSseCallback,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!response.body) {
     throw new Error('The streaming response has no body')
   }
 
   const reader = response.body.getReader()
+  const onAbort = () => {
+    try { void reader.cancel() } catch { /* ignore */ }
+  }
+  if (signal) {
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  }
   const decoder = new TextDecoder()
   let buffer = ''
 
@@ -99,9 +107,11 @@ export async function consumeSseResponseUntilTerminal(
 
   try {
     await consumeSseResponse(response, (event) => {
-      if (event.type === 'done' || event.type === 'error') terminalReceived = true
+      if (event.type === 'done' || event.type === 'error' || event.type === 'stopped') {
+        terminalReceived = true
+      }
       onEvent(event)
-    })
+    }, signal)
   } catch (error) {
     // The server may close immediately after its terminal event. The user has
     // already received the real result/error, so do not replace it with a
