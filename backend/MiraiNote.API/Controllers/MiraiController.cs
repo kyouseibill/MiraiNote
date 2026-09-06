@@ -143,14 +143,39 @@ public class MiraiController : ControllerBase
     /// <summary>
     /// export_file 工具产出的成品文档下载（exports\{userId}\yyyy\MM\ 布局，
     /// 静态目录之外需鉴权，且仅能下载本人导出）。
+    /// AllowAnonymous：裸深链导航时友好跳转登录/SPA 助手页，避免空白 401 JSON。
     /// </summary>
+    [AllowAnonymous]
     [HttpGet("exports/{*relativePath}")]
     public IActionResult DownloadExport(
         string relativePath,
         [FromServices] IOptions<FileSystemOptions> fsOptions)
     {
+        var normalizedRelative = (relativePath ?? string.Empty)
+            .Replace("\\", "/")
+            .Trim('/');
+
+        if (!_currentUser.IsAuthenticated)
+        {
+            var apiPath = "/api/v1/mirai/exports/" + normalizedRelative;
+            var helperPath = "/export-download?path=" + Uri.EscapeDataString(apiPath);
+            var loginUrl = "/login?redirect=" + Uri.EscapeDataString(helperPath);
+
+            var accept = Request.Headers.Accept.ToString();
+            var hasAuthorization = !string.IsNullOrWhiteSpace(Request.Headers.Authorization);
+            var looksLikeBrowserNavigation =
+                accept.Contains("text/html", StringComparison.OrdinalIgnoreCase)
+                || !hasAuthorization;
+
+            // 浏览器地址栏深链 → 登录后由 SPA 带 token 拉取；API 客户端仍返回明确 401。
+            if (looksLikeBrowserNavigation)
+                return Redirect(loginUrl);
+
+            return Unauthorized(ApiResponse.Fail("请先登录后再下载"));
+        }
+
         var root = Path.GetFullPath(MiraiFileStorage.ExportsRoot(fsOptions.Value));
-        var candidate = Path.GetFullPath(Path.Combine(root, relativePath));
+        var candidate = Path.GetFullPath(Path.Combine(root, normalizedRelative));
         var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!candidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
             || !System.IO.File.Exists(candidate))
@@ -159,7 +184,7 @@ public class MiraiController : ControllerBase
         }
 
         // 相对路径首段为导出归属用户 Id，仅允许本人下载
-        var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var segments = normalizedRelative.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length < 2 || !int.TryParse(segments[0], out var ownerUserId)
             || ownerUserId != _currentUser.UserId)
         {

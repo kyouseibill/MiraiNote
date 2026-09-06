@@ -3,8 +3,16 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, onErr
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { renderMarkdown } from '@/composables/useMarkdown'
+import {
+  downloadExportFile as downloadExportFileBase,
+  fetchExportPreview,
+  fileNameFromUrl,
+  isExportDownload,
+  isExportPreviewable,
+  isMarkdownExport,
+  type ExportPreviewResult,
+} from '@/composables/useExportDownload'
 import { chatApi } from '@/api/chat'
-import { http } from '@/api/auth'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { ChatMessage, ChatProject } from '@/types/chat'
@@ -60,47 +68,12 @@ function safeMarkdown(content: string | null | undefined): string {
   }
 }
 
-function isExportDownload(url: string): boolean {
-  try {
-    return new URL(staticUrl(url), window.location.origin).pathname.includes('/api/v1/mirai/exports/')
-  } catch {
-    return false
-  }
-}
-
-function exportDownloadUrl(url: string): string {
-  const resolved = staticUrl(url)
-  // 旧消息可能保存了具体 IP 与 http 协议。生产环境统一走当前页面的反向代理，
-  // 既避免 HTTPS 页面触发混合内容，也避免跨域请求丢失下载授权。
-  if (!import.meta.env.PROD || !isExportDownload(url)) return resolved
-  const parsed = new URL(resolved, window.location.origin)
-  return `${window.location.origin}${parsed.pathname}${parsed.search}`
-}
-
-function fileNameFromUrl(url: string): string {
-  const name = url.split('/').pop() || '导出文件'
-  try {
-    return decodeURIComponent(name).replace(/^\d{17}_/, '') || '导出文件'
-  } catch {
-    return name
-  }
-}
-
 async function downloadExportFile(url: string, fileName = fileNameFromUrl(url)) {
   try {
-    const response = await http.get<Blob>(exportDownloadUrl(url), { responseType: 'blob' })
-    if (!response.data.size) throw new Error('文件内容为空')
-    const objectUrl = URL.createObjectURL(response.data)
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.download = fileName
-    link.style.display = 'none'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
-  } catch (error: any) {
-    toast.error(error?.response?.data?.message || error?.message || '文件下载失败，请稍后重试')
+    await downloadExportFileBase(url, fileName)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '文件下载失败，请稍后重试'
+    toast.error(message)
   }
 }
 
@@ -462,6 +435,74 @@ const artifacts = computed<ConversationArtifact[]>(() => {
   return results.reverse()
 })
 
+type ArtifactPreviewState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | ({ status: 'ready' } & ExportPreviewResult)
+
+const artifactPreviewMap = ref<Record<string, ArtifactPreviewState>>({})
+
+function revokeArtifactPreviews() {
+  for (const preview of Object.values(artifactPreviewMap.value)) {
+    if (preview.status === 'ready' && preview.objectUrl) {
+      URL.revokeObjectURL(preview.objectUrl)
+    }
+  }
+  artifactPreviewMap.value = {}
+}
+
+async function loadArtifactPreviews() {
+  const targets = artifacts.value.filter((item) => isExportPreviewable(item.extension))
+  for (const artifact of targets) {
+    const existing = artifactPreviewMap.value[artifact.url]
+    if (existing?.status === 'ready' || existing?.status === 'loading') continue
+    artifactPreviewMap.value = {
+      ...artifactPreviewMap.value,
+      [artifact.url]: { status: 'loading' },
+    }
+    try {
+      const result = await fetchExportPreview(artifact.url)
+      artifactPreviewMap.value = {
+        ...artifactPreviewMap.value,
+        [artifact.url]: { status: 'ready', ...result },
+      }
+    } catch {
+      artifactPreviewMap.value = {
+        ...artifactPreviewMap.value,
+        [artifact.url]: { status: 'error' },
+      }
+    }
+  }
+}
+
+watch(showArtifacts, (open) => {
+  if (open) void loadArtifactPreviews()
+  else revokeArtifactPreviews()
+})
+
+watch(artifacts, () => {
+  if (showArtifacts.value) void loadArtifactPreviews()
+})
+
+function artifactPreviewOf(url: string): ArtifactPreviewState | undefined {
+  return artifactPreviewMap.value[url]
+}
+
+function artifactPreviewText(url: string): string | undefined {
+  const preview = artifactPreviewOf(url)
+  return preview?.status === 'ready' ? preview.text : undefined
+}
+
+function artifactPreviewObjectUrl(url: string): string | undefined {
+  const preview = artifactPreviewOf(url)
+  return preview?.status === 'ready' ? preview.objectUrl : undefined
+}
+
+function artifactPreviewKind(url: string): ExportPreviewResult['kind'] | undefined {
+  const preview = artifactPreviewOf(url)
+  return preview?.status === 'ready' ? preview.kind : undefined
+}
+
 function sessionDateGroup(iso: string): string {
   const date = new Date(iso)
   const today = new Date()
@@ -645,6 +686,7 @@ onUnmounted(() => {
   narrowMedia.removeEventListener('change', onViewportChange)
   if (searchTimer) clearTimeout(searchTimer)
   if (copiedTimer) clearTimeout(copiedTimer)
+  revokeArtifactPreviews()
   store.stopGeneration()
 })
 
@@ -1641,9 +1683,37 @@ async function reloadConversations() {
               ><IconDownload :size="18"
             /></a>
           </div>
-          <p v-if="artifact.extension === '.pdf'" class="chat-artifact-note">
-            需要身份验证，点击下载后可在本地打开预览。
-          </p>
+          <template v-if="isExportPreviewable(artifact.extension)">
+            <p
+              v-if="!artifactPreviewOf(artifact.url) || artifactPreviewOf(artifact.url)?.status === 'loading'"
+              class="chat-artifact-note"
+            >
+              预览加载中…
+            </p>
+            <p
+              v-else-if="artifactPreviewOf(artifact.url)?.status === 'error'"
+              class="chat-artifact-note"
+            >
+              预览失败，仍可下载
+            </p>
+            <template v-else-if="artifactPreviewOf(artifact.url)?.status === 'ready'">
+              <iframe
+                v-if="artifactPreviewKind(artifact.url) === 'pdf' && artifactPreviewObjectUrl(artifact.url)"
+                :src="artifactPreviewObjectUrl(artifact.url)"
+                title="PDF 预览"
+              />
+              <div
+                v-else-if="isMarkdownExport(artifact.extension) && artifactPreviewText(artifact.url)"
+                class="chat-artifact-preview chat-markdown"
+                v-html="safeMarkdown(artifactPreviewText(artifact.url))"
+              />
+              <pre
+                v-else-if="artifactPreviewText(artifact.url)"
+                class="chat-artifact-preview"
+              >{{ artifactPreviewText(artifact.url) }}</pre>
+              <p v-else class="chat-artifact-note">此格式暂不支持预览，请下载后查看。</p>
+            </template>
+          </template>
         </article>
       </div>
     </AppDialog>

@@ -1077,7 +1077,31 @@
   display: block;
   width: 100%;
   height: 300px;
+  border: 0;
   border-top: 1px solid var(--mn-line);
+  background: var(--mn-paper-light);
+}
+.chat-artifact-preview {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--mn-line);
+  background: var(--mn-paper);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-artifact-preview.chat-markdown {
+  white-space: normal;
+}
+.chat-artifact-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--mn-line);
+  color: #68665f;
+  font-size: 12px;
 }
 .chat-project-manager {
   display: grid;
