@@ -220,6 +220,12 @@
   letter-spacing: 0.04em;
   font-weight: 400;
 }
+.chat-tz-hint {
+  margin: 10px 10px 0;
+  font-size: 10px;
+  color: var(--chat-text-secondary);
+  letter-spacing: 0.02em;
+}
 .chat-session {
   position: relative;
   display: flex;
@@ -1171,6 +1177,24 @@
   align-items: center;
   gap: 10px;
   padding: 12px;
+}
+.chat-artifact-copy {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  gap: 5px;
+  font-size: 11px;
+}
+.chat-artifact-path {
+  display: block;
+  margin: 0;
+  padding: 0 12px 12px;
+  color: #68665f;
+  font-size: 10px;
+  line-height: 1.5;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .chat-artifact p {
   min-width: 0;
