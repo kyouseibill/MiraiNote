@@ -82,15 +82,18 @@ export const useChatStore = defineStore('chat', () => {
   }
 
 
+  /** UI/历史展示只读本页 map；永不从 API 消息字段回填。 */
+  function pageToolEventsFor(messageId: number): ToolCallEvent[] {
+    return pageToolEventsByMessageId.get(messageId) ?? []
+  }
+
+  /** 始终剥离 API/缓存载荷上的 toolEvents；不把 page map 写回 message。 */
   function stripToolEventsFromHistory(detail: ChatSessionDetail): ChatSessionDetail {
     return {
       ...detail,
       messages: detail.messages.map((message) => {
         const { toolEvents: _ignored, ...rest } = message
-        const pageEvents = pageToolEventsByMessageId.get(message.id)
-        return pageEvents && pageEvents.length > 0
-          ? { ...rest, toolEvents: pageEvents }
-          : { ...rest }
+        return { ...rest }
       }),
     }
   }
@@ -101,6 +104,36 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     pageToolEventsByMessageId.set(messageId, events.map((e) => ({ ...e })))
+  }
+
+  function stripToolEventsFromMessages(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => {
+      const { toolEvents: _ignored, ...rest } = message
+      return { ...rest }
+    })
+  }
+
+  /** bfcache/软恢复：工具卡只属当前页生命周期，恢复时清空。 */
+  function clearPageLifetimeToolState() {
+    pageToolEventsByMessageId.clear()
+    for (const [id, detail] of sessionDetailsCache.entries()) {
+      sessionDetailsCache.set(id, {
+        ...detail,
+        messages: stripToolEventsFromMessages(detail.messages),
+      })
+    }
+    if (currentSession.value) {
+      currentSession.value = {
+        ...currentSession.value,
+        messages: stripToolEventsFromMessages(currentSession.value.messages),
+      }
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pageshow', (event: PageTransitionEvent) => {
+      if (event.persisted) clearPageLifetimeToolState()
+    })
   }
 
   function savePendingAttachments() {
@@ -334,6 +367,7 @@ export const useChatStore = defineStore('chat', () => {
         createdAt: streamCreatedAt,
         toolEvents: stoppedEvents,
       }
+      rememberPageToolEvents(stoppedMsg.id, stoppedEvents)
       session.messages.push(stoppedMsg)
       if (!temporary) sessionDetailsCache.set(session.id, session)
 
@@ -932,6 +966,7 @@ export const useChatStore = defineStore('chat', () => {
       createdAt: data?.createdAt || activeStreamMessage.createdAt,
       toolEvents: snapshotToolEvents(),
     }
+    rememberPageToolEvents(finalMsg.id, finalMsg.toolEvents)
     const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
     if (finalIdx >= 0) targetSession.messages[finalIdx] = finalMsg
     else targetSession.messages.push(finalMsg)
@@ -1122,6 +1157,9 @@ export const useChatStore = defineStore('chat', () => {
     sendAgentMessageStream,
     confirmToolCall,
     updateTitle,
+    pageToolEventsFor,
+    rememberPageToolEvents,
+    clearPageLifetimeToolState,
   }
 })
 

@@ -299,3 +299,46 @@ for (const method of ['sendMessageStream', 'sendAgentMessageStream']) {
     assert.equal(store.currentSession.messages[0].id, 10)
   })
 }
+
+test('pageToolEventsFor returns remembered events; strip never reattaches API toolEvents', async () => {
+  const events = [{ id: 't1', name: 'search', status: 'success', summary: 'ok' }]
+  const { store } = createStore({
+    getSession: async (id) => ({
+      ...detail(id),
+      messages: [{
+        id: 42,
+        role: 'assistant',
+        content: 'hello',
+        createdAt: '2026-09-05T00:00:00Z',
+        toolEvents: [{ id: 'api', name: 'from-api', status: 'success', summary: 'should strip' }],
+      }],
+    }),
+  })
+  store.rememberPageToolEvents(42, events)
+  assert.deepEqual(store.pageToolEventsFor(42).map((e) => e.id), ['t1'])
+  await store.openSession(1)
+  const msg = store.currentSession.messages.find((m) => m.id === 42)
+  assert.ok(msg, 'message from API should load')
+  assert.equal(msg.toolEvents, undefined, 'API toolEvents must be stripped, not reattached from page map')
+  assert.deepEqual(store.pageToolEventsFor(42).map((e) => e.id), ['t1'], 'page map remains the only display source')
+  store.clearPageLifetimeToolState()
+  assert.deepEqual(store.pageToolEventsFor(42), [])
+})
+
+test('hard-refresh intent: without rememberPageToolEvents, history shows no tool cards', async () => {
+  const { store } = createStore({
+    getSession: async () => ({
+      ...detail(1),
+      messages: [{
+        id: 7,
+        role: 'assistant',
+        content: 'past',
+        createdAt: '2026-09-05T00:00:00Z',
+        toolEvents: [{ id: 'stale', name: 'old', status: 'success' }],
+      }],
+    }),
+  })
+  await store.openSession(1)
+  assert.equal(store.currentSession.messages[0].toolEvents, undefined)
+  assert.deepEqual(store.pageToolEventsFor(7), [])
+})
