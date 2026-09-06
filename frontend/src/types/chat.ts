@@ -11,11 +11,28 @@ export interface ChatSession {
   updatedAt: string
 }
 
+export type ToolCallStatus = 'running' | 'success' | 'failure'
+
+/** 单次工具调用事件（流式实时 + 本会话内回放；历史接口暂不持久化） */
+export interface ToolCallEvent {
+  id: string
+  name: string
+  label: string
+  status: ToolCallStatus
+  detail?: string
+  inputSummary?: string
+  resultSummary?: string
+  errorDetail?: string
+  elapsedSeconds?: number
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** 本轮流式产生的工具事件卡；仅前端会话内保留，服务端历史无此字段 */
+  toolEvents?: ToolCallEvent[]
 }
 
 export interface ChatSessionDetail {
