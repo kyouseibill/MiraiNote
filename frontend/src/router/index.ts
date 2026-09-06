@@ -51,6 +51,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, title: 'Mirai Chat' },
       },
       {
+        path: 'export-download',
+        name: 'export-download',
+        component: () => import('@/views/ExportDownloadView.vue'),
+        meta: { requiresAuth: true, title: '下载导出' },
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/views/ProfileView.vue'),
@@ -139,6 +145,11 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (to.meta.guestOnly && auth.isAuthenticated) {
+    // 深链下载：/login?redirect=/export-download?path=... 在静默刷新成功后应继续目标页
+    const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    if (redirect.startsWith('/') && !redirect.startsWith('//')) {
+      return redirect
+    }
     return { name: 'dashboard' }
   }
   return true

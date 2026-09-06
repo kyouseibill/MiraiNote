@@ -10,6 +10,8 @@ public interface IAuthService
 
     Task LogoutAsync(string refreshToken, CancellationToken ct = default);
 
+    Task LogoutAllAsync(int userId, CancellationToken ct = default);
+
     Task<LoginResult> RefreshTokenAsync(string refreshToken, CancellationToken ct = default);
 
     Task VerifyEmailAsync(string token, CancellationToken ct = default);

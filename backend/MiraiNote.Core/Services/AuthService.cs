@@ -193,9 +193,20 @@ public class AuthService : IAuthService
         var record = await _db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
         if (record != null)
         {
-            record.IsRevoked = true;
+            // 吊销该用户全部 refresh，避免同账号其他会话仍可静默续期
+            await RevokeAllRefreshTokensAsync(record.UserId, ct);
             await _db.SaveChangesAsync(ct);
         }
+    }
+
+    public async Task LogoutAllAsync(int userId, CancellationToken ct = default)
+    {
+        if (userId <= 0)
+        {
+            return;
+        }
+        await RevokeAllRefreshTokensAsync(userId, ct);
+        await _db.SaveChangesAsync(ct);
     }
 
     // ============================================================

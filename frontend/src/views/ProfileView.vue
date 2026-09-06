@@ -59,10 +59,13 @@ function fmtDate(iso: string | null): string {
 }
 
 async function handleLogout() {
-  if (!confirm('确定要退出登录吗？')) return
-  await auth.logout()
-  toast.success('已退出登录')
-  router.replace({ name: 'login' })
+  // 不用 window.confirm：自动化/部分浏览器会默认取消，导致退出点击无效果。
+  try {
+    await auth.logout()
+    toast.success('已退出登录')
+  } finally {
+    router.replace({ name: 'login' })
+  }
 }
 </script>
 
@@ -95,7 +98,7 @@ async function handleLogout() {
           </span>
           <button
             class="ml-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#ddd8cf] px-3 text-[12px] leading-none text-[#716c65] transition hover:border-[#c7a59f] hover:text-[#973a33]"
-            @click="handleLogout"
+            data-testid="logout-button" @click="handleLogout"
           >
             <IconLogout :size="15" :stroke-width="1.5" />
             退出
