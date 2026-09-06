@@ -207,9 +207,10 @@ const toolStatusLabel: Record<ToolCallEvent['status'], string> = {
   failure: '失败',
 }
 
+/** 仅展示本页流式产生的工具卡；API 历史消息不会带 toolEvents（硬刷新后应为空）。 */
 function toolEventsForMessage(msg: { streaming?: boolean; toolEvents?: ToolCallEvent[] }): ToolCallEvent[] {
   if (msg.streaming) return store.toolCalls
-  return msg.toolEvents ?? []
+  return Array.isArray(msg.toolEvents) ? msg.toolEvents : []
 }
 
 function toolEventsSummary(events: ToolCallEvent[]) {

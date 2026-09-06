@@ -62,6 +62,11 @@ export const useChatStore = defineStore('chat', () => {
   const attachmentDrafts = new Map<string, ChatAttachmentContent[]>()
 
   const sessionDetailsCache = new Map<number, ChatSessionDetail>()
+  /**
+   * 工具事件卡仅在本页生命周期内回放；硬刷新后为空。
+   * 不随 getSession API 历史返回，也不写入 DB。
+   */
+  const pageToolEventsByMessageId = new Map<number, ToolCallEvent[]>()
   let sessionsRequestVersion = 0
   let selectionVersion = 0
 
@@ -72,6 +77,28 @@ export const useChatStore = defineStore('chat', () => {
   ) {
     if (!session) return null
     return temporary ? `temporary:${temporarySessionId}` : `session:${session.id}`
+  }
+
+
+  function stripToolEventsFromHistory(detail: ChatSessionDetail): ChatSessionDetail {
+    return {
+      ...detail,
+      messages: detail.messages.map((message) => {
+        const { toolEvents: _ignored, ...rest } = message
+        const pageEvents = pageToolEventsByMessageId.get(message.id)
+        return pageEvents && pageEvents.length > 0
+          ? { ...rest, toolEvents: pageEvents }
+          : { ...rest }
+      }),
+    }
+  }
+
+  function rememberPageToolEvents(messageId: number, events: ToolCallEvent[] | undefined) {
+    if (!events || events.length === 0) {
+      pageToolEventsByMessageId.delete(messageId)
+      return
+    }
+    pageToolEventsByMessageId.set(messageId, events.map((e) => ({ ...e })))
   }
 
   function savePendingAttachments() {
@@ -111,9 +138,10 @@ export const useChatStore = defineStore('chat', () => {
           // 避免用不含新消息的旧数据覆盖 currentSession，导致回复完成后界面显示空白
           // （需重新进入会话才能看到内容）。
           if (streamSessionId.value === sessionId) return
-          sessionDetailsCache.set(sessionId, fresh)
+          const normalized = stripToolEventsFromHistory(fresh)
+          sessionDetailsCache.set(sessionId, normalized)
           if (currentSession.value?.id === sessionId) {
-            currentSession.value = fresh
+            currentSession.value = normalized
           }
         })
         .catch(() => {
@@ -124,7 +152,7 @@ export const useChatStore = defineStore('chat', () => {
 
     loading.value = true
     try {
-      const detail = await chatApi.getSession(sessionId)
+      const detail = stripToolEventsFromHistory(await chatApi.getSession(sessionId))
       if (requestVersion !== selectionVersion) return
       sessionDetailsCache.set(sessionId, detail)
       currentSession.value = detail
@@ -245,11 +273,12 @@ export const useChatStore = defineStore('chat', () => {
     savePendingAttachments()
     const detail = await chatApi.branchSession(currentSession.value.id, payload)
     isTemporary.value = false
-    sessionDetailsCache.set(detail.id, detail)
-    currentSession.value = detail
+    const normalized = stripToolEventsFromHistory(detail)
+    sessionDetailsCache.set(normalized.id, normalized)
+    currentSession.value = normalized
     restorePendingAttachments()
     await fetchSessions()
-    return detail
+    return normalized
   }
 
   async function createProject(payload: ChatProjectPayload) {
@@ -467,6 +496,7 @@ export const useChatStore = defineStore('chat', () => {
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
               toolEvents: snapshotToolEvents(),
             }
+            rememberPageToolEvents(finalMsg.id, finalMsg.toolEvents)
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
             if (finalIdx >= 0) {
               targetSession.messages[finalIdx] = finalMsg
@@ -691,6 +721,7 @@ export const useChatStore = defineStore('chat', () => {
               createdAt: event.data.createdAt || activeStreamMessage.createdAt,
               toolEvents: snapshotToolEvents(),
             }
+            rememberPageToolEvents(finalMsg.id, finalMsg.toolEvents)
             const finalIdx = targetSession.messages.findIndex((m) => m.id === finalMsg.id)
             if (finalIdx >= 0) {
               targetSession.messages[finalIdx] = finalMsg
