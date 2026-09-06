@@ -54,6 +54,7 @@ const groups: NavGroup[] = [
 ]
 
 const currentTitle = computed(() => (route.meta.title as string) || '未来ノート')
+const isChatRoute = computed(() => route.name === 'chat')
 const isDesignPreview = computed(() => import.meta.env.DEV && route.query.designPreview === '1')
 const mobileMenuOpen = ref(false)
 
@@ -141,7 +142,10 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main class="min-h-0 flex-1 overflow-y-auto bg-[#fcfbf8]">
+      <main
+        class="min-h-0 flex-1 bg-[#fcfbf8]"
+        :class="isChatRoute ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'"
+      >
         <RouterView />
       </main>
     </div>

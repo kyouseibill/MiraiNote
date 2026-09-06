@@ -1288,22 +1288,12 @@ async function reloadConversations() {
         >
           <IconLayoutSidebar :size="20" />
         </button>
-        <div class="chat-header-title">
-          <h1 :title="store.currentSession?.title">{{ store.currentSession?.title || 'Mirai Chat' }}</h1>
-          <p>
-            <span v-if="currentProject">{{ currentProject.name }}<span aria-hidden="true"> · </span></span
-            >{{
-              store.isTemporary
-                ? '临时聊天 · 内容不保存'
-                : isCurrentStreaming
-                  ? '正在回复…'
-                  : isWorkMode
-                    ? '工作台 · 工具与文件更醒目'
-                    : '给想法一点生长的空间'
-            }}
-          </p>
-        </div>
-        <div class="chat-mode-switch" role="group" aria-label="对话模式">
+        <div
+          class="chat-mode-switch"
+          data-testid="chat-mode-switch"
+          role="group"
+          aria-label="对话模式"
+        >
           <button
             type="button"
             data-testid="chat-mode-chat"
@@ -1322,6 +1312,21 @@ async function reloadConversations() {
           >
             工作
           </button>
+        </div>
+        <div class="chat-header-title">
+          <h1 :title="store.currentSession?.title">{{ store.currentSession?.title || 'Mirai Chat' }}</h1>
+          <p>
+            <span v-if="currentProject">{{ currentProject.name }}<span aria-hidden="true"> · </span></span
+            >{{
+              store.isTemporary
+                ? '临时聊天 · 内容不保存'
+                : isCurrentStreaming
+                  ? '正在回复…'
+                  : isWorkMode
+                    ? '工作台 · 工具与文件更醒目'
+                    : '给想法一点生长的空间'
+            }}
+          </p>
         </div>
         <button
           class="chat-files-button"
