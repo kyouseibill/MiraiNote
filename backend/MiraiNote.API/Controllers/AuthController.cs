@@ -37,12 +37,17 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<AuthTokenResponse>.Ok(result.Tokens, "登录成功"));
     }
 
-    [Microsoft.AspNetCore.Authorization.Authorize]
+    // AllowAnonymous：即使 access token 异常也要清 cookie；有 JWT 时吊销该用户全部 refresh
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     [HttpPost("logout")]
     public async Task<ActionResult<ApiResponse>> Logout(CancellationToken ct)
     {
         var refreshToken = Request.Cookies[RefreshCookieName];
-        if (!string.IsNullOrWhiteSpace(refreshToken))
+        if (_currentUser.IsAuthenticated && _currentUser.UserId > 0)
+        {
+            await _auth.LogoutAllAsync(_currentUser.UserId, ct);
+        }
+        else if (!string.IsNullOrWhiteSpace(refreshToken))
         {
             await _auth.LogoutAsync(refreshToken, ct);
         }
@@ -118,8 +123,12 @@ public class AuthController : ControllerBase
 
     private void ClearRefreshCookie()
     {
+        // 必须与 SetRefreshCookie 选项一致，否则浏览器可能不删除 mn_refresh
         Response.Cookies.Delete(RefreshCookieName, new CookieOptions
         {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
             Path = "/api/v1/auth"
         });
     }

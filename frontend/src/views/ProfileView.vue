@@ -60,9 +60,12 @@ function fmtDate(iso: string | null): string {
 
 async function handleLogout() {
   if (!confirm('确定要退出登录吗？')) return
-  await auth.logout()
-  toast.success('已退出登录')
-  router.replace({ name: 'login' })
+  try {
+    await auth.logout()
+    toast.success('已退出登录')
+  } finally {
+    router.replace({ name: 'login' })
+  }
 }
 </script>
 

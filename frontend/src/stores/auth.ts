@@ -35,12 +35,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    // 先清本地，避免路由守卫仍视为已登录；并阻止同 SPA 会话内 tryRefresh 静默续期
+    clearAuth()
+    ;(window as any).__mn_refresh_tried = true
     try {
       await authApi.logout()
     } catch {
-      // 忽略，本地清理
-    } finally {
-      clearAuth()
+      // 忽略，本地已清理；后端 cookie 清理由 AllowAnonymous logout 尽量完成
     }
   }
 
