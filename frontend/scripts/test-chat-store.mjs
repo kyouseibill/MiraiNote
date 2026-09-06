@@ -34,7 +34,7 @@ function createStore(chatOverrides = {}, agentOverrides = {}) {
   const load = (id) => {
     if (id === '@/api/chat') return { chatApi }
     if (id === '@/api/agent') return { agentApi: agentOverrides }
-    if (id === '@/composables/useToast') return { useToast: () => ({ error: (text) => errors.push(text) }) }
+    if (id === '@/composables/useToast') return { useToast: () => ({ error: (text) => errors.push(text), info: (text) => errors.push(`info:${text}`), success: () => {}, warning: () => {} }) }
     return require(id)
   }
   vm.runInThisContext(`(function(require, module, exports) { ${outputText}\n})`)(load, module, module.exports)

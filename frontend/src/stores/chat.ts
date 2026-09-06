@@ -272,8 +272,15 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function stopGeneration() {
+    const wasSending = sending.value || !!activeAbortController
     activeAbortController?.abort()
     activeAbortController = null
+    pendingConfirm.value = null
+    pendingConfirmSessionId = null
+    pendingConfirmTemporaryId = null
+    currentToolCall.value = ''
+    toolCalls.value = []
+    if (wasSending) toast.info('已停止')
   }
 
   async function deleteSession(sessionId: number) {
@@ -487,6 +494,12 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
+          case 'stopped':
+            result.outcome = 'stopped'
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            break
           case 'error':
             result.outcome = 'failed'
             // 出错时清除 streamMessage 占位，给用户提示
@@ -710,6 +723,12 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
 
+          case 'stopped':
+            result.outcome = 'stopped'
+            if (streamMessage.value?.id === activeStreamMessage.id) {
+              streamMessage.value = null
+            }
+            break
           case 'error':
             result.outcome = 'failed'
             if (streamMessage.value?.id === activeStreamMessage.id) {

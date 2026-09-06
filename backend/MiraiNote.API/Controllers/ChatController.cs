@@ -19,6 +19,7 @@ public class ChatController : ControllerBase
     private readonly IChatService _service;
     private readonly ICurrentUserService _currentUser;
     private readonly ChatFileParserService _fileParser;
+    private readonly ChatSessionRunGate _runGate;
     private readonly ILogger<ChatController> _logger;
 
     // 确认状态：key = sessionId，value = TaskCompletionSource
@@ -29,11 +30,13 @@ public class ChatController : ControllerBase
         IChatService service,
         ICurrentUserService currentUser,
         ChatFileParserService fileParser,
+        ChatSessionRunGate runGate,
         ILogger<ChatController> logger)
     {
         _service = service;
         _currentUser = currentUser;
         _fileParser = fileParser;
+        _runGate = runGate;
         _logger = logger;
     }
 
@@ -213,7 +216,8 @@ public class ChatController : ControllerBase
                 request,
                 callback,
                 streamCt),
-            ct);
+            ct,
+            ChatSessionRunGate.SessionKey(userId, sessionId));
     }
 
     /// <summary>
@@ -224,13 +228,15 @@ public class ChatController : ControllerBase
         [FromBody] TemporaryChatRequest request,
         CancellationToken ct)
     {
+        var tempUserId = _currentUser.UserId;
         await RunSseStreamAsync(
             (callback, streamCt) => _service.SendTemporaryMessageStreamAsync(
-                _currentUser.UserId,
+                tempUserId,
                 request,
                 callback,
                 streamCt),
-            ct);
+            ct,
+            ChatSessionRunGate.TemporaryKey(tempUserId, "default"));
     }
 
     /// <summary>
@@ -267,7 +273,8 @@ public class ChatController : ControllerBase
                         return completed == confirmTcs.Task && await confirmTcs.Task;
                     },
                     streamCt),
-                ct);
+                ct,
+                ChatSessionRunGate.SessionKey(userId, sessionId));
         }
         finally
         {
@@ -289,9 +296,10 @@ public class ChatController : ControllerBase
 
         try
         {
+            var tempUserId = _currentUser.UserId;
             await RunSseStreamAsync(
                 (callback, streamCt) => _service.SendTemporaryMessageAgentStreamAsync(
-                    _currentUser.UserId,
+                    tempUserId,
                     request,
                     callback,
                     async () =>
@@ -302,7 +310,8 @@ public class ChatController : ControllerBase
                         return completed == confirmTcs.Task && await confirmTcs.Task;
                     },
                     streamCt),
-                ct);
+                ct,
+                ChatSessionRunGate.TemporaryKey(tempUserId, temporaryId));
         }
         finally
         {
@@ -359,11 +368,18 @@ public class ChatController : ControllerBase
 
     private async Task RunSseStreamAsync(
         Func<ChatStreamCallback, CancellationToken, Task> streamAction,
-        CancellationToken requestCt)
+        CancellationToken requestCt,
+        string? runKey = null)
     {
         ConfigureSseResponse();
 
-        using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(requestCt);
+        IDisposable? runLease = null;
+        var effectiveCt = requestCt;
+        if (!string.IsNullOrWhiteSpace(runKey))
+            runLease = _runGate.Enter(runKey, requestCt, out effectiveCt);
+        try
+        {
+        using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(effectiveCt);
         using var writeGate = new SemaphoreSlim(1, 1);
         var stopwatch = Stopwatch.StartNew();
         var terminalSent = 0;
@@ -384,7 +400,7 @@ public class ChatController : ControllerBase
 
         ChatStreamCallback callback = (eventType, data) =>
         {
-            if (eventType is "done" or "error")
+            if (eventType is "done" or "error" or "stopped")
                 Interlocked.Exchange(ref terminalSent, 1);
             return WriteFrameAsync($"event: {eventType}\ndata: {data}\n\n");
         };
@@ -425,7 +441,18 @@ public class ChatController : ControllerBase
         }
         catch (OperationCanceledException) when (streamCts.IsCancellationRequested)
         {
-            // 用户停止、浏览器离开或心跳检测到连接已断开。
+            // 用户停止、浏览器离开、心跳断连，或同会话新 run 抢占取消。
+            if (Volatile.Read(ref terminalSent) == 0)
+            {
+                try
+                {
+                    await callback("stopped", JsonSerializer.Serialize(new { message = "已停止" }));
+                }
+                catch
+                {
+                    // 客户端可能已断开
+                }
+            }
         }
         catch (IOException) when (requestCt.IsCancellationRequested || streamCts.IsCancellationRequested)
         {
@@ -456,6 +483,11 @@ public class ChatController : ControllerBase
         {
             streamCts.Cancel();
             await heartbeatTask;
+        }
+        }
+        finally
+        {
+            runLease?.Dispose();
         }
     }
 

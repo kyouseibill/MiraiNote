@@ -575,8 +575,17 @@ public class ChatService : IChatService
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
         // 3. 流式调用 DeepSeek（含 Function Calling 循环）
-        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
-            userId, history, request, callback, ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAsync(
+                userId, history, request, callback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         // 4. 存储 AI 回复
         var assistantMsg = new ChatMessage
@@ -622,8 +631,17 @@ public class ChatService : IChatService
             return;
         }
         var history = BuildTemporaryHistory(request);
-        var assistantContent = await CallDeepSeekStreamWithToolsAsync(
-            userId, history, request, callback, ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAsync(
+                userId, history, request, callback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         await callback("done", JsonSerializer.Serialize(new
         {
@@ -710,8 +728,17 @@ public class ChatService : IChatService
             await callback(eventType, data);
         }
 
-        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId, history, request, WrappedCallback, skipConfirm, confirmCallback, ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+                userId, history, request, WrappedCallback, skipConfirm, confirmCallback, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         // 存储 AI 回复
         var assistantMsg = new ChatMessage { SessionId = sessionId, Role = "assistant", Content = assistantContent };
@@ -798,14 +825,23 @@ public class ChatService : IChatService
             }
         }
 
-        var assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
-            userId,
-            history,
-            request,
-            callback,
-            request.SkipConfirmation,
-            confirmCallback,
-            ct);
+        string assistantContent;
+        try
+        {
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+                userId,
+                history,
+                request,
+                callback,
+                request.SkipConfirmation,
+                confirmCallback,
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
 
         // 临时聊天刻意跳过 AutoExtractAsync，避免从临时内容生成长期记忆。
         await callback("done", JsonSerializer.Serialize(new
@@ -1125,6 +1161,8 @@ public class ChatService : IChatService
 
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var body = new
             {
                 model = _deepSeekOptions.Model,
@@ -1225,6 +1263,7 @@ public class ChatService : IChatService
                         }
                     }
 
+                    ct.ThrowIfCancellationRequested();
                     var result = await ExecuteToolWithProgressAsync(
                         userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
                     CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
@@ -1493,6 +1532,8 @@ public class ChatService : IChatService
 
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var body = new
             {
                 model = _deepSeekOptions.Model,
@@ -1567,6 +1608,7 @@ public class ChatService : IChatService
                         id = tc.Id
                     }));
 
+                    ct.ThrowIfCancellationRequested();
                     var result = await ExecuteToolWithProgressAsync(
                         userId, tc.FunctionName, tc.Arguments, request, callback, tc.Id, ct);
                     CollectExportedFileLink(tc.FunctionName, result, exportedFiles);
@@ -1848,6 +1890,8 @@ public class ChatService : IChatService
         var exportedFiles = new List<ExportedFileLink>();
         for (int round = 0; round < 20; round++)
         {
+            ct.ThrowIfCancellationRequested();
+
             var bodyJson = JsonSerializer.Serialize(new
             {
                 model = _deepSeekOptions.Model,
