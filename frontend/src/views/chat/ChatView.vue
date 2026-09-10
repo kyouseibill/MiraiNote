@@ -1042,7 +1042,7 @@ async function send() {
   void scrollToBottom()
   void focusInput()
   try {
-    const outcome = shouldUseAgent(text)
+    const outcome = isWorkMode.value
       ? await store.sendAgentMessageStream(text || '请分析这些文件的内容')
       : await store.sendMessageStream(text || '请分析这些文件的内容')
     if (outcome === 'failed') restoreFailedDraft(targetId, text)
@@ -1064,26 +1064,6 @@ async function retryFailedAction() {
   if (uiErrorKind.value === 'send') await send()
   else if (uiErrorKind.value === 'create') await newSession()
   else await reloadConversations()
-}
-
-function shouldUseAgent(text: string): boolean {
-  if (store.pendingAttachments.length > 0) return true
-  const normalized = text.trim().toLowerCase()
-  if (!normalized) return false
-
-  const agentPatterns = [
-    /查|找|搜索|检索|联网|天气|新闻|价格|最新/,
-    /网页|网站|链接|网址|url|api|接口|http|https|登录|用户名|密码|模拟操作|抓取/,
-    /创建|新增|添加|记录|保存|写入|生成|导出/,
-    /更新|修改|编辑|删除|归档|完成|置顶/,
-    /提醒|定时|计划|日程|待办|备忘/,
-    /总结|汇总|分析|统计|趋势|周报|日报|复盘/,
-    /今天|明天|昨天|本周|本月|现在几点|当前时间|日期|星期|多少天/,
-    /\d+\s*[+\-*/%]\s*\d+/,
-    /工作记录|生活记录|备忘|文件|目录|运行|命令/,
-    /\b(search|find|create|update|delete|export|schedule|remind|analyze|summarize|file|run|api|http|url|login|fetch|web)\b/,
-  ]
-  return agentPatterns.some((pattern) => pattern.test(normalized))
 }
 
 async function deleteSession(id: number, e: Event) {

@@ -15,6 +15,14 @@ public class AgentRun : BaseEntity
     public int UserId { get; set; }
     public int SessionId { get; set; }
 
+    /// <summary>创建任务时从会话复制的模型提供商快照，恢复任务不得改读当前默认模型。</summary>
+    [MaxLength(50)]
+    public string? AiProvider { get; set; }
+
+    /// <summary>创建任务时从会话复制的模型 ID 快照。</summary>
+    [MaxLength(120)]
+    public string? AiModel { get; set; }
+
     /// <summary>queued/running/awaiting_confirmation/completed/failed/stopped/recoverable。</summary>
     [Required, MaxLength(32)]
     public string Status { get; set; } = "queued";

@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddScoped<Services.AgentRuns.IAgentRunService, Services.AgentRuns.AgentRunService>();
         services.AddHostedService<Services.AgentRuns.AgentRunBackgroundService>();
         services.AddScoped<Services.IChatService, Services.ChatService>();
+        services.AddSingleton<Services.ChatModels.IChatModelRegistry, Services.ChatModels.ChatModelRegistry>();
         services.AddScoped<Services.ChatFileParserService>();
         services.AddSingleton<Services.IEmailService, Services.SmtpEmailService>();
         services.AddScoped<Services.IScheduledTaskService, Services.ScheduledTaskService>();

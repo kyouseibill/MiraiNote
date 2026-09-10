@@ -145,6 +145,14 @@ public class MiraiNoteDbContext : DbContext
             .HasIndex(s => new { s.UserId, s.ProjectId, s.IsPinned, s.UpdatedAt });
 
         modelBuilder.Entity<ChatSession>()
+            .Property(s => s.AiProvider)
+            .HasMaxLength(50);
+
+        modelBuilder.Entity<ChatSession>()
+            .Property(s => s.AiModel)
+            .HasMaxLength(120);
+
+        modelBuilder.Entity<ChatSession>()
             .HasOne(s => s.User)
             .WithMany()
             .HasForeignKey(s => s.UserId)
@@ -183,6 +191,14 @@ public class MiraiNoteDbContext : DbContext
 
         modelBuilder.Entity<AgentRun>()
             .HasIndex(r => new { r.Status, r.CreatedAt });
+
+        modelBuilder.Entity<AgentRun>()
+            .Property(r => r.AiProvider)
+            .HasMaxLength(50);
+
+        modelBuilder.Entity<AgentRun>()
+            .Property(r => r.AiModel)
+            .HasMaxLength(120);
 
         modelBuilder.Entity<AgentRun>()
             .HasOne(r => r.User)

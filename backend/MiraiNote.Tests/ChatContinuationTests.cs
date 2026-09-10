@@ -15,24 +15,20 @@ namespace MiraiNote.Tests;
 
 public class ChatContinuationTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ContinuesBeyondTwentyRoundsUntilFileIsDelivered(bool agent)
+    [Fact]
+    public async Task Work_continues_beyond_twenty_rounds_until_file_is_delivered()
     {
         using var harness = new Harness(25, prematureStop: false);
-        var result = await harness.RunAsync(agent);
+        var result = await harness.RunAsync(agent: true);
         Assert.Contains("全部处理完成", result);
         Assert.Equal("step 25", await File.ReadAllTextAsync(harness.ResultPath));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PlanningStopAutomaticallyContinuesToActualFileWrite(bool agent)
+    [Fact]
+    public async Task Work_planning_stop_automatically_continues_to_actual_file_write()
     {
         using var harness = new Harness(1, prematureStop: true);
-        var result = await harness.RunAsync(agent);
+        var result = await harness.RunAsync(agent: true);
         Assert.Contains("全部处理完成", result);
         Assert.Equal("step 1", await File.ReadAllTextAsync(harness.ResultPath));
     }
@@ -45,13 +41,11 @@ public class ChatContinuationTests
         Assert.Equal("step 25", await File.ReadAllTextAsync(harness.ResultPath));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task TruncatedResponseContinues(bool agent)
+    [Fact]
+    public async Task Work_truncated_response_continues()
     {
         using var harness = new Harness(1, prematureStop: true, firstFinish: "length");
-        Assert.Contains("全部处理完成", await harness.RunAsync(agent));
+        Assert.Contains("全部处理完成", await harness.RunAsync(agent: true));
         Assert.Equal("step 1", await File.ReadAllTextAsync(harness.ResultPath));
     }
 
@@ -74,25 +68,33 @@ public class ChatContinuationTests
         Assert.Equal("step 1", await File.ReadAllTextAsync(harness.ResultPath));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task TransientModelFailureRetriesAndFinishes(bool agent)
+    [Fact]
+    public async Task Work_transient_model_failure_retries_and_finishes()
     {
         using var harness = new Harness(1, false, transientFailures: 1);
-        Assert.Contains("全部处理完成", await harness.RunAsync(agent));
+        Assert.Contains("全部处理完成", await harness.RunAsync(agent: true));
         Assert.Equal("step 1", await File.ReadAllTextAsync(harness.ResultPath));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task BrokenUpstreamStreamContinuesWithoutReplayingExecutedTools(bool agent)
+    [Fact]
+    public async Task Work_broken_upstream_stream_continues_without_replaying_executed_tools()
     {
         using var harness = new Harness(2, false, streamFailures: 1);
-        Assert.Contains("全部处理完成", await harness.RunAsync(agent));
+        Assert.Contains("全部处理完成", await harness.RunAsync(agent: true));
         Assert.Equal(2, harness.ExecutedTools);
         Assert.Equal("step 2", await File.ReadAllTextAsync(harness.ResultPath));
+    }
+
+    [Fact]
+    public async Task Ordinary_chat_stops_after_the_model_answer_without_tools_or_completion_review()
+    {
+        using var harness = new Harness(steps: 0, prematureStop: false, ordinaryChat: true);
+
+        var result = await harness.RunAsync(agent: false);
+
+        Assert.Equal("这是直接回答。", result);
+        Assert.Equal(0, harness.ToolRequestCount);
+        Assert.Equal(0, harness.CompletionReviewRequestCount);
     }
 
     private sealed class Harness : IDisposable
@@ -102,8 +104,10 @@ public class ChatContinuationTests
         private readonly string _root = Path.Combine(Path.GetTempPath(), "mirai-loop-" + Guid.NewGuid().ToString("N"));
         public string ResultPath => Path.Combine(_root, "users", "1", "result.txt");
         public int ExecutedTools { get; private set; }
+        public int ToolRequestCount { get; private set; }
+        public int CompletionReviewRequestCount { get; private set; }
 
-        public Harness(int steps, bool prematureStop, string firstFinish = "stop", string? reviewStatus = null, bool reflectFollowUp = false, int transientFailures = 0, int streamFailures = 0)
+        public Harness(int steps, bool prematureStop, string firstFinish = "stop", string? reviewStatus = null, bool reflectFollowUp = false, int transientFailures = 0, int streamFailures = 0, bool ordinaryChat = false)
         {
             var calls = 0;
             var writes = 0;
@@ -111,14 +115,20 @@ public class ChatContinuationTests
             {
                 using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
                 if (body.RootElement.TryGetProperty("response_format", out _))
+                {
+                    CompletionReviewRequestCount++;
                     return MiraiTestFixture.DeepSeekContentResponse(JsonSerializer.Serialize(new
                     {
                         status = reviewStatus ?? (writes == steps ? "completed" : "continue"),
                         reason = writes == steps ? "文件已写入，所有步骤完成。" : "仅给出计划，文件还未写入。",
                         next_step = writes == steps ? "" : "调用 write_file 写入 result.txt。"
                     }));
+                }
+
+                if (body.RootElement.TryGetProperty("tools", out _)) ToolRequestCount++;
 
                 calls++;
+                if (ordinaryChat) return Response("这是直接回答。", "stop", stream: true);
                 if (transientFailures-- > 0)
                     return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("temporary outage") };
                 var stream = body.RootElement.TryGetProperty("stream", out var streamEl) && streamEl.GetBoolean();

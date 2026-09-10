@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Agent;
@@ -126,6 +127,7 @@ public class ChatService : IChatService
     private readonly IAgentMemoryService _memoryService;
     private readonly ServerAgentToolRegistry _toolRegistry;
     private readonly Services.Mirai.IMiraiContextProvider _contextProvider;
+    private readonly IChatModelRegistry _modelRegistry;
     private readonly ILogger<ChatService> _logger;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
@@ -184,6 +186,7 @@ public class ChatService : IChatService
         Tools.ServerScheduleTaskTool scheduleTask,
         Tools.ServerListScheduledTasksTool listScheduledTasks,
         Services.Mirai.IMiraiContextProvider contextProvider,
+        IChatModelRegistry modelRegistry,
         ILogger<ChatService> logger)
     {
         _db = db;
@@ -199,6 +202,7 @@ public class ChatService : IChatService
         _memoryService = memoryService;
         _toolRegistry = toolRegistry;
         _contextProvider = contextProvider;
+        _modelRegistry = modelRegistry;
         _logger = logger;
 
         // 注册所有工具
@@ -313,6 +317,7 @@ public class ChatService : IChatService
             SessionType = string.IsNullOrEmpty(session.SessionType) ? "legacy" : session.SessionType,
             AttachToType = session.AttachToType,
             AttachToObjectId = session.AttachToObjectId,
+            ModelKey = BuildModelKey(session.AiProvider, session.AiModel),
             Messages = session.Messages
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => MapMessage(m))
@@ -332,6 +337,7 @@ public class ChatService : IChatService
         var (sessionType, attachToType, attachToObjectId) = await Services.Mirai.MiraiSessionRules.ValidateAsync(
             request.SessionType, request.AttachToType, request.AttachToObjectId, _db, userId, ct);
 
+        var model = _modelRegistry.ResolveForNewSession(request.ModelKey);
         var session = new ChatSession
         {
             UserId = userId,
@@ -339,7 +345,9 @@ public class ChatService : IChatService
             ProjectId = request.ProjectId,
             SessionType = sessionType,
             AttachToType = attachToType,
-            AttachToObjectId = attachToObjectId
+            AttachToObjectId = attachToObjectId,
+            AiProvider = model.Provider,
+            AiModel = model.ModelId
         };
         _db.ChatSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -448,7 +456,9 @@ public class ChatService : IChatService
                 ? $"{source.Title}（分支）"
                 : request.Title.Trim(),
             BranchedFromSessionId = source.Id,
-            BranchedFromMessageId = request.MessageId
+            BranchedFromMessageId = request.MessageId,
+            AiProvider = source.AiProvider,
+            AiModel = source.AiModel
         };
         _db.ChatSessions.Add(branch);
         await _db.SaveChangesAsync(ct);
@@ -574,14 +584,13 @@ public class ChatService : IChatService
 
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
-        // 3. 流式调用 DeepSeek（含 Function Calling 循环）
+        // 3. 普通 Chat 只请求模型文本，不附带执行工具，也不进行完成检查。
         var partial = new StringBuilder();
         var trackingCallback = TrackTokenCallback(callback, partial);
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAsync(
-                userId, history, request, trackingCallback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(history, request, trackingCallback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -641,8 +650,7 @@ public class ChatService : IChatService
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAsync(
-                userId, history, request, callback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(history, request, callback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1518,7 +1526,45 @@ public class ChatService : IChatService
         return content.ToArray();
     }
 
-    // ===== DeepSeek 流式 Function Calling 循环 =====
+    // ===== 普通 Chat 流式调用：无执行工具、无完成检查 =====
+
+    private async Task<string> CallDeepSeekChatStreamAsync(
+        List<ChatMessage> history,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
+        {
+            await callback("error", "{\"message\":\"DeepSeek API Key 未配置\"}");
+            throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
+        }
+
+        var client = _httpClientFactory.CreateClient("DeepSeek");
+        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
+
+        var body = new
+        {
+            model = _deepSeekOptions.Model,
+            messages = BuildMessages(history, BuildSystemPromptForRequest(request), request),
+            stream = true
+        };
+        var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
+        using var response = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            await callback("error", JsonSerializer.Serialize(new { message = $"AI 服务错误 {(int)response.StatusCode}" }));
+            throw new BusinessException($"AI 服务错误 {(int)response.StatusCode}", 500);
+        }
+
+        var (content, _, _, _, _) = await ParseDeepSeekStreamAsync(
+            await response.Content.ReadAsStreamAsync(ct), callback, ct);
+        return content;
+    }
+
+    // ===== DeepSeek 流式 Function Calling 循环（仅 Work） =====
 
     private async Task<string> CallDeepSeekStreamWithToolsAsync(
         int userId,
@@ -2978,9 +3024,15 @@ public class ChatService : IChatService
         SessionType = string.IsNullOrEmpty(s.SessionType) ? "legacy" : s.SessionType,
         AttachToType = s.AttachToType,
         AttachToObjectId = s.AttachToObjectId,
+        ModelKey = BuildModelKey(s.AiProvider, s.AiModel),
         CreatedAt = s.CreatedAt,
         UpdatedAt = s.UpdatedAt
     };
+
+    private static string? BuildModelKey(string? provider, string? model) =>
+        string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(model)
+            ? null
+            : $"{provider}:{model}";
 
     private const string StoppedAssistantMarker = "（已停止）";
 

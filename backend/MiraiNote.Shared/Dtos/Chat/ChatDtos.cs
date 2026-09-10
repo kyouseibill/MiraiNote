@@ -9,6 +9,8 @@ public class CreateSessionRequest
 {
     public string Title { get; set; } = "新对话";
     public int? ProjectId { get; set; }
+    /// <summary>服务端允许列表中的模型键；为空时使用默认模型。</summary>
+    public string? ModelKey { get; set; }
 
     /// <summary>会话类型（Mirai M1 可选）：legacy | command | context。context 时下方挂载字段必填。</summary>
     public string? SessionType { get; set; }
@@ -153,6 +155,8 @@ public class ChatSessionDto
     public string? SessionType { get; set; }
     public string? AttachToType { get; set; }
     public int? AttachToObjectId { get; set; }
+    /// <summary>provider:modelId 格式的公开模型键。</summary>
+    public string? ModelKey { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -197,6 +201,8 @@ public class ChatSessionDetailDto
     public string? SessionType { get; set; }
     public string? AttachToType { get; set; }
     public int? AttachToObjectId { get; set; }
+    /// <summary>provider:modelId 格式的公开模型键。</summary>
+    public string? ModelKey { get; set; }
     public List<ChatMessageDto> Messages { get; set; } = new();
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

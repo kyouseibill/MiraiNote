@@ -41,14 +41,17 @@ public sealed class AgentRunService : IAgentRunService
 
     public async Task<AgentRunSnapshot> CreateAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct)
     {
-        var exists = await _db.ChatSessions.AnyAsync(s => s.Id == sessionId && s.UserId == userId, ct);
-        if (!exists) throw new BusinessException("对话不存在", 404);
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            ?? throw new BusinessException("对话不存在", 404);
         if (string.IsNullOrWhiteSpace(request.Content)) throw new BusinessException("消息内容不能为空", 400);
 
         var run = new AgentRun
         {
             UserId = userId,
             SessionId = sessionId,
+            AiProvider = session.AiProvider,
+            AiModel = session.AiModel,
             Status = AgentRunStatus.Queued,
             RequestJson = JsonSerializer.Serialize(request),
             LastActivityAt = DateTime.UtcNow

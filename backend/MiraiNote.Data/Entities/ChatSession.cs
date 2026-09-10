@@ -50,6 +50,14 @@ public class ChatSession : BaseEntity
     /// <summary>挂载对象 Id（context 会话）。</summary>
     public int? AttachToObjectId { get; set; }
 
+    /// <summary>会话创建时选定的 AI 提供商；空值表示需按旧会话兼容策略解析。</summary>
+    [MaxLength(50)]
+    public string? AiProvider { get; set; }
+
+    /// <summary>会话创建时选定的模型 ID；与提供商组合后在首条消息起保持固定。</summary>
+    [MaxLength(120)]
+    public string? AiModel { get; set; }
+
     /// <summary>该会话下的所有消息。</summary>
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
 }
