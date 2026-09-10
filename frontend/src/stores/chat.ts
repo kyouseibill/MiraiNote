@@ -566,9 +566,7 @@ export const useChatStore = defineStore('chat', () => {
           }
 
           case 'heartbeat':
-            if (!streamedContent && !hasRunningToolCalls()) {
-              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
-            }
+            currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             break
 
           case 'tool_result':
@@ -801,9 +799,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'heartbeat':
-            if (!streamedContent && !hasRunningToolCalls()) {
-              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
-            }
+            currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             break
 
           case 'tool_result':
@@ -828,6 +824,7 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'context':
             contextUsage.value = event.data
+            if (event.data?.message) currentToolCall.value = String(event.data.message)
             break
 
           case 'recoverable':

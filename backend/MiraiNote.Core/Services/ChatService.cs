@@ -771,6 +771,7 @@ public class ChatService : IChatService
         var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
         // ── 阶段 1：Plan ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "planning", message = "正在规划执行步骤…" }));
         if (request.EnablePlanner)
         {
             var toolNames = GetAvailableToolNames(request);
@@ -787,6 +788,7 @@ public class ChatService : IChatService
         }
 
         // ── 阶段 2：Execute ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "executing", message = "正在执行任务并收集结果…" }));
         int toolCallCount = 0;
         bool skipConfirm = request.SkipConfirmation;
 
@@ -827,6 +829,7 @@ public class ChatService : IChatService
         await _db.SaveChangesAsync(ct);
 
         // ── 阶段 3：Reflect ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "verifying", message = "已生成初稿，正在核验结果是否完整…" }));
         if (request.EnableReflector && assistantContent.Length > 100)
         {
             var reflectionContext = await BuildReflectionContextAsync(userId, agentInput, toolCallCount, ct);
@@ -852,6 +855,7 @@ public class ChatService : IChatService
         }
 
         // ── 阶段 5：Auto Memory ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "finalizing", message = "正在整理交付内容…" }));
         await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
 
         // 通知前端完成
@@ -882,6 +886,7 @@ public class ChatService : IChatService
         var modelConnection = ResolveTemporaryModel(requiresWork: true);
         var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "planning", message = "正在规划执行步骤…" }));
         if (request.EnablePlanner)
         {
             var toolNames = GetAvailableToolNames(request);
@@ -897,6 +902,7 @@ public class ChatService : IChatService
             }
         }
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "executing", message = "正在执行任务并收集结果…" }));
         string assistantContent;
         try
         {
@@ -915,6 +921,7 @@ public class ChatService : IChatService
         }
         if (ct.IsCancellationRequested) return;
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "finalizing", message = "正在整理交付内容…" }));
         // 临时聊天刻意跳过 AutoExtractAsync，避免从临时内容生成长期记忆。
         await callback("done", JsonSerializer.Serialize(new
         {

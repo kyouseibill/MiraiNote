@@ -1569,7 +1569,7 @@ async function reloadConversations() {
                     </article>
                   </details>
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
-                  <div v-if="msg.streaming && !msg.answer" class="chat-generation-status" role="status">
+                  <div v-if="msg.streaming && (!msg.answer || isWorkMode)" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{
                       store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
                     }}</span>
