@@ -129,6 +129,7 @@ public class ChatService : IChatService
     private readonly Services.Mirai.IMiraiContextProvider _contextProvider;
     private readonly IChatModelRegistry _modelRegistry;
     private readonly IChatModelProviderResolver _modelProviderResolver;
+    private readonly TimeSpan _workVerificationTimeout;
     private readonly ILogger<ChatService> _logger;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
@@ -189,6 +190,7 @@ public class ChatService : IChatService
         Services.Mirai.IMiraiContextProvider contextProvider,
         IChatModelRegistry modelRegistry,
         IChatModelProviderResolver modelProviderResolver,
+        IOptions<AiOptions> aiOptions,
         ILogger<ChatService> logger)
     {
         _db = db;
@@ -206,6 +208,7 @@ public class ChatService : IChatService
         _contextProvider = contextProvider;
         _modelRegistry = modelRegistry;
         _modelProviderResolver = modelProviderResolver;
+        _workVerificationTimeout = TimeSpan.FromSeconds(Math.Clamp(aiOptions.Value.WorkVerificationTimeoutSeconds, 5, 60));
         _logger = logger;
 
         // 注册所有工具
@@ -1232,7 +1235,7 @@ public class ChatService : IChatService
         var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
         var exportedFiles = new List<ExportedFileLink>();
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
 
         while (true)
         {
@@ -1609,7 +1612,7 @@ public class ChatService : IChatService
         var fullContent = new StringBuilder();
         var exportedFiles = new List<ExportedFileLink>();
 
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -1989,7 +1992,7 @@ public class ChatService : IChatService
 
         var tools = BuildToolDefinitions(request);
         var exportedFiles = new List<ExportedFileLink>();
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
         var fullContent = new StringBuilder();
         while (true)
         {

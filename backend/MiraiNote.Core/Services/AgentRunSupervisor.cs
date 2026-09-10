@@ -18,11 +18,17 @@ internal sealed record AgentRunDecision(string Status, string Reason, string Nex
 /// </summary>
 internal sealed class AgentRunSupervisor
 {
+    private readonly TimeSpan _verificationTimeout;
     private static readonly JsonSerializerOptions EvidenceJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private readonly HashSet<string> _observations = new(StringComparer.Ordinal);
     private int _stopsWithoutProgress;
     private int _repeatedObservations;
     private bool _hasTools;
+
+    internal AgentRunSupervisor(TimeSpan? verificationTimeout = null)
+    {
+        _verificationTimeout = verificationTimeout ?? TimeSpan.FromSeconds(15);
+    }
 
     internal void ObserveTool(string name, string arguments, string result)
     {
@@ -87,7 +93,7 @@ internal sealed class AgentRunSupervisor
             body["response_format"] = new { type = "json_object" };
             var bodyJson = JsonSerializer.Serialize(body);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromMinutes(2));
+            timeout.CancelAfter(_verificationTimeout);
             using var response = await SendModelRequestAsync(client, bodyJson, false, timeout.Token);
             response.EnsureSuccessStatusCode();
             using var envelope = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));

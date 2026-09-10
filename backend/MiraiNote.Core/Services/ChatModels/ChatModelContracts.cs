@@ -8,6 +8,8 @@ public sealed class AiOptions
     public const string SectionName = "AI";
 
     public string? DefaultModelKey { get; set; }
+    /// <summary>Work 完成校验的单次最长等待秒数（5..60）。</summary>
+    public int WorkVerificationTimeoutSeconds { get; set; } = 15;
     public List<AiProviderOptions> Providers { get; set; } = [];
 }
 
