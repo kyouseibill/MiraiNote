@@ -208,6 +208,19 @@ public class ChatSessionDetailDto
     public DateTime UpdatedAt { get; set; }
 }
 
+/// <summary>前端模型选择器使用的公开模型元数据；不包含密钥、Base URL 或上游错误。</summary>
+public class AiModelDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string ProviderDisplayName { get; set; } = string.Empty;
+    public string ModelId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool SupportsChat { get; set; }
+    public bool SupportsWork { get; set; }
+    public bool SupportsTools { get; set; }
+}
+
 public class ChatProjectDto
 {
     public int Id { get; set; }
