@@ -44,6 +44,7 @@ public class ServerAgentToolRegistry
     /// </summary>
     public async Task<string> ExecuteAsync(int userId, string toolName, string argsJson, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var tool = Get(toolName);
         if (tool == null)
             return $"未知工具：{toolName}";
@@ -51,6 +52,10 @@ public class ServerAgentToolRegistry
         try
         {
             return await tool.ExecuteAsync(userId, argsJson, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

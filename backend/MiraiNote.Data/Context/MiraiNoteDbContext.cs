@@ -30,6 +30,8 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<DailyBriefing> DailyBriefings => Set<DailyBriefing>();
     public DbSet<AIActionLog> AIActionLogs => Set<AIActionLog>();
     public DbSet<WelcomeGreeting> WelcomeGreetings => Set<WelcomeGreeting>();
+    public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
+    public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
@@ -173,6 +175,35 @@ public class MiraiNoteDbContext : DbContext
             .HasOne(m => m.Session)
             .WithMany(s => s.Messages)
             .HasForeignKey(m => m.SessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // ===== AgentRun：执行与 SSE 观察者解耦的持久化账本 =====
+        modelBuilder.Entity<AgentRun>()
+            .HasIndex(r => new { r.UserId, r.SessionId, r.Status });
+
+        modelBuilder.Entity<AgentRun>()
+            .HasIndex(r => new { r.Status, r.CreatedAt });
+
+        modelBuilder.Entity<AgentRun>()
+            .HasOne(r => r.User)
+            .WithMany()
+            .HasForeignKey(r => r.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AgentRun>()
+            .HasOne(r => r.Session)
+            .WithMany()
+            .HasForeignKey(r => r.SessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<AgentRunEvent>()
+            .HasIndex(e => new { e.RunId, e.Sequence })
+            .IsUnique();
+
+        modelBuilder.Entity<AgentRunEvent>()
+            .HasOne(e => e.Run)
+            .WithMany(r => r.Events)
+            .HasForeignKey(e => e.RunId)
             .OnDelete(DeleteBehavior.Cascade);
 
         // ===== AgentMemory：UserId + Key 唯一索引 =====

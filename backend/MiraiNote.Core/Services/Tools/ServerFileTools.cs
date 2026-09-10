@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -294,7 +295,8 @@ public class ServerShellTool : IServerAgentTool
     public string Name => "run_shell";
     public ToolRiskLevel RiskLevel => ToolRiskLevel.Dangerous;
     public string Description =>
-        "执行 Shell 命令（Windows cmd /c）。运行在当前用户的私有工作区目录下，超时 30 秒。" +
+        "执行 Shell 命令（Windows cmd /c）。运行在当前用户的私有工作区目录下，默认超时 120 秒，timeout_seconds 可设为 1–3600 秒。" +
+        "长任务请分批保存中间结果，超时后读取已有结果续跑；避免重复已完成的写入或发送。" +
         "支持所有常规命令：dir/ls、mkdir、del/rd、copy/move/rename、echo、type、python、node、git、curl、wget 等。" +
         "也支持通过 Python（requests、playwright、selenium）实现网页登录、页面抓取、HTTP 请求、自动化操作等任务。" +
         "仅禁止以下极少数破坏性命令（精确匹配）：rm -rf /、del /f /s c:、format、shutdown、reboot、dd if=、mkfs、chmod 777 /、rd /s /q c:。" +
@@ -306,6 +308,7 @@ public class ServerShellTool : IServerAgentTool
         Properties = new()
         {
             ["command"] = ToolParameterProperty.String("要执行的命令（必填）"),
+            ["timeout_seconds"] = ToolParameterProperty.Integer("超时秒数，1–3600，默认 120；浏览器或长脚本可适当增加"),
             ["working_dir"] = ToolParameterProperty.String("工作目录，不填默认用户私有工作区根目录")
         },
         Required = new() { "command" }
@@ -327,6 +330,10 @@ public class ServerShellTool : IServerAgentTool
         var args = JsonDocument.Parse(argumentsJson).RootElement;
         if (!ToolArgHelper.TryGetString(args, "command", out var command))
             return "执行失败：command 为必填项。";
+        var timeoutSeconds = 120;
+        if (args.TryGetProperty("timeout_seconds", out var timeoutArg) &&
+            (timeoutArg.ValueKind != JsonValueKind.Number || !timeoutArg.TryGetInt32(out timeoutSeconds) || timeoutSeconds is < 1 or > 3600))
+            return "执行失败：timeout_seconds 必须是 1–3600 之间的整数。";
 
         if (DangerousCommands.Any(dc => command.Contains(dc, StringComparison.OrdinalIgnoreCase)))
             return "安全限制：禁止执行危险命令。";
@@ -358,44 +365,42 @@ public class ServerShellTool : IServerAgentTool
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = $"/c {command}",
+                // Delayed expansion passes the command to the inner cmd only after the
+                // bootstrap is parsed, preserving nested quotes, pipes and redirections.
+                Arguments = "/d /v:on /c \"chcp 65001 >nul & cmd.exe /d /v:off /s /c !MIRAI_SHELL_COMMAND!\"",
                 WorkingDirectory = resolved,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                // chcp needs a console handle. Allocate a hidden console so cmd built-ins
+                // and UTF-8 Python output use the same encoding even when hosted by IIS.
+                CreateNoWindow = false,
+                WindowStyle = ProcessWindowStyle.Hidden
             };
+            psi.Environment["PYTHONIOENCODING"] = "utf-8";
+            psi.Environment["PYTHONUTF8"] = "1";
+            psi.Environment["MIRAI_SHELL_COMMAND"] = $"\"{command}\"";
 
             using var process = Process.Start(psi)!;
+            using var cancellationRegistration = ct.Register(() => StopProcessTree(process));
             // 必须并行读取 stdout/stderr，否则任一缓冲区写满都可能导致子进程与服务端互相等待。
             var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
             var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+            var timedOut = false;
             try
             {
                 await process.WaitForExitAsync(timeoutCts.Token);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                try
-                {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // 进程可能恰好已经退出。
-                }
-                try
-                {
-                    await Task.WhenAll(stdoutTask, stderrTask);
-                }
-                catch
-                {
-                    // 超时终止后输出流可能同步关闭，不影响超时结果。
-                }
-                return "命令执行超时（30 秒），进程已停止。";
+                timedOut = true;
+                StopProcessTree(process);
+                await process.WaitForExitAsync(ct);
             }
 
             var stdout = await stdoutTask;
@@ -404,8 +409,10 @@ public class ServerShellTool : IServerAgentTool
             var output = stdout.TrimEnd();
             if (!string.IsNullOrEmpty(stderr))
                 output += (output.Length > 0 ? "\n" : "") + $"[stderr]\n{stderr.TrimEnd()}";
-            if (string.IsNullOrEmpty(output))
-                output = $"(exit code: {process.ExitCode})";
+            if (timedOut)
+                output = $"命令执行超时（{timeoutSeconds} 秒），进程已停止。已保存的文件仍保留，请从中间结果续跑。\n{output}";
+            else if (process.ExitCode != 0 || string.IsNullOrEmpty(output))
+                output = $"(exit code: {process.ExitCode})\n{output}";
 
             return output.Length > 5000 ? output[..5000] + "\n... (输出已截断)" : output;
         }
@@ -417,6 +424,13 @@ public class ServerShellTool : IServerAgentTool
         {
             return $"执行命令失败：{ex.Message}";
         }
+    }
+
+    private static void StopProcessTree(Process process)
+    {
+        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        catch (InvalidOperationException) { }
+        catch (System.ComponentModel.Win32Exception) { }
     }
 
     private static async Task<string?> SkipInstalledPipPackagesAsync(string command, string workingDirectory, CancellationToken ct)
@@ -501,9 +515,18 @@ public class ServerShellTool : IServerAgentTool
         {
             using var process = Process.Start(psi);
             if (process == null) return false;
-            await process.WaitForExitAsync(ct);
+            using var cancellationRegistration = ct.Register(() => StopProcessTree(process));
+            // Even a broken Python import must not hang the whole task before the command starts.
+            using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var output = process.StandardOutput.ReadToEndAsync(ct);
+            var error = process.StandardError.ReadToEndAsync(ct);
+            try { await process.WaitForExitAsync(probeTimeout.Token); }
+            finally { StopProcessTree(process); }
+            await Task.WhenAll(output, error);
             return process.ExitCode == 0;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch
         {
             return false;

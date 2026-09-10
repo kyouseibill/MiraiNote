@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
+using MiraiNote.Core.Services.AgentRuns;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Chat;
@@ -20,6 +21,7 @@ public class ChatController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly ChatFileParserService _fileParser;
     private readonly ChatSessionRunGate _runGate;
+    private readonly IAgentRunService _agentRuns;
     private readonly ILogger<ChatController> _logger;
 
     // 确认状态：key = sessionId，value = TaskCompletionSource
@@ -31,12 +33,14 @@ public class ChatController : ControllerBase
         ICurrentUserService currentUser,
         ChatFileParserService fileParser,
         ChatSessionRunGate runGate,
+        IAgentRunService agentRuns,
         ILogger<ChatController> logger)
     {
         _service = service;
         _currentUser = currentUser;
         _fileParser = fileParser;
         _runGate = runGate;
+        _agentRuns = agentRuns;
         _logger = logger;
     }
 
@@ -237,6 +241,77 @@ public class ChatController : ControllerBase
                 streamCt),
             ct,
             ChatSessionRunGate.TemporaryKey(tempUserId, "default"));
+    }
+
+    /// <summary>
+    /// 创建持久化 Agent 任务。任务执行生命周期不再依赖此 HTTP 请求或后续 SSE 订阅。
+    /// </summary>
+    [HttpPost("sessions/{sessionId:int}/messages/agent/runs")]
+    public async Task<ActionResult<ApiResponse<AgentRunDto>>> CreateAgentRun(
+        int sessionId,
+        [FromBody] SendMessageRequest request,
+        CancellationToken ct)
+    {
+        var run = await _agentRuns.CreateAsync(_currentUser.UserId, sessionId, request, ct);
+        return Ok(ApiResponse<AgentRunDto>.Ok(MapAgentRun(run), "任务已创建"));
+    }
+
+    [HttpGet("agent-runs/{runId:guid}")]
+    public async Task<ActionResult<ApiResponse<AgentRunDto>>> GetAgentRun(Guid runId, CancellationToken ct)
+    {
+        var run = await _agentRuns.GetAsync(_currentUser.UserId, runId, ct);
+        return Ok(ApiResponse<AgentRunDto>.Ok(MapAgentRun(run)));
+    }
+
+    /// <summary>从 afterSequence 后补发事件，再持续订阅；订阅断开不会停止后台任务。</summary>
+    [HttpGet("agent-runs/{runId:guid}/events")]
+    public async Task SubscribeAgentRunEvents(Guid runId, [FromQuery] long afterSequence, CancellationToken ct)
+    {
+        ConfigureSseResponse();
+        long cursor = Math.Max(0, afterSequence);
+        while (!ct.IsCancellationRequested)
+        {
+            var events = await _agentRuns.GetEventsAsync(_currentUser.UserId, runId, cursor, ct);
+            foreach (var item in events)
+            {
+                await Response.WriteAsync($"id: {item.Sequence}\nevent: {item.Type}\ndata: {item.DataJson}\n\n", ct);
+                cursor = item.Sequence;
+            }
+            if (events.Count > 0) await Response.Body.FlushAsync(ct);
+
+            var run = await _agentRuns.GetAsync(_currentUser.UserId, runId, ct);
+            if (AgentRunState.IsTerminal(run.Status)) return;
+            if (run.Status == AgentRunStatus.Recoverable)
+            {
+                await Response.WriteAsync($"event: recoverable\ndata: {{\"runId\":\"{run.Id}\"}}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+                return;
+            }
+
+            // SQL is the source of truth; bounded polling also works when this API is scaled out.
+            await Task.Delay(TimeSpan.FromMilliseconds(750), ct);
+        }
+    }
+
+    [HttpPost("agent-runs/{runId:guid}/stop")]
+    public async Task<ActionResult<ApiResponse>> StopAgentRun(Guid runId, CancellationToken ct)
+    {
+        var stopped = await _agentRuns.StopAsync(_currentUser.UserId, runId, ct);
+        return Ok(ApiResponse.Ok(stopped ? "已停止" : "任务已结束"));
+    }
+
+    [HttpPost("agent-runs/{runId:guid}/confirm")]
+    public async Task<ActionResult<ApiResponse>> ConfirmAgentRun(Guid runId, [FromBody] AgentConfirmRequest request, CancellationToken ct)
+    {
+        var accepted = await _agentRuns.ConfirmAsync(_currentUser.UserId, runId, request.Confirmed, ct);
+        return accepted ? Ok(ApiResponse.Ok(request.Confirmed ? "已确认" : "已取消")) : Conflict(ApiResponse.Fail("没有待确认的操作"));
+    }
+
+    [HttpPost("agent-runs/{runId:guid}/resume")]
+    public async Task<ActionResult<ApiResponse>> ResumeAgentRun(Guid runId, CancellationToken ct)
+    {
+        var resumed = await _agentRuns.ResumeAsync(_currentUser.UserId, runId, ct);
+        return resumed ? Ok(ApiResponse.Ok("任务已恢复")) : Conflict(ApiResponse.Fail("任务当前不可恢复"));
     }
 
     /// <summary>
@@ -535,6 +610,18 @@ public class ChatController : ControllerBase
             // 客户端已断开，无法继续发送错误事件。
         }
     }
+
+    private static AgentRunDto MapAgentRun(AgentRunSnapshot run) => new()
+    {
+        RunId = run.Id,
+        SessionId = run.SessionId,
+        Status = run.Status,
+        LastSequence = run.LastSequence,
+        FailureMessage = run.FailureMessage,
+        CreatedAt = run.CreatedAt,
+        LastActivityAt = run.LastActivityAt,
+        RecoverableAt = run.RecoverableAt
+    };
 
     /// <summary>
     /// 上传聊天附件并提取文本内容。

@@ -1,6 +1,7 @@
 export interface ParsedSseEvent {
   type: string
   data: unknown
+  id?: string
 }
 
 export type ParsedSseCallback = (event: ParsedSseEvent) => void
@@ -39,6 +40,7 @@ export async function consumeSseResponse(
 
   const dispatchBlock = (block: string) => {
     let eventType = 'message'
+    let eventId: string | undefined
     const dataLines: string[] = []
 
     for (const rawLine of block.split(/\r?\n/)) {
@@ -51,6 +53,7 @@ export async function consumeSseResponse(
       if (value.startsWith(' ')) value = value.slice(1)
 
       if (field === 'event') eventType = value
+      if (field === 'id') eventId = value
       if (field === 'data') dataLines.push(value)
     }
 
@@ -63,7 +66,7 @@ export async function consumeSseResponse(
     } catch {
       // Plain-text SSE data is valid too.
     }
-    onEvent({ type: eventType, data })
+    onEvent({ type: eventType, data, id: eventId })
   }
 
   const drainCompleteBlocks = () => {

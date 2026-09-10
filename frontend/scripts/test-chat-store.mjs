@@ -233,6 +233,32 @@ test('cached detail refresh preserves an active streamed reply', async () => {
 })
 
 for (const method of ['sendMessageStream', 'sendAgentMessageStream']) {
+  test(`${method} a late old failure cannot clear a newer run`, async () => {
+    const old = deferred(), next = deferred()
+    let count = 0, nextEvent
+    const send = (_id, _payload, callback) => {
+      if (++count === 1) return old.promise
+      nextEvent = callback
+      return next.promise
+    }
+    const { store, errors } = createStore({ getSession: async () => detail(1), sendMessageStream: send }, { sendAgentMessageStream: send })
+    await store.openSession(1)
+    const first = store[method]('Old task')
+    store.stopGeneration()
+    const second = store[method]('New task')
+    nextEvent({ type: 'tool_call', data: { id: 'new-tool', name: 'read_file', arguments: '{}' } })
+    old.reject(new Error('Delayed disconnect'))
+    await first
+    assert.equal(store.sending, true)
+    assert.equal(store.streamSessionId, 1)
+    assert.ok(store.streamMessage)
+    assert.equal(store.toolCalls.length, 1)
+    assert.deepEqual(errors, ['info:已停止'])
+    nextEvent({ type: 'done', data: { messageId: 22, content: 'New result' } })
+    next.resolve()
+    assert.equal(await second, 'completed')
+  })
+
   test(`${method} restores failed attachments to their originating conversation`, async () => {
     const pending = deferred()
     const send = () => pending.promise

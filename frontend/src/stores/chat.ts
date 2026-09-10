@@ -25,9 +25,13 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const sessionsLoading = ref(false)
   const sending = ref(false)
+  const lastSendError = ref('')
   const projects = ref<ChatProject[]>([])
   const selectedProjectId = ref<number | null>(null)
   let activeAbortController: AbortController | null = null
+  /** 持久化 Agent 运行 ID；SSE 断开时任务仍由服务端继续。 */
+  let activeAgentRunId: string | null = null
+  const recoverableAgentRunId = ref<string | null>(null)
   /** 递增世代号：停止/新发送后丢弃旧 SSE 事件，防止旧 run 继续写 UI。 */
   let activeRunId = 0
 
@@ -373,7 +377,9 @@ export const useChatStore = defineStore('chat', () => {
 
       const stopPromise = temporary
         ? chatApi.stopTemporaryGeneration(tempId)
-        : chatApi.stopSessionGeneration(session.id)
+        : activeAgentRunId
+          ? agentApi.stopRun(activeAgentRunId)
+          : chatApi.stopSessionGeneration(session.id)
       void stopPromise.catch(() => { /* 忽略网络错误，本地已停止 */ })
     }
     if (wasSending) toast.info('已停止')
@@ -451,6 +457,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function sendMessageStream(content: string): Promise<ChatSendOutcome> {
     if (!currentSession.value) return 'failed'
+    lastSendError.value = ''
     const result: { outcome: ChatSendOutcome } = { outcome: 'failed' }
     const targetSession = currentSession.value
     const sessionId = targetSession.id
@@ -463,6 +470,7 @@ export const useChatStore = defineStore('chat', () => {
     // 新发送先中止旧本地流；服务端旧 run 由 ChatSessionRunGate.Enter 抢占取消。
     activeAbortController?.abort()
     activeAbortController = null
+    activeAgentRunId = null
 
     sending.value = true
     currentToolCall.value = ''
@@ -613,6 +621,7 @@ export const useChatStore = defineStore('chat', () => {
             break
           case 'error':
             result.outcome = 'failed'
+            lastSendError.value = event.data?.message || '对话出错，请重试'
             // 出错时清除 streamMessage 占位，给用户提示
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
@@ -624,6 +633,8 @@ export const useChatStore = defineStore('chat', () => {
       }
       await sendStream
     } catch (e: any) {
+      if (runId !== activeRunId || abortController.signal.aborted) return 'stopped'
+      lastSendError.value = '连接意外中断，未收到任务完成结果'
       result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
       const wasExecutingTool = hasRunningToolCalls()
       if (streamMessage.value?.id === activeStreamMessage.id) {
@@ -651,6 +662,7 @@ export const useChatStore = defineStore('chat', () => {
         if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, restored)
         if (stillInSendingSession) pendingAttachments.value = restored
       }
+      if (runId === activeRunId) {
       sending.value = false
       currentToolCall.value = ''
       toolCalls.value = []
@@ -666,6 +678,7 @@ export const useChatStore = defineStore('chat', () => {
       // 这里强制恢复为包含完整回复内容的 targetSession，避免界面显示空白。
       if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
         currentSession.value = targetSession
+      }
       }
     }
     return result.outcome
@@ -687,6 +700,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function sendAgentMessageStream(content: string): Promise<ChatSendOutcome> {
     if (!currentSession.value) return 'failed'
+    lastSendError.value = ''
     const result: { outcome: ChatSendOutcome } = { outcome: 'failed' }
     const targetSession = currentSession.value
     const sessionId = targetSession.id
@@ -698,6 +712,7 @@ export const useChatStore = defineStore('chat', () => {
 
     activeAbortController?.abort()
     activeAbortController = null
+    activeAgentRunId = null
 
     sending.value = true
     currentToolCall.value = ''
@@ -808,6 +823,11 @@ export const useChatStore = defineStore('chat', () => {
             contextUsage.value = event.data
             break
 
+          case 'recoverable':
+            recoverableAgentRunId.value = String(event.data?.runId || activeAgentRunId || '') || null
+            currentToolCall.value = '任务因服务重启中断，等待你确认继续执行…'
+            break
+
           case 'done':
             result.outcome = 'completed'
             const finalMsg: ChatMessage = {
@@ -856,6 +876,7 @@ export const useChatStore = defineStore('chat', () => {
             break
           case 'error':
             result.outcome = 'failed'
+            lastSendError.value = event.data?.message || '对话出错，请重试'
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value = null
             }
@@ -872,9 +893,20 @@ export const useChatStore = defineStore('chat', () => {
           abortController.signal,
         )
       } else {
-        await agentApi.sendAgentMessageStream(sessionId, payload, onEvent, abortController.signal)
+        await agentApi.sendAgentMessageStream(
+          sessionId,
+          payload,
+          onEvent,
+          abortController.signal,
+          (persistentRun) => {
+            activeAgentRunId = persistentRun.runId
+            recoverableAgentRunId.value = null
+          },
+        )
       }
     } catch (e: any) {
+      if (runId !== activeRunId || abortController.signal.aborted) return 'stopped'
+      lastSendError.value = '连接意外中断，未收到任务完成结果'
       result.outcome = e?.name === 'AbortError' ? 'stopped' : 'failed'
       const wasExecutingTool = hasRunningToolCalls()
       if (streamMessage.value?.id === activeStreamMessage.id) {
@@ -902,6 +934,7 @@ export const useChatStore = defineStore('chat', () => {
         if (sendingAttachmentDraftKey) attachmentDrafts.set(sendingAttachmentDraftKey, restored)
         if (stillInSendingSession) pendingAttachments.value = restored
       }
+      if (runId === activeRunId) {
       sending.value = false
       currentToolCall.value = ''
       toolCalls.value = []
@@ -912,9 +945,14 @@ export const useChatStore = defineStore('chat', () => {
         streamSessionId.value = null
       }
       if (activeAbortController === abortController) activeAbortController = null
+      if (result.outcome === 'completed' || result.outcome === 'stopped' || result.outcome === 'failed') {
+        activeAgentRunId = null
+        recoverableAgentRunId.value = null
+      }
       if (!temporary) sessionDetailsCache.set(sessionId, targetSession)
       if (currentSession.value?.id === sessionId && currentSession.value !== targetSession) {
         currentSession.value = targetSession
+      }
       }
     }
     return result.outcome
@@ -935,11 +973,20 @@ export const useChatStore = defineStore('chat', () => {
       }
     } else if (sid != null) {
       try {
-        await agentApi.confirmToolCall(sid, confirmed)
+        if (activeAgentRunId) await agentApi.confirmRun(activeAgentRunId, confirmed)
+        else await agentApi.confirmToolCall(sid, confirmed)
       } catch {
         // 忽略网络错误
       }
     }
+  }
+
+  async function resumeRecoverableAgentRun() {
+    const runId = recoverableAgentRunId.value
+    if (!runId) return
+    await agentApi.resumeRun(runId)
+    recoverableAgentRunId.value = null
+    currentToolCall.value = '任务正在继续执行…'
   }
 
 
@@ -1124,6 +1171,7 @@ export const useChatStore = defineStore('chat', () => {
     loading,
     sessionsLoading,
     sending,
+    lastSendError,
     streamMessage,
     streamSessionId,
     currentToolCall,
@@ -1155,6 +1203,8 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     sendMessageStream,
     sendAgentMessageStream,
+    recoverableAgentRunId,
+    resumeRecoverableAgentRun,
     confirmToolCall,
     updateTitle,
     pageToolEventsFor,

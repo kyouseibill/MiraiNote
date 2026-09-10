@@ -52,6 +52,14 @@ public class SendMessageRequest
     /// <summary>context 会话的对象快照（服务端注入，不参与序列化）。</summary>
     [JsonIgnore]
     public string? ContextSnapshot { get; set; }
+
+    /// <summary>恢复持久化 AgentRun 时复用原用户消息，避免再次写入相同提示词。</summary>
+    [JsonIgnore]
+    public int? ExistingUserMessageId { get; set; }
+
+    /// <summary>恢复任务时注入的最后一个已完成工具结果；不得序列化到客户端。</summary>
+    [JsonIgnore]
+    public string? ResumeCheckpointJson { get; set; }
 }
 
 public class SetSessionPinnedRequest
@@ -158,6 +166,19 @@ public class ChatMessageDto
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>持久化 Agent 运行状态；runId 用于断线后重新订阅或手动恢复。</summary>
+public class AgentRunDto
+{
+    public Guid RunId { get; set; }
+    public int SessionId { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public long LastSequence { get; set; }
+    public string? FailureMessage { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? LastActivityAt { get; set; }
+    public DateTime? RecoverableAt { get; set; }
 }
 
 /// <summary>

@@ -1056,7 +1056,7 @@ function restoreFailedDraft(targetId: number | undefined, text: string) {
   if (targetId != null && !inputDrafts.get(targetId)) inputDrafts.set(targetId, text)
   if (store.currentSession?.id === targetId) {
     uiErrorKind.value = 'send'
-    uiError.value = '回复未完成，消息和草稿已保留。你可以修改后重新发送。'
+    uiError.value = `${store.lastSendError ? `${store.lastSendError}。` : '回复未完成。'}消息和草稿已保留。你可以修改后重新发送。`
   }
 }
 
@@ -1423,6 +1423,10 @@ async function reloadConversations() {
         ><button class="chat-icon" aria-label="关闭错误提示" @click="uiError = ''">
           <IconX :size="15" />
         </button>
+      </div>
+      <div v-if="store.recoverableAgentRunId" class="chat-error" role="status">
+        <span>任务因服务重启中断，已保留进度。</span>
+        <button class="chat-link" @click="store.resumeRecoverableAgentRun">继续执行</button>
       </div>
       <div class="chat-conversation">
         <div ref="messagesContainer" class="chat-messages" data-testid="chat-messages" @scroll="handleScroll">

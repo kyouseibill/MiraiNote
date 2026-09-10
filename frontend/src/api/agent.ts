@@ -1,4 +1,4 @@
-import { getAccessToken, API_BASE_URL } from './auth'
+import { http, unwrap, getAccessToken, API_BASE_URL } from './auth'
 import { consumeSseResponseUntilTerminal } from './sse'
 
 export type AgentSseEventType =
@@ -12,6 +12,7 @@ export type AgentSseEventType =
   | 'reflection'
   | 'confirm'
   | 'context'
+  | 'recoverable'
   | 'done'
   | 'stopped'
   | 'error'
@@ -43,6 +44,15 @@ export interface AgentSseEvent {
 
 export type AgentSseCallback = (event: AgentSseEvent) => void
 
+export interface AgentRun {
+  runId: string
+  sessionId: number
+  status: string
+  lastSequence: number
+  failureMessage?: string
+  recoverableAt?: string
+}
+
 /** Agent 模式消息请求 */
 export interface AgentMessagePayload {
   content: string
@@ -73,29 +83,59 @@ export const agentApi = {
     payload: AgentMessagePayload,
     onEvent: AgentSseCallback,
     signal?: AbortSignal,
+    onRunCreated?: (run: AgentRun) => void,
   ): Promise<void> => {
+    const run = await unwrap<AgentRun>(http.post(`/chat/sessions/${sessionId}/messages/agent/runs`, payload))
+    onRunCreated?.(run)
     const token = getAccessToken()
-    const url = `${API_BASE_URL}/chat/sessions/${sessionId}/messages/agent/stream`
-    const response = await fetch(url, {
-      method: 'POST',
+    let afterSequence = 0
+    let attempts = 0
+    while (!signal?.aborted) {
+      const url = `${API_BASE_URL}/chat/agent-runs/${encodeURIComponent(run.runId)}/events?afterSequence=${afterSequence}`
+      const response = await fetch(url, {
+      method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(payload),
       credentials: 'include',
       signal,
     })
 
     if (!response.ok) {
-      onEvent({ type: 'error', data: { message: `HTTP ${response.status}` } })
-      return
+        throw new Error(`HTTP ${response.status}`)
     }
 
-    await consumeSseResponseUntilTerminal(response, (event) => {
-      onEvent({ type: event.type as AgentSseEventType, data: event.data })
-    }, signal)
+      try {
+        await consumeSseResponseUntilTerminal(response, (event) => {
+          const sequence = Number((event as any).id)
+          if (Number.isFinite(sequence)) afterSequence = Math.max(afterSequence, sequence)
+          onEvent({ type: event.type as AgentSseEventType, data: event.data })
+        }, signal)
+        return
+      } catch (error: any) {
+        if (signal?.aborted || error?.name === 'AbortError') throw error
+        const latest = await unwrap<AgentRun>(http.get(`/chat/agent-runs/${encodeURIComponent(run.runId)}`))
+        if (latest.status === 'recoverable') {
+          onEvent({ type: 'recoverable', data: { runId: run.runId } })
+          while (!signal?.aborted) {
+            await new Promise(resolve => setTimeout(resolve, 800))
+            const current = await unwrap<AgentRun>(http.get(`/chat/agent-runs/${encodeURIComponent(run.runId)}`))
+            if (current.status !== 'recoverable') break
+          }
+          continue
+        }
+        attempts += 1
+        onEvent({ type: 'heartbeat', data: { message: '任务仍在执行，正在重连…' } })
+        await new Promise(resolve => setTimeout(resolve, Math.min(8000, 500 * 2 ** attempts)))
+      }
+    }
   },
+
+  getRun: (runId: string) => unwrap<AgentRun>(http.get(`/chat/agent-runs/${encodeURIComponent(runId)}`)),
+  stopRun: (runId: string) => unwrap<null>(http.post(`/chat/agent-runs/${encodeURIComponent(runId)}/stop`)),
+  resumeRun: (runId: string) => unwrap<null>(http.post(`/chat/agent-runs/${encodeURIComponent(runId)}/resume`)),
+  confirmRun: (runId: string, confirmed: boolean) =>
+    unwrap<null>(http.post(`/chat/agent-runs/${encodeURIComponent(runId)}/confirm`, { confirmed })),
 
   /** 无状态临时 Agent 聊天。temporaryId 仅用于流内的操作确认。 */
   sendTemporaryAgentMessageStream: async (
