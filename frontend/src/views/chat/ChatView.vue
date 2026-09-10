@@ -23,7 +23,7 @@ import {
 import { chatApi } from '@/api/chat'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
-import type { ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
+import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -200,6 +200,11 @@ function readInitialUiMode(): ChatUiMode {
 }
 const uiMode = ref<ChatUiMode>(readInitialUiMode())
 const isWorkMode = computed(() => uiMode.value === 'work')
+const selectedModelKey = ref('')
+const currentModel = computed<AiModel | undefined>(() =>
+  store.availableModels.find((model) => model.key === store.currentSession?.modelKey),
+)
+const modelLabel = computed(() => currentModel.value?.displayName || store.currentSession?.modelKey || '默认模型')
 
 const toolStatusLabel: Record<ToolCallEvent['status'], string> = {
   running: '运行中',
@@ -983,13 +988,13 @@ async function scrollToBottom() {
   }
 }
 
-async function newSession() {
+async function newSession(modelKey = selectedModelKey.value || undefined) {
   if (creatingSession.value || store.sending) return false
   creatingSession.value = true
   uiError.value = ''
   uiErrorKind.value = 'create'
   try {
-    await store.createSession()
+    await store.createSession(undefined, modelKey)
     newSessionDraft.value = ''
     showSessionList.value = false
     await focusInput()
@@ -999,6 +1004,15 @@ async function newSession() {
     return false
   } finally {
     creatingSession.value = false
+  }
+}
+
+async function switchModel(event: Event) {
+  const nextModelKey = (event.target as HTMLSelectElement).value
+  if (!nextModelKey || nextModelKey === store.currentSession?.modelKey) return
+  selectedModelKey.value = nextModelKey
+  if (store.currentSession && !(await newSession(nextModelKey))) {
+    selectedModelKey.value = store.currentSession.modelKey || ''
   }
 }
 
@@ -1136,7 +1150,8 @@ watch(
 watch([inputContent, inputExpanded], resizeInput)
 
 onMounted(async () => {
-  await reloadConversations()
+  await Promise.all([reloadConversations(), store.fetchAvailableModels().catch(() => [])])
+  selectedModelKey.value = store.availableModels[0]?.key || ''
   await resizeInput()
 })
 
@@ -1189,7 +1204,7 @@ async function reloadConversations() {
             class="chat-new"
             data-testid="chat-new"
             :disabled="store.sending || creatingSession || uploadingFiles.size > 0"
-            @click="newSession"
+            @click="() => newSession()"
           >
             <IconLoader2 v-if="creatingSession" :size="17" class="chat-spin" /><IconPlus
               v-else
@@ -1371,6 +1386,19 @@ async function reloadConversations() {
             工作
           </button>
         </div>
+        <label class="chat-model-select" title="每个对话固定一个模型；切换会创建新对话">
+          <span>模型</span>
+          <select
+            :value="store.currentSession?.modelKey || selectedModelKey"
+            :disabled="store.sending || creatingSession || store.availableModels.length === 0"
+            aria-label="选择模型；切换会创建新对话"
+            @change="switchModel"
+          >
+            <option v-for="model in store.availableModels" :key="model.key" :value="model.key">
+              {{ model.displayName }}
+            </option>
+          </select>
+        </label>
         <div class="chat-header-title">
           <h1 :title="store.currentSession?.title">{{ store.currentSession?.title || 'Mirai Chat' }}</h1>
           <p>
@@ -1381,8 +1409,8 @@ async function reloadConversations() {
                 : isCurrentStreaming
                   ? '正在回复…'
                   : isWorkMode
-                    ? '工作台 · 工具与文件更醒目'
-                    : '给想法一点生长的空间'
+                ? `工作台 · ${modelLabel} · 工具与文件更醒目`
+                    : `${modelLabel} · 给想法一点生长的空间`
             }}
           </p>
         </div>

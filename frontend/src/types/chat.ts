@@ -7,6 +7,8 @@ export interface ChatSession {
   branchedFromSessionId?: number | null
   branchedFromMessageId?: number | null
   matchSnippet?: string | null
+  /** provider:modelId 格式；会话创建后不可修改。 */
+  modelKey?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -43,6 +45,7 @@ export interface ChatSessionDetail {
   projectId?: number | null
   branchedFromSessionId?: number | null
   branchedFromMessageId?: number | null
+  modelKey?: string | null
   messages: ChatMessage[]
   createdAt: string
   updatedAt: string
@@ -51,6 +54,18 @@ export interface ChatSessionDetail {
 export interface CreateSessionPayload {
   title?: string
   projectId?: number | null
+  modelKey?: string | null
+}
+
+export interface AiModel {
+  key: string
+  provider: string
+  providerDisplayName: string
+  modelId: string
+  displayName: string
+  supportsChat: boolean
+  supportsWork: boolean
+  supportsTools: boolean
 }
 
 export interface ChatProject {

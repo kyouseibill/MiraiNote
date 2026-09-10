@@ -10,6 +10,7 @@ import type {
   ChatProject,
   ChatProjectPayload,
   BranchSessionPayload,
+  AiModel,
 } from '@/types/chat'
 import { consumeSseResponseUntilTerminal } from './sse'
 
@@ -32,6 +33,8 @@ export interface SseEvent {
 export type SseCallback = (event: SseEvent) => void
 
 export const chatApi = {
+  getAvailableModels: () => unwrap<AiModel[]>(http.get('/ai/models')),
+
   getSessions: (projectId?: number | null) => unwrap<ChatSession[]>(http.get('/chat/sessions', {
     params: projectId == null ? undefined : { projectId },
   })),

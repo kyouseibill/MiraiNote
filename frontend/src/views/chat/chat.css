@@ -439,6 +439,30 @@
   outline: 2px solid var(--mn-indigo);
   outline-offset: 1px;
 }
+
+.chat-model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--chat-text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chat-model-select select {
+  max-width: 160px;
+  border: 1px solid var(--chat-line);
+  border-radius: 7px;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  padding: 5px 24px 5px 8px;
+  font: inherit;
+}
+
+.chat-model-select select:disabled {
+  cursor: not-allowed;
+  opacity: .64;
+}
 .chat-files-button.is-emphasized {
   border-color: rgba(76, 97, 120, 0.35);
   color: var(--mn-indigo-dark);
