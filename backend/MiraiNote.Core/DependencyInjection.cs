@@ -23,6 +23,9 @@ public static class DependencyInjection
         services.AddHostedService<Services.AgentRuns.AgentRunBackgroundService>();
         services.AddScoped<Services.IChatService, Services.ChatService>();
         services.AddSingleton<Services.ChatModels.IChatModelRegistry, Services.ChatModels.ChatModelRegistry>();
+        services.AddSingleton<Services.ChatModels.IChatModelProvider, Services.ChatModels.DeepSeekChatModelProvider>();
+        services.AddSingleton<Services.ChatModels.IChatModelProvider, Services.ChatModels.MiniMaxChatModelProvider>();
+        services.AddSingleton<Services.ChatModels.IChatModelProviderResolver, Services.ChatModels.ChatModelProviderResolver>();
         services.AddScoped<Services.ChatFileParserService>();
         services.AddSingleton<Services.IEmailService, Services.SmtpEmailService>();
         services.AddScoped<Services.IScheduledTaskService, Services.ScheduledTaskService>();
@@ -81,6 +84,10 @@ public static class DependencyInjection
         // 混合推理模型"思考+正文"可能远超 HttpClient 默认 100s 超时导致流被掐断，
         // 改为无限超时；由 ChatService 读取循环里的空闲超时兜底（长时间收不到新行才中断）。
         services.AddHttpClient("DeepSeek").ConfigureHttpClient(c =>
+        {
+            c.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+        });
+        services.AddHttpClient("ChatModel").ConfigureHttpClient(c =>
         {
             c.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
         });

@@ -80,6 +80,34 @@ public class ChatModelRegistryTests
         Assert.Equal("DeepSeek", model.ProviderDisplayName);
     }
 
+    [Fact]
+    public void MiniMax_provider_uses_the_openai_compatible_endpoint_and_reasoning_split()
+    {
+        var options = new AiOptions
+        {
+            Providers =
+            [
+                new AiProviderOptions
+                {
+                    Key = "minimax",
+                    DisplayName = "MiniMax",
+                    ApiKey = "test-minimax-key",
+                    BaseUrl = "https://api.minimax.io/v1",
+                    Models = [new AiModelOptions { Key = "minimax:MiniMax-M2.7", ModelId = "MiniMax-M2.7" }],
+                },
+            ],
+        };
+        var descriptor = new ChatModelDescriptor("minimax:MiniMax-M2.7", "minimax", "MiniMax", "MiniMax-M2.7", "MiniMax M2.7", true, true, true, true);
+
+        var connection = new MiniMaxChatModelProvider(Options.Create(options)).CreateConnection(descriptor);
+        var body = connection.CreateRequestBody(new[] { new { role = "user", content = "hello" } }, stream: true);
+
+        Assert.Equal("https://api.minimax.io/v1", connection.BaseUrl);
+        Assert.Equal("MiniMax-M2.7", connection.ModelId);
+        Assert.Equal("test-minimax-key", connection.ApiKey);
+        Assert.Equal(true, body["reasoning_split"]);
+    }
+
     private static ChatModelRegistry CreateRegistry(string deepSeekApiKey, string miniMaxApiKey) =>
         new(Options.Create(new AiOptions
         {

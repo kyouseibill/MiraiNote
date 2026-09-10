@@ -46,6 +46,7 @@ public class ChatModelPersistenceTests
             db,
             new AgentRunDispatcher(),
             Mock.Of<IChatService>(),
+            CreateRegistry("minimax", "MiniMax-M2.7"),
             NullLogger<AgentRunService>.Instance);
 
         await service.CreateAsync(1, session.Id, new SendMessageRequest { Content = "执行调研" }, default);
@@ -53,6 +54,30 @@ public class ChatModelPersistenceTests
         var run = await db.AgentRuns.SingleAsync();
         Assert.Equal("minimax", run.AiProvider);
         Assert.Equal("MiniMax-M2.7", run.AiModel);
+    }
+
+    [Fact]
+    public async Task Creating_a_work_run_locks_the_default_model_for_a_legacy_session()
+    {
+        using var fixture = new MiraiTestFixture();
+        await using var db = fixture.CreateContext();
+        var session = new ChatSession { UserId = 1, Title = "旧会话" };
+        db.ChatSessions.Add(session);
+        await db.SaveChangesAsync();
+        var service = new AgentRunService(
+            db,
+            new AgentRunDispatcher(),
+            Mock.Of<IChatService>(),
+            CreateRegistry("deepseek", "deepseek-v4-flash"),
+            NullLogger<AgentRunService>.Instance);
+
+        await service.CreateAsync(1, session.Id, new SendMessageRequest { Content = "继续执行" }, default);
+
+        var run = await db.AgentRuns.SingleAsync();
+        Assert.Equal("deepseek", run.AiProvider);
+        Assert.Equal("deepseek-v4-flash", run.AiModel);
+        Assert.Equal("deepseek", session.AiProvider);
+        Assert.Equal("deepseek-v4-flash", session.AiModel);
     }
 
     [Fact]
@@ -98,4 +123,8 @@ public class ChatModelPersistenceTests
         Assert.Equal("deepseek", persisted.AiProvider);
         Assert.Equal("deepseek-v4-flash", persisted.AiModel);
     }
+
+    private static IChatModelRegistry CreateRegistry(string provider, string model) =>
+        Mock.Of<IChatModelRegistry>(registry => registry.ResolveForExistingSession(It.IsAny<string?>(), It.IsAny<string?>()) ==
+            new ChatModelDescriptor($"{provider}:{model}", provider, provider, model, model, true, true, true, true));
 }

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using MiraiNote.Core.Services.ChatModels;
 
 namespace MiraiNote.Core.Services;
 
@@ -45,7 +46,7 @@ internal sealed class AgentRunSupervisor
         : null;
 
     internal async Task<AgentRunDecision> ReviewAsync(
-        HttpClient client, string model, List<object> messages, string candidate,
+        HttpClient client, ChatModelConnection modelConnection, List<object> messages, string candidate,
         string finishReason, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -76,20 +77,18 @@ internal sealed class AgentRunSupervisor
             """;
         try
         {
-            var body = JsonSerializer.Serialize(new
+            var body = modelConnection.CreateRequestBody(new object[]
                 {
-                    model, stream = false, max_tokens = 2048,
-                    response_format = new { type = "json_object" },
-                    messages = new object[]
-                    {
-                        new { role = "system", content = instructions },
-                        new { role = "user", content = JsonSerializer.Serialize(new
-                            { conversation = messages, candidate, hasToolResults = _hasTools }, EvidenceJson) }
-                    }
-                });
+                    new { role = "system", content = instructions },
+                    new { role = "user", content = JsonSerializer.Serialize(new
+                        { conversation = messages, candidate, hasToolResults = _hasTools }, EvidenceJson) }
+                }, stream: false);
+            body[modelConnection.ProviderKey == "minimax" ? "max_completion_tokens" : "max_tokens"] = 2048;
+            body["response_format"] = new { type = "json_object" };
+            var bodyJson = JsonSerializer.Serialize(body);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromMinutes(2));
-            using var response = await SendModelRequestAsync(client, body, false, timeout.Token);
+            using var response = await SendModelRequestAsync(client, bodyJson, false, timeout.Token);
             response.EnsureSuccessStatusCode();
             using var envelope = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
             var json = envelope.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
@@ -105,6 +104,13 @@ internal sealed class AgentRunSupervisor
             return ContinueOrInterrupt("暂时无法验证任务完成。请依据已有结果继续检查并完成剩余工作。");
         }
     }
+
+    // Retained for the existing supervisor tests and callers outside model selection.
+    internal Task<AgentRunDecision> ReviewAsync(
+        HttpClient client, string model, List<object> messages, string candidate,
+        string finishReason, CancellationToken ct) =>
+        ReviewAsync(client, new ChatModelConnection("deepseek", model, "http://localhost", string.Empty, UsesReasoningSplit: false),
+            messages, candidate, finishReason, ct);
 
     // Only retry model requests before any tool executes. Tools with side effects are
     // never automatically replayed by the transport retry policy.
@@ -164,11 +170,10 @@ internal sealed class AgentRunSupervisor
         return new("continue", reason, string.IsNullOrEmpty(nextStep) ? reason : nextStep);
     }
 
-    internal static void AddContinuation(List<object> messages, string content, AgentRunDecision decision,
+    internal static void AddContinuation(List<object> messages, ChatModelConnection modelConnection, string content, AgentRunDecision decision,
         string? reasoningContent = null)
     {
-        messages.Add(new { role = "assistant", content,
-            reasoning_content = reasoningContent });
+        messages.Add(modelConnection.CreateAssistantHistoryMessage(content, reasoningContent));
         messages.Add(new { role = "system", content = $"任务完成检查：{decision.Reason}\n下一步：{decision.NextStep}\n继续当前用户已授权目标，完成并验证后再最终回复。" });
     }
 
