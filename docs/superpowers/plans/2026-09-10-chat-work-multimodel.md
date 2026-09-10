@@ -124,7 +124,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit Task 1**
 
 ```bash
-git add backend/MiraiNote.Core/Services/ChatModels backend/MiraiNote.Data backend/MiraiNote.Shared/Dtos/Chat/ChatDtos.cs backend/MiraiNote.Core/Services/ChatService.cs backend/MiraiNote.Core/DependencyInjection.cs backend/MiraiNote.API/appsettings.json backend/MiraiNote.Tests/ChatModel* 
+git add backend/MiraiNote.Core/Services/ChatModels backend/MiraiNote.Data backend/MiraiNote.Shared/Dtos/Chat/ChatDtos.cs backend/MiraiNote.Core/Services/ChatService.cs backend/MiraiNote.Core/DependencyInjection.cs backend/MiraiNote.API/appsettings.json backend/MiraiNote.Tests/ChatModel*
 git commit -m "feat(chat): lock model selection per session"
 ```
 
