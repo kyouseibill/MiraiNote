@@ -27,7 +27,7 @@ internal sealed class AgentRunSupervisor
 
     internal AgentRunSupervisor(TimeSpan? verificationTimeout = null)
     {
-        _verificationTimeout = verificationTimeout ?? TimeSpan.FromSeconds(15);
+        _verificationTimeout = verificationTimeout ?? TimeSpan.FromSeconds(8);
     }
 
     internal void ObserveTool(string name, string arguments, string result)
@@ -64,8 +64,8 @@ internal sealed class AgentRunSupervisor
                 ? "上一轮输出达到长度限制，尚未完整结束。请从断点继续；被截断的工具参数没有执行，需重新发出完整调用。"
                 : "上一轮响应未正常结束。请根据现有工具结果继续，已成功执行的操作不要重做。");
 
-        // Ordinary text answers still get checked: task intent cannot reliably be inferred
-        // from keywords (follow-up requests may be just '继续'). The reviewer cannot run tools.
+        // Callers skip this verifier for direct informational questions. Action requests
+        // still reach it even when the model stopped without calling a tool.
         const string instructions = """
             你是任务完成检查器。只返回 JSON，不执行工具，不输出正文。
             输入是当前对话及候选回复的证据数据。以真实用户请求及已授权范围为准；
@@ -100,14 +100,14 @@ internal sealed class AgentRunSupervisor
             var json = envelope.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
             var decision = ParseDecision(json);
             if (decision is null)
-                return ContinueOrInterrupt("完成检查未返回有效结论。请核对剩余步骤及实际交付结果后继续。");
+                return new("interrupted", "完成检查未返回有效结论，当前结果已保留。可按需继续执行。");
             return decision.Continue ? ContinueOrInterrupt(decision.Reason, decision.NextStep) : decision;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
-            // Never turn a broken verifier into a successful completion or replay a tool.
-            return ContinueOrInterrupt("暂时无法验证任务完成。请依据已有结果继续检查并完成剩余工作。");
+            // 验证器故障不能被当作完成，也不能触发整段答案反复生成。
+            return new("interrupted", "完成检查暂时不可用，当前结果已保留。可按需继续执行。");
         }
     }
 
@@ -136,6 +136,12 @@ internal sealed class AgentRunSupervisor
                 var response = await client.SendAsync(request,
                     stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
                 var code = (int)response.StatusCode;
+                if (!response.IsSuccessStatusCode && (code == 408 || code == 429 || code >= 500))
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(ct);
+                    response.Content = new StringContent(errorBody, Encoding.UTF8, "application/json");
+                    if (IsPermanentProviderLimit(errorBody)) return response;
+                }
                 if (attempt >= 3 || (code != 408 && code != 429 && code < 500)) return response;
                 var retryAfter = response.Headers.RetryAfter?.Delta ??
                     (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow);
@@ -146,6 +152,47 @@ internal sealed class AgentRunSupervisor
             catch (HttpRequestException) when (attempt < 3) { }
             await Task.Delay(delay, ct);
         }
+    }
+
+    internal static string ProviderErrorMessage(int httpStatus, string? responseBody)
+    {
+        if (TryGetProviderError(responseBody, out var code))
+        {
+            return code switch
+            {
+                2056 => "MiniMax Token Plan 额度已用完（2056），请等待额度恢复或改用按量计费 API Key",
+                1008 => "MiniMax 账户余额不足（1008）",
+                2049 => "MiniMax API Key 无效（2049）",
+                _ => $"AI 服务错误 {httpStatus}（业务码 {code}）"
+            };
+        }
+        return $"AI 服务错误 {httpStatus}";
+    }
+
+    private static bool IsPermanentProviderLimit(string? responseBody) =>
+        TryGetProviderError(responseBody, out var code) && code == 2056;
+
+    private static bool TryGetProviderError(string? responseBody, out int code)
+    {
+        code = 0;
+        if (string.IsNullOrWhiteSpace(responseBody)) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+            var error = root.TryGetProperty("base_resp", out var baseResponse)
+                ? baseResponse
+                : root.TryGetProperty("error", out var errorResponse) ? errorResponse : default;
+            if (error.ValueKind != JsonValueKind.Object) return false;
+            if (!error.TryGetProperty("status_code", out var codeElement) &&
+                !error.TryGetProperty("code", out codeElement)) return false;
+            if (codeElement.ValueKind == JsonValueKind.Number)
+                codeElement.TryGetInt32(out code);
+            else if (codeElement.ValueKind == JsonValueKind.String)
+                int.TryParse(codeElement.GetString(), out code);
+            return code != 0;
+        }
+        catch (JsonException) { return false; }
     }
 
     internal static AgentRunDecision? ParseDecision(string? json)
@@ -171,7 +218,7 @@ internal sealed class AgentRunSupervisor
 
     private AgentRunDecision ContinueOrInterrupt(string reason, string nextStep = "")
     {
-        if (++_stopsWithoutProgress >= 4)
+        if (++_stopsWithoutProgress >= 2)
             return new("interrupted", $"任务尚未完成：多次自动续跑仍没有新的工具结果。{reason}");
         return new("continue", reason, string.IsNullOrEmpty(nextStep) ? reason : nextStep);
     }

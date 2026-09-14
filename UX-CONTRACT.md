@@ -16,19 +16,23 @@ This records the chat migration of 2026-09-05. API authorization, persistence an
 
 Ordinary messages persist through the existing server APIs. Temporary chat remains unsaved and clearly explains loss on close/switch. Search terms are transient in-memory state because message searches can contain private content; they are not written into URLs. Superseded list/detail requests must not overwrite the user's newer selection.
 
+Chat and Work share conversations, attachments and the session-fixed model, but not execution authority. Chat may search the web and records, fetch webpages, and read or list workspace files; it does not expose write, shell, login, send, delete or other side-effect tools, and it does not run completion verification. Work exposes the full authorized tool set and completion checks for action requests. A direct question answered in Work without tool execution finishes immediately instead of entering completion verification. The header and composer helper name these differences without changing the established layout.
+
 Each session retains its own in-memory draft while switching conversations. No chat text is added to browser persistent storage. The composer can accept the next draft while another reply is streaming; submitting waits until generation completes. Creating or sending prevents duplicate requests. Uploads are finished before sending; unsupported images retain the existing explanation.
 
 Enter sends, Shift+Enter inserts a newline, and IME composition never submits. Sending and switching to a conversation scrolls to its end. Incoming content follows the bottom only while the reader is near it; scrolling up exposes a return-to-latest button.
 
 ## Messages and actions
 
-User text is escaped by Vue text interpolation. Assistant Markdown uses useMarkdown/DOMPurify. Thinking is a disclosure and message text/actions remain readable without hover. Copy acknowledges success and reports clipboard failures. Editing and regenerating preserve the existing branch behavior. Generated files retain preview/download support.
+User text is escaped by Vue text interpolation. Assistant Markdown uses useMarkdown/DOMPurify. Thinking is a disclosure and message text/actions remain readable without hover. Opening an overflowing thinking panel positions its inner scroll at the newest content without moving the outer conversation. Copy acknowledges success and reports clipboard failures. Editing and regenerating preserve the existing branch behavior. Generated files retain preview/download support.
 
 ## Dialogs and recovery
 
 AppDialog uses native showModal for inert background and focus containment, provides title and description, handles Escape/backdrop, and restores focus to the invoking control. Busy mutations keep forms open and prevent repeated submission or dismissal. Delete describes consequences and defaults focus to cancel. Rename/edit focus their field. A mobile navigation drawer contains focus and closes on Escape.
 
 Project, rename and message edit inputs retain their contents on failure with inline feedback. Archive remains recoverable through the archive manager. High-risk tool execution retains the existing confirmation contract and arguments. No browser-native alert, confirm or prompt is added.
+
+The visible stream reaches its terminal state before noncritical memory extraction begins. A failed or malformed completion review ends with an explanatory status instead of repeatedly regenerating the same answer. A review may request at most one automatic continuation without new tool evidence. Provider quota errors that are known to be permanent for the current request are surfaced directly and are not retried as transient throttling.
 
 ## Verification boundary
 

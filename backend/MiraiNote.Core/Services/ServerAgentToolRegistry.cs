@@ -25,9 +25,12 @@ public class ServerAgentToolRegistry
     /// <summary>
     /// 生成符合 Function Calling 格式的工具定义。
     /// </summary>
-    public object[] BuildToolDefinitions(ISet<string>? excludedNames = null) =>
+    public object[] BuildToolDefinitions(
+        ISet<string>? excludedNames = null,
+        ISet<string>? includedNames = null) =>
         _tools.Values
         .Where(t => excludedNames == null || !excludedNames.Contains(t.Name))
+        .Where(t => includedNames == null || includedNames.Contains(t.Name))
         .Select(t => new
         {
             type = "function",

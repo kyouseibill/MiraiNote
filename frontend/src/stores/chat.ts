@@ -608,6 +608,12 @@ export const useChatStore = defineStore('chat', () => {
               targetSession.title = event.data.title
               sessionDetailsCache.set(sessionId, targetSession)
             }
+            if (runId === activeRunId) {
+              sending.value = false
+              currentToolCall.value = ''
+              toolCalls.value = []
+              if (streamSessionId.value === sessionId) streamSessionId.value = null
+            }
             break
 
           case 'stopped':
@@ -861,6 +867,12 @@ export const useChatStore = defineStore('chat', () => {
               }
               targetSession.title = event.data.title
               sessionDetailsCache.set(sessionId, targetSession)
+            }
+            if (runId === activeRunId) {
+              sending.value = false
+              currentToolCall.value = ''
+              toolCalls.value = []
+              if (streamSessionId.value === sessionId) streamSessionId.value = null
             }
             break
 

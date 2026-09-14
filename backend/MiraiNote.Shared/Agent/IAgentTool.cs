@@ -60,12 +60,16 @@ public class ToolParameterSchema
     {
         type = "object",
         properties = Properties.ToDictionary(
-            kv => kv.Key,
-            kv => (object)new
+            kv => kv.Key, kv =>
             {
-                type = kv.Value.Type,
-                description = kv.Value.Description,
-                @enum = kv.Value.EnumValues?.Count > 0 ? kv.Value.EnumValues : null
+                var property = new Dictionary<string, object?>
+                {
+                    ["type"] = kv.Value.Type,
+                    ["description"] = kv.Value.Description
+                };
+                if (kv.Value.EnumValues?.Count > 0) property["enum"] = kv.Value.EnumValues;
+                if (kv.Value.Items != null) property["items"] = kv.Value.Items;
+                return (object)property;
             }),
         required = Required.Count > 0 ? Required : null
     };
@@ -76,11 +80,13 @@ public class ToolParameterProperty
     public string Type { get; init; } = "string";
     public string Description { get; init; } = "";
     public List<string>? EnumValues { get; init; }
+    public object? Items { get; init; }
 
     public static ToolParameterProperty String(string desc) => new() { Type = "string", Description = desc };
     public static ToolParameterProperty Integer(string desc) => new() { Type = "integer", Description = desc };
     public static ToolParameterProperty Boolean(string desc) => new() { Type = "boolean", Description = desc };
     public static ToolParameterProperty Enum(string desc, List<string> values) => new() { Type = "string", Description = desc, EnumValues = values };
+    public static ToolParameterProperty Array(string desc, object items) => new() { Type = "array", Description = desc, Items = items };
 }
 
 /// <summary>

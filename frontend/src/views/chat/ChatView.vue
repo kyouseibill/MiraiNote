@@ -186,7 +186,7 @@ const showArtifacts = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 const sidebarCollapsed = ref(false)
 
-/** Chat / Work 双模式：会话数据共用，只改默认 UI 侧重。 */
+/** Chat / Work 双模式：会话数据共用，工具权限与完成检查策略不同。 */
 const CHAT_UI_MODE_KEY = 'mirainote:chat:uiMode'
 type ChatUiMode = 'chat' | 'work'
 function readInitialUiMode(): ChatUiMode {
@@ -317,6 +317,16 @@ function handleScroll() {
   const el = messagesContainer.value
   if (el) atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 72
 }
+
+function scrollThinkingToEnd(event: Event) {
+  const details = event.currentTarget as HTMLDetailsElement
+  if (!details.open) return
+  void nextTick().then(() => {
+    const content = details.querySelector<HTMLElement>('.chat-markdown')
+    if (content) content.scrollTop = content.scrollHeight
+  })
+}
+
 async function copyMessage(message: ChatMessage) {
   try {
     await navigator.clipboard.writeText(
@@ -1409,8 +1419,8 @@ async function reloadConversations() {
                 : isCurrentStreaming
                   ? '正在回复…'
                   : isWorkMode
-                ? `工作台 · ${modelLabel} · 工具与文件更醒目`
-                    : `${modelLabel} · 给想法一点生长的空间`
+                    ? `工作模式 · ${modelLabel} · 执行操作并检查交付`
+                    : `对话模式 · ${modelLabel} · 只读联网与读取文件`
             }}
           </p>
         </div>
@@ -1484,7 +1494,7 @@ async function reloadConversations() {
                 </div>
                 <div v-if="msg.role === 'user'" class="chat-user-content">{{ msg.content }}</div>
                 <div v-else class="chat-assistant-content">
-                  <details v-if="msg.thinking" class="chat-thinking">
+                  <details v-if="msg.thinking" class="chat-thinking" @toggle="scrollThinkingToEnd">
                     <summary>
                       <span>{{ msg.streaming && !msg.answer ? '正在思考' : '思考过程' }}</span>
                     </summary>
@@ -1731,7 +1741,7 @@ async function reloadConversations() {
           </div>
         </div>
         <div class="chat-composer-help">
-          <span>支持 PDF、Word、Excel 和文本</span
+          <span>{{ isWorkMode ? '可执行工具、修改文件并检查交付' : '可联网检索、读取网页与文件' }}</span
           ><span
             v-if="store.contextUsage"
             class="chat-context"

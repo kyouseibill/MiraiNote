@@ -192,7 +192,12 @@ export async function fetchExportPreview(url: string): Promise<ExportPreviewResu
 }
 
 export function isExportPreviewable(extension: string): boolean {
-  return ['.md', '.markdown', '.txt', '.pdf'].includes(extension.toLowerCase())
+  return [
+    '.md', '.markdown', '.txt', '.pdf', '.csv', '.tsv', '.html', '.htm', '.xml',
+    '.yaml', '.yml', '.toml', '.ini', '.log', '.sql', '.ts', '.js', '.tsx', '.jsx',
+    '.py', '.cs', '.java', '.go', '.rs', '.c', '.cpp', '.h', '.css', '.scss', '.less',
+    '.vue', '.sh', '.bat', '.ps1', '.conf', '.config', '.properties', '.json',
+  ].includes(extension.toLowerCase())
 }
 
 export function isMarkdownExport(extension: string): boolean {

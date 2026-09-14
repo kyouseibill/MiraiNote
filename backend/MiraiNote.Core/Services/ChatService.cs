@@ -137,6 +137,23 @@ public class ChatService : IChatService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    private static readonly HashSet<string> ChatReadOnlyToolNames = new(StringComparer.Ordinal)
+    {
+        "search_work_logs", "search_memos", "search_life_logs", "get_weekly_reports",
+        "search_internet", "fetch_web_page", "get_weather", "query_calendar",
+        "get_current_time", "calculate", "record_overview", "read_file", "list_files",
+        "list_scheduled_tasks", "recall"
+    };
+
+    private const string ChatReadOnlyPrompt = """
+
+        【对话模式】
+        - 可以使用提供的只读工具搜索互联网、读取公开网页、读取工作区文件并查询个人记录。
+        - 用户上传或选择的文件内容已附在消息中，应直接基于真实内容回答。
+        - 当前模式不允许创建、修改、删除、发送、登录、运行 Shell 或写入文件；需要执行操作时，说明应切换到工作模式。
+        - 只读工具完成后直接回答，不运行任务完成检查。
+        """;
+
     public ChatService(
         MiraiNoteDbContext db,
         IOptions<DeepSeekOptions> deepSeekOptions,
@@ -629,13 +646,13 @@ public class ChatService : IChatService
 
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
-        // 3. 普通 Chat 只请求模型文本，不附带执行工具，也不进行完成检查。
+        // 3. 普通 Chat 可调用只读工具，但不开放副作用工具，也不进行完成检查。
         var partial = new StringBuilder();
         var trackingCallback = TrackTokenCallback(callback, partial);
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, history, request, trackingCallback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, userId, history, request, trackingCallback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -696,7 +713,7 @@ public class ChatService : IChatService
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, history, request, callback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, userId, history, request, callback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -857,11 +874,7 @@ public class ChatService : IChatService
             }
         }
 
-        // ── 阶段 5：Auto Memory ──
-        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "finalizing", message = "正在整理交付内容…" }));
-        await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
-
-        // 通知前端完成
+        // 先通知前端完成。自动记忆属于非关键后处理，不能让已显示的答案继续停留在“回复中”。
         await callback("done", JsonSerializer.Serialize(new
         {
             messageId = assistantMsg.Id,
@@ -869,6 +882,8 @@ public class ChatService : IChatService
             title = session.Title,
             createdAt = assistantMsg.CreatedAt
         }));
+
+        await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
     }
 
     public async Task SendTemporaryMessageAgentStreamAsync(
@@ -976,6 +991,35 @@ public class ChatService : IChatService
             .Where(t => request is not TemporaryChatRequest || !TemporaryExcludedToolNames.Contains(t.Name))
             .Select(t => t.Name)
             .ToList();
+
+    private static readonly Regex WorkQuestionOnlyPattern = new(
+        @"^(?:为什么|为何|怎么|如何|是否|什么|哪些|哪里|哪儿|谁|何时|多久|有何|有什么|区别)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkInformationalLeadPattern = new(
+        @"^(?:请(?:解释|说明|介绍)|告诉我|解释|说明|介绍|回答)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkCompletionReviewPattern = new(
+        @"开始|继续|完成|生成|产出|创建|写入|修改|更新|删除|发布|部署|登录|测试|调研|导出|下载|上传|安装|运行|执行|保存|发送|整理|处理|检查|核验|制作|搭建|实现|开发|编写|修复|修一下|打开|合并|提交|推送|同步|做个|做一下",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkMixedActionPattern = new(
+        @"(?:并|并且|然后|随后|同时|再|接着).{0,12}(?:生成|产出|创建|写入|修改|更新|删除|发布|部署|登录|测试|调研|导出|下载|上传|安装|运行|执行|保存|发送|整理|处理|检查|核验|制作|搭建|实现|开发|编写|修复|打开|合并|提交|推送|同步|做个|做一下)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    internal static bool ShouldReviewWorkCompletion(
+        SendMessageRequest request,
+        string finishReason)
+    {
+        if (finishReason != "stop" || !string.IsNullOrWhiteSpace(request.ResumeCheckpointJson)) return true;
+
+        var prompt = request.Content?.Trim() ?? string.Empty;
+        if (WorkQuestionOnlyPattern.IsMatch(prompt)) return false;
+        if (WorkInformationalLeadPattern.IsMatch(prompt) && !WorkMixedActionPattern.IsMatch(prompt)) return false;
+
+        return WorkCompletionReviewPattern.IsMatch(prompt);
+    }
 
     private Task<string> ExecuteToolAsync(
         int userId,
@@ -1252,8 +1296,9 @@ public class ChatService : IChatService
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                await callback("error", JsonSerializer.Serialize(new { message = $"AI 服务错误 {(int)httpResp.StatusCode}" }));
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}", 500);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
             }
 
             var (content, toolCalls, finishReason, reasoningContent, modelContent) = await ParseDeepSeekStreamAsync(
@@ -1264,6 +1309,9 @@ public class ChatService : IChatService
 
             if (finishReason != "tool_calls" || toolCalls.Count == 0)
             {
+                if (!ShouldReviewWorkCompletion(request, finishReason))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback, ct);
                 var decision = await supervisor.ReviewAsync(client, modelConnection, messages, content, finishReason, ct);
                 if (decision.Continue)
                 {
@@ -1571,27 +1619,76 @@ public class ChatService : IChatService
 
     private async Task<string> CallDeepSeekChatStreamAsync(
         ChatModelConnection modelConnection,
+        int userId,
         List<ChatMessage> history,
         SendMessageRequest request,
         ChatStreamCallback callback,
         CancellationToken ct)
     {
         var client = CreateModelClient(modelConnection);
-        var body = modelConnection.CreateRequestBody(
-            BuildMessages(history, BuildSystemPromptForRequest(request), request),
-            stream: true);
-        var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
-        using var response = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            await callback("error", JsonSerializer.Serialize(new { message = $"AI 服务错误 {(int)response.StatusCode}" }));
-            throw new BusinessException($"AI 服务错误 {(int)response.StatusCode}", 500);
-        }
+        var messages = BuildMessages(history, BuildSystemPromptForRequest(request) + ChatReadOnlyPrompt, request);
+        var excluded = request is TemporaryChatRequest ? TemporaryExcludedToolNames : null;
+        var tools = _toolRegistry.BuildToolDefinitions(excluded, ChatReadOnlyToolNames);
+        var fullContent = new StringBuilder();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
 
-        var (content, _, _, _, _) = await ParseDeepSeekStreamAsync(
-            modelConnection,
-            await response.Content.ReadAsStreamAsync(ct), callback, ct);
-        return content;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (supervisor.CheckStalled() is { } stalled)
+                return fullContent + AgentRunSupervisor.StopMessage(stalled);
+
+            var body = modelConnection.CreateRequestBody(messages, stream: true, tools: tools, includeTools: true);
+            var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
+            using var response = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)response.StatusCode, errorBody);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
+            }
+
+            var (content, toolCalls, finishReason, reasoningContent, modelContent) = await ParseDeepSeekStreamAsync(
+                modelConnection, await response.Content.ReadAsStreamAsync(ct), callback, ct);
+            if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
+            if (finishReason != "tool_calls" || toolCalls.Count == 0) return fullContent.ToString();
+
+            messages.Add(modelConnection.CreateAssistantHistoryMessage(
+                string.IsNullOrEmpty(modelContent) ? null : modelContent,
+                reasoningContent,
+                toolCalls.Select(tc => new
+                {
+                    id = tc.Id, type = "function",
+                    function = new { name = tc.FunctionName, arguments = tc.Arguments }
+                }).ToArray()));
+
+            foreach (var toolCall in toolCalls)
+            {
+                if (!ChatReadOnlyToolNames.Contains(toolCall.FunctionName))
+                {
+                    var boundaryMessage = "对话模式不能执行写入或其他操作，请切换到工作模式后重试。";
+                    return string.IsNullOrWhiteSpace(fullContent.ToString())
+                        ? boundaryMessage
+                        : fullContent + "\n\n" + boundaryMessage;
+                }
+
+                await callback("tool_call", JsonSerializer.Serialize(new
+                {
+                    name = toolCall.FunctionName, arguments = toolCall.Arguments, id = toolCall.Id
+                }));
+                var result = await ExecuteToolAsync(
+                    userId, toolCall.FunctionName, toolCall.Arguments, request, ct);
+                supervisor.ObserveTool(toolCall.FunctionName, toolCall.Arguments, result);
+                await callback("tool_result", JsonSerializer.Serialize(new
+                {
+                    toolCallId = toolCall.Id,
+                    name = toolCall.FunctionName,
+                    result = PrepareToolResultForClient(toolCall.FunctionName, result)
+                }));
+                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = result });
+            }
+        }
     }
 
     // ===== DeepSeek 流式 Function Calling 循环（仅 Work） =====
@@ -1629,11 +1726,9 @@ public class ChatService : IChatService
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                await callback("error", JsonSerializer.Serialize(new
-                {
-                    message = $"AI 服务错误 {(int)httpResp.StatusCode}"
-                }));
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
             }
 
             // 解析 SSE 流
@@ -1652,6 +1747,9 @@ public class ChatService : IChatService
 
             if (finishReason != "tool_calls" || toolCalls.Count == 0)
             {
+                if (!ShouldReviewWorkCompletion(request, finishReason))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback, ct);
                 var decision = await supervisor.ReviewAsync(client, modelConnection, messages, assistantContent, finishReason, ct);
                 if (decision.Continue)
                 {
@@ -2011,7 +2109,8 @@ public class ChatService : IChatService
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+                throw new BusinessException(
+                    AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err), 500);
             }
 
             using var doc = JsonDocument.Parse(await httpResp.Content.ReadAsStringAsync(ct));
@@ -2026,6 +2125,9 @@ public class ChatService : IChatService
 
             if (finishReason != "tool_calls" || !msgEl.TryGetProperty("tool_calls", out var calls) || calls.GetArrayLength() == 0)
             {
+                if (!ShouldReviewWorkCompletion(request, finishReason ?? ""))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback: null, ct);
                 var decision = await supervisor.ReviewAsync(client, modelConnection, messages, candidate, finishReason ?? "", ct);
                 if (decision.Continue)
                 {

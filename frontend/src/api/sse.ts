@@ -29,7 +29,7 @@ export async function consumeSseResponse(
 
   const reader = response.body.getReader()
   const onAbort = () => {
-    try { void reader.cancel() } catch { /* ignore */ }
+    try { void reader.cancel().catch(() => { /* expected when the transport aborts first */ }) } catch { /* ignore */ }
   }
   if (signal) {
     if (signal.aborted) onAbort()
