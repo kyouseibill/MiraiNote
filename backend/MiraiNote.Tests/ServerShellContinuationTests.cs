@@ -53,7 +53,16 @@ public class ServerShellContinuationTests : IDisposable
         {
             Assert.False(execution.IsCompleted, execution.IsCompletedSuccessfully ? await execution : "Shell exited before writing child PID");
             await Task.Delay(50, cts.Token);
-            if (File.Exists(pidPath)) pidText = await File.ReadAllTextAsync(pidPath, cts.Token);
+            if (!File.Exists(pidPath)) continue;
+            try
+            {
+                pidText = await File.ReadAllTextAsync(pidPath, cts.Token);
+            }
+            catch (IOException)
+            {
+                // PowerShell Out-File briefly holds an exclusive handle while
+                // creating the PID file. Retry until the writer closes it.
+            }
         }
         var pid = int.Parse(pidText);
         using var child = Process.GetProcessById(pid);

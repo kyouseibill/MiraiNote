@@ -8,6 +8,7 @@ import type {
   ChatProject,
   ChatProjectPayload,
   BranchSessionPayload,
+  AiModel,
   ToolCallEvent,
 } from '@/types/chat'
 import { chatApi } from '@/api/chat'
@@ -27,6 +28,7 @@ export const useChatStore = defineStore('chat', () => {
   const sending = ref(false)
   const lastSendError = ref('')
   const projects = ref<ChatProject[]>([])
+  const availableModels = ref<AiModel[]>([])
   const selectedProjectId = ref<number | null>(null)
   let activeAbortController: AbortController | null = null
   /** 持久化 Agent 运行 ID；SSE 断开时任务仍由服务端继续。 */
@@ -201,14 +203,19 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function createSession(title?: string) {
+  async function fetchAvailableModels() {
+    availableModels.value = await chatApi.getAvailableModels()
+    return availableModels.value
+  }
+
+  async function createSession(title?: string, modelKey?: string) {
     const startedWithoutSession = currentSession.value == null
     const detachedAttachments = startedWithoutSession ? [...pendingAttachments.value] : []
     savePendingAttachments()
     const requestVersion = ++selectionVersion
     loading.value = false
     isTemporary.value = false
-    const session = await chatApi.createSession({ title, projectId: selectedProjectId.value })
+    const session = await chatApi.createSession({ title, projectId: selectedProjectId.value, modelKey })
     if (selectedProjectId.value == null || session.projectId === selectedProjectId.value) {
       sessions.value.unshift(session)
     }
@@ -559,9 +566,7 @@ export const useChatStore = defineStore('chat', () => {
           }
 
           case 'heartbeat':
-            if (!streamedContent && !hasRunningToolCalls()) {
-              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
-            }
+            currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             break
 
           case 'tool_result':
@@ -602,6 +607,12 @@ export const useChatStore = defineStore('chat', () => {
               }
               targetSession.title = event.data.title
               sessionDetailsCache.set(sessionId, targetSession)
+            }
+            if (runId === activeRunId) {
+              sending.value = false
+              currentToolCall.value = ''
+              toolCalls.value = []
+              if (streamSessionId.value === sessionId) streamSessionId.value = null
             }
             break
 
@@ -794,9 +805,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'heartbeat':
-            if (!streamedContent && !hasRunningToolCalls()) {
-              currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
-            }
+            currentToolCall.value = String(event.data?.message || '任务仍在处理，连接正常…')
             break
 
           case 'tool_result':
@@ -821,6 +830,7 @@ export const useChatStore = defineStore('chat', () => {
 
           case 'context':
             contextUsage.value = event.data
+            if (event.data?.message) currentToolCall.value = String(event.data.message)
             break
 
           case 'recoverable':
@@ -857,6 +867,12 @@ export const useChatStore = defineStore('chat', () => {
               }
               targetSession.title = event.data.title
               sessionDetailsCache.set(sessionId, targetSession)
+            }
+            if (runId === activeRunId) {
+              sending.value = false
+              currentToolCall.value = ''
+              toolCalls.value = []
+              if (streamSessionId.value === sessionId) streamSessionId.value = null
             }
             break
 
@@ -1165,6 +1181,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions,
     projects,
+    availableModels,
     selectedProjectId,
     currentSession,
     isTemporary,
@@ -1186,6 +1203,7 @@ export const useChatStore = defineStore('chat', () => {
     searchSessions,
     selectProject,
     fetchProjects,
+    fetchAvailableModels,
     openSession,
     createSession,
     startTemporarySession,

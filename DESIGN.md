@@ -95,7 +95,7 @@ Use 150ms interaction transitions and a modest generation spinner. Streaming is 
 
 ### Content and data visualization
 
-Keep Chinese labels direct: 新对话、重命名、归档、还原、删除、对话文件. Short, original welcome copy supports the notebook personality. Context usage is clearly labeled, not an unexplained percentage. No invented model selector or online-status claim.
+Keep Chinese labels direct: 新对话、重命名、归档、还原、删除、对话文件. Short, original welcome copy supports the notebook personality. Context usage is clearly labeled, not an unexplained percentage. The model selector states that one conversation keeps one model. Chat/Work helper copy names the capability boundary; do not claim online status.
 
 ## Do's and Don'ts
 

@@ -23,7 +23,7 @@ import {
 import { chatApi } from '@/api/chat'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
-import type { ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
+import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -186,7 +186,7 @@ const showArtifacts = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 const sidebarCollapsed = ref(false)
 
-/** Chat / Work 双模式：会话数据共用，只改默认 UI 侧重。 */
+/** Chat / Work 双模式：会话数据共用，工具权限与完成检查策略不同。 */
 const CHAT_UI_MODE_KEY = 'mirainote:chat:uiMode'
 type ChatUiMode = 'chat' | 'work'
 function readInitialUiMode(): ChatUiMode {
@@ -200,6 +200,11 @@ function readInitialUiMode(): ChatUiMode {
 }
 const uiMode = ref<ChatUiMode>(readInitialUiMode())
 const isWorkMode = computed(() => uiMode.value === 'work')
+const selectedModelKey = ref('')
+const currentModel = computed<AiModel | undefined>(() =>
+  store.availableModels.find((model) => model.key === store.currentSession?.modelKey),
+)
+const modelLabel = computed(() => currentModel.value?.displayName || store.currentSession?.modelKey || '默认模型')
 
 const toolStatusLabel: Record<ToolCallEvent['status'], string> = {
   running: '运行中',
@@ -312,6 +317,16 @@ function handleScroll() {
   const el = messagesContainer.value
   if (el) atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 72
 }
+
+function scrollThinkingToEnd(event: Event) {
+  const details = event.currentTarget as HTMLDetailsElement
+  if (!details.open) return
+  void nextTick().then(() => {
+    const content = details.querySelector<HTMLElement>('.chat-markdown')
+    if (content) content.scrollTop = content.scrollHeight
+  })
+}
+
 async function copyMessage(message: ChatMessage) {
   try {
     await navigator.clipboard.writeText(
@@ -983,13 +998,13 @@ async function scrollToBottom() {
   }
 }
 
-async function newSession() {
+async function newSession(modelKey = selectedModelKey.value || undefined) {
   if (creatingSession.value || store.sending) return false
   creatingSession.value = true
   uiError.value = ''
   uiErrorKind.value = 'create'
   try {
-    await store.createSession()
+    await store.createSession(undefined, modelKey)
     newSessionDraft.value = ''
     showSessionList.value = false
     await focusInput()
@@ -999,6 +1014,15 @@ async function newSession() {
     return false
   } finally {
     creatingSession.value = false
+  }
+}
+
+async function switchModel(event: Event) {
+  const nextModelKey = (event.target as HTMLSelectElement).value
+  if (!nextModelKey || nextModelKey === store.currentSession?.modelKey) return
+  selectedModelKey.value = nextModelKey
+  if (store.currentSession && !(await newSession(nextModelKey))) {
+    selectedModelKey.value = store.currentSession.modelKey || ''
   }
 }
 
@@ -1042,7 +1066,7 @@ async function send() {
   void scrollToBottom()
   void focusInput()
   try {
-    const outcome = shouldUseAgent(text)
+    const outcome = isWorkMode.value
       ? await store.sendAgentMessageStream(text || '请分析这些文件的内容')
       : await store.sendMessageStream(text || '请分析这些文件的内容')
     if (outcome === 'failed') restoreFailedDraft(targetId, text)
@@ -1064,26 +1088,6 @@ async function retryFailedAction() {
   if (uiErrorKind.value === 'send') await send()
   else if (uiErrorKind.value === 'create') await newSession()
   else await reloadConversations()
-}
-
-function shouldUseAgent(text: string): boolean {
-  if (store.pendingAttachments.length > 0) return true
-  const normalized = text.trim().toLowerCase()
-  if (!normalized) return false
-
-  const agentPatterns = [
-    /查|找|搜索|检索|联网|天气|新闻|价格|最新/,
-    /网页|网站|链接|网址|url|api|接口|http|https|登录|用户名|密码|模拟操作|抓取/,
-    /创建|新增|添加|记录|保存|写入|生成|导出/,
-    /更新|修改|编辑|删除|归档|完成|置顶/,
-    /提醒|定时|计划|日程|待办|备忘/,
-    /总结|汇总|分析|统计|趋势|周报|日报|复盘/,
-    /今天|明天|昨天|本周|本月|现在几点|当前时间|日期|星期|多少天/,
-    /\d+\s*[+\-*/%]\s*\d+/,
-    /工作记录|生活记录|备忘|文件|目录|运行|命令/,
-    /\b(search|find|create|update|delete|export|schedule|remind|analyze|summarize|file|run|api|http|url|login|fetch|web)\b/,
-  ]
-  return agentPatterns.some((pattern) => pattern.test(normalized))
 }
 
 async function deleteSession(id: number, e: Event) {
@@ -1156,7 +1160,8 @@ watch(
 watch([inputContent, inputExpanded], resizeInput)
 
 onMounted(async () => {
-  await reloadConversations()
+  await Promise.all([reloadConversations(), store.fetchAvailableModels().catch(() => [])])
+  selectedModelKey.value = store.availableModels[0]?.key || ''
   await resizeInput()
 })
 
@@ -1209,7 +1214,7 @@ async function reloadConversations() {
             class="chat-new"
             data-testid="chat-new"
             :disabled="store.sending || creatingSession || uploadingFiles.size > 0"
-            @click="newSession"
+            @click="() => newSession()"
           >
             <IconLoader2 v-if="creatingSession" :size="17" class="chat-spin" /><IconPlus
               v-else
@@ -1391,6 +1396,19 @@ async function reloadConversations() {
             工作
           </button>
         </div>
+        <label class="chat-model-select" title="每个对话固定一个模型；切换会创建新对话">
+          <span>模型</span>
+          <select
+            :value="store.currentSession?.modelKey || selectedModelKey"
+            :disabled="store.sending || creatingSession || store.availableModels.length === 0"
+            aria-label="选择模型；切换会创建新对话"
+            @change="switchModel"
+          >
+            <option v-for="model in store.availableModels" :key="model.key" :value="model.key">
+              {{ model.displayName }}
+            </option>
+          </select>
+        </label>
         <div class="chat-header-title">
           <h1 :title="store.currentSession?.title">{{ store.currentSession?.title || 'Mirai Chat' }}</h1>
           <p>
@@ -1401,8 +1419,8 @@ async function reloadConversations() {
                 : isCurrentStreaming
                   ? '正在回复…'
                   : isWorkMode
-                    ? '工作台 · 工具与文件更醒目'
-                    : '给想法一点生长的空间'
+                    ? `工作模式 · ${modelLabel} · 执行操作并检查交付`
+                    : `对话模式 · ${modelLabel} · 只读联网与读取文件`
             }}
           </p>
         </div>
@@ -1476,7 +1494,7 @@ async function reloadConversations() {
                 </div>
                 <div v-if="msg.role === 'user'" class="chat-user-content">{{ msg.content }}</div>
                 <div v-else class="chat-assistant-content">
-                  <details v-if="msg.thinking" class="chat-thinking">
+                  <details v-if="msg.thinking" class="chat-thinking" @toggle="scrollThinkingToEnd">
                     <summary>
                       <span>{{ msg.streaming && !msg.answer ? '正在思考' : '思考过程' }}</span>
                     </summary>
@@ -1561,7 +1579,7 @@ async function reloadConversations() {
                     </article>
                   </details>
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
-                  <div v-if="msg.streaming && !msg.answer" class="chat-generation-status" role="status">
+                  <div v-if="msg.streaming && (!msg.answer || isWorkMode)" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{
                       store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
                     }}</span>
@@ -1723,7 +1741,7 @@ async function reloadConversations() {
           </div>
         </div>
         <div class="chat-composer-help">
-          <span>支持 PDF、Word、Excel 和文本</span
+          <span>{{ isWorkMode ? '可执行工具、修改文件并检查交付' : '可联网检索、读取网页与文件' }}</span
           ><span
             v-if="store.contextUsage"
             class="chat-context"

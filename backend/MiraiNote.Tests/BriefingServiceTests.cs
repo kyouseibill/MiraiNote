@@ -28,11 +28,15 @@ public class BriefingServiceTests : IDisposable
 
     private async Task<int> SeedDueMemoAsync()
     {
+        var requestedDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        var requestedDayNoonUtc = DateTime.SpecifyKind(
+            requestedDate.ToDateTime(new TimeOnly(12, 0)).AddMinutes(-480),
+            DateTimeKind.Utc);
         await using var db = _fx.CreateContext();
         var memo = new Memo
         {
             UserId = UserId, Section = "work", Content = "推动安全评审排期",
-            RemindAt = DateTime.UtcNow.AddHours(2), Priority = 3
+            RemindAt = requestedDayNoonUtc, Priority = 3
         };
         db.Memos.Add(memo);
         await db.SaveChangesAsync();

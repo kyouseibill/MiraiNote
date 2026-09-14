@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MiraiNote.API.Services;
 using MiraiNote.Core.Services;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Shared.Common;
 
 namespace MiraiNote.API;
@@ -23,6 +24,19 @@ public static class ApiDependencyInjection
         services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<DeepSeekOptions>(configuration.GetSection(DeepSeekOptions.SectionName));
+        services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
+        services.PostConfigure<DeepSeekOptions>(options =>
+        {
+            var provider = configuration.GetSection(AiOptions.SectionName)
+                .Get<AiOptions>()?
+                .Providers
+                .FirstOrDefault(item => string.Equals(item.Key, "deepseek", StringComparison.OrdinalIgnoreCase));
+            if (provider is null || string.IsNullOrWhiteSpace(provider.ApiKey)) return;
+
+            // 旧服务仍使用 DeepSeekOptions；凭据统一由 AI Providers 提供。
+            options.ApiKey = provider.ApiKey;
+            if (!string.IsNullOrWhiteSpace(provider.BaseUrl)) options.BaseUrl = provider.BaseUrl;
+        });
         services.Configure<UploadOptions>(configuration.GetSection(UploadOptions.SectionName));
         services.Configure<TavilyOptions>(configuration.GetSection(TavilyOptions.SectionName));
         services.Configure<WeatherOptions>(configuration.GetSection(WeatherOptions.SectionName));

@@ -34,6 +34,7 @@ function fixtures() {
       { id: 1, title: '梳理本周的工作重点', isArchived: false, isPinned: true, projectId: 1, createdAt: now, updatedAt: now, messages: [
         { id: 11, role: 'user', content: '帮我整理本周的工作，看看下一步可以从哪里开始。', createdAt: now },
         { id: 12, role: 'assistant', content: '当然。我们可以先从最重要的三件事开始。\n\n### 本周的工作重点\n\n1. **完成聊天页面的交互优化**，让每一次记录更轻松。\n2. 整理项目进展，明确下周的优先事项。\n3. 留一点时间，回顾已经完成的工作。\n\n你想先聊哪一部分？\n\n[本周工作摘要.md](/api/v1/mirai/exports/11/2026/09/weekly-summary.md)', createdAt: now },
+        { id: 13, role: 'assistant', content: `<thinking>\n${Array.from({ length: 72 }, (_, index) => `第 ${index + 1} 步：持续核对研究资料与结论。`).join('\n\n')}\n</thinking>\n\n调研思路已整理完毕。`, createdAt: now },
       ] },
       { id: 2, title: '周末散步与阅读计划', isArchived: false, isPinned: false, projectId: null, createdAt: daysAgo(1), updatedAt: daysAgo(1), messages: [
         { id: 21, role: 'user', content: '周末想去公园走走，也留一点时间读书。', createdAt: daysAgo(1) },
@@ -57,17 +58,26 @@ async function installMocks(context, state) {
       const response = await originalFetch(...args)
       if (response.headers.get('x-chat-ui-mock-stream') !== '1') return response
       const frames = (await response.text()).split('\n\n').filter(Boolean)
+      const closeDelay = Number(response.headers.get('x-chat-ui-mock-close-delay') || 0)
       const signal = args[1]?.signal
       let timer
       let cancelled = false
       const stream = new ReadableStream({
         start(controller) {
           let index = 0
-          const onAbort = () => { cancelled = true; clearTimeout(timer); controller.error(new DOMException('Aborted', 'AbortError')) }
+          // The app intentionally cancels the reader when the user stops. Close
+          // this test stream cleanly so the expected cancellation is not also
+          // reported by Playwright as an unrelated page-level exception.
+          const onAbort = () => { cancelled = true; clearTimeout(timer); try { controller.close() } catch { /* reader already cancelled */ } }
           signal?.addEventListener('abort', onAbort, { once: true })
           const emit = () => {
             if (cancelled) return
-            if (index === frames.length) { signal?.removeEventListener('abort', onAbort); controller.close(); return }
+            if (index === frames.length) {
+              signal?.removeEventListener('abort', onAbort)
+              if (closeDelay > 0) timer = setTimeout(() => controller.close(), closeDelay)
+              else controller.close()
+              return
+            }
             controller.enqueue(new TextEncoder().encode(frames[index++] + '\n\n'))
             timer = setTimeout(emit, 110)
           }
@@ -122,6 +132,10 @@ async function installMocks(context, state) {
       return route.fulfill({ status: 200, contentType: 'application/pdf', body: '%PDF-1.4 mock export' })
     }
     if (path === '/memos/due-popups') return json([])
+    if (path === '/ai/models' && method === 'GET') return json([
+      { key: 'deepseek:deepseek-chat', provider: 'deepseek', providerDisplayName: 'DeepSeek', modelId: 'deepseek-chat', displayName: 'DeepSeek Chat', supportsChat: true, supportsWork: true, supportsTools: true },
+      { key: 'minimax:MiniMax-M2.7', provider: 'minimax', providerDisplayName: 'MiniMax', modelId: 'MiniMax-M2.7', displayName: 'MiniMax M2.7', supportsChat: true, supportsWork: true, supportsTools: true },
+    ])
     if (path === '/chat/sessions/archived') return json(state.sessions.filter(s => s.isArchived).map(summary))
     if (path === '/chat/sessions/search' || path === '/chat/sessions' && method === 'GET') {
       const query = url.searchParams.get('query')?.toLowerCase() || ''
@@ -158,10 +172,15 @@ async function installMocks(context, state) {
       if (action === 'branch') { const branched = { ...clone(session), id: state.nextId++, title: body.title || `${session.title} · 分支`, branchedFromSessionId: session.id, messages: body.messageId ? session.messages.slice(0, session.messages.findIndex(m => m.id === body.messageId) + 1) : [] }; state.sessions.unshift(branched); return json(branched) }
       return json(summary(session))
     }
+    if (session && sessionMatch[2] === 'stop' && method === 'POST') return json(null)
     if (path.endsWith('/stream')) {
       const id = state.nextId++
       const userMessage = { id, role: 'user', content: body.content + (body.attachments?.length ? '\n' + body.attachments.map(a => `📎${a.fileName}`).join(' ') : ''), createdAt: now }
-      const content = body.content.includes('慢速') ? Array.from({ length: 40 }, (_, i) => `第 ${i + 1} 步：把事情慢慢整理清楚。\n\n`).join('') : '已经收到。让我们一起把想法整理清楚，再从最重要的一步开始。'
+      const content = body.content.includes('慢速')
+        ? Array.from({ length: 40 }, (_, i) => `第 ${i + 1} 步：把事情慢慢整理清楚。\n\n`).join('')
+        : body.content.includes('结束后延迟断开')
+          ? '答案已经完整生成。'
+          : '已经收到。让我们一起把想法整理清楚，再从最重要的一步开始。'
       const assistant = { id: state.nextId++, role: 'assistant', content, createdAt: now }
       if (session) session.messages.push(userMessage, assistant)
       state.lastSend = { path, body: clone(body) }
@@ -169,7 +188,8 @@ async function installMocks(context, state) {
       const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
       const chunks = content.match(/.{1,16}/gs) || []
       const sse = frame('user_msg', { id }) + chunks.map(content => frame('token', { content })).join('') + frame('done', { messageId: assistant.id, content, title: session?.title || '临时聊天', createdAt: now })
-      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'x-chat-ui-mock-stream': '1', 'access-control-expose-headers': 'x-chat-ui-mock-stream' }, body: sse })
+      const closeDelay = body.content.includes('结束后延迟断开') ? '1500' : '0'
+      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'x-chat-ui-mock-stream': '1', 'x-chat-ui-mock-close-delay': closeDelay, 'access-control-expose-headers': 'x-chat-ui-mock-stream, x-chat-ui-mock-close-delay' }, body: sse })
     }
     if (path === '/chat/attachments') return json({ fileName: 'notes.txt', fileType: 'text', textContent: '用于验证附件的示例文本。', fileSizeBytes: 36, mimeType: 'text/plain', isImage: false })
     if (path === '/workspace/files') return json({ scope: url.searchParams.get('scope') || 'private', currentPath: '', entries: [] })
@@ -229,6 +249,41 @@ async function runRegression(page, state) {
     assert(await page.getByTestId('chat-composer').isVisible())
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))
     await screenshot(page, 'desktop')
+  })
+  await check('expanded-thinking-scrolls-to-latest', async () => {
+    const thinking = page.locator('details.chat-thinking').first()
+    await thinking.locator('summary').click()
+    await page.waitForTimeout(80)
+    const position = await thinking.locator('.chat-markdown').evaluate(el => ({ top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight }))
+    assert(position.height > position.client, 'Fixture thinking content must overflow its panel.')
+    assert(position.top + position.client >= position.height - 1, 'Expanding thinking must reveal its latest content.')
+  })
+  await check('chat-work-capability-copy', async () => {
+    await page.getByText(/对话模式 · .* · 只读联网与读取文件/).waitFor()
+    await page.getByText('可联网检索、读取网页与文件', { exact: true }).waitFor()
+    await page.getByTestId('chat-mode-work').click()
+    await page.getByText(/工作模式 · .* · 执行操作并检查交付/).waitFor()
+    await page.getByText('可执行工具、修改文件并检查交付', { exact: true }).waitFor()
+    await page.getByTestId('chat-mode-chat').click()
+  })
+  await check('terminal-event-unlocks-before-transport-close', async () => {
+    await input.fill('结束后延迟断开')
+    await page.getByTestId('chat-send').click()
+    await messages.getByText('答案已经完整生成。', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '停止生成', exact: true }).waitFor({ state: 'hidden', timeout: 500 })
+    await page.getByTestId('chat-send').waitFor()
+    await page.waitForTimeout(1600)
+
+    await page.getByTestId('chat-sidebar').getByRole('button', { name: /临时聊天/ }).click()
+    await page.getByTestId('chat-mode-work').click()
+    await input.fill('结束后延迟断开')
+    await page.getByTestId('chat-send').click()
+    await messages.getByText('答案已经完整生成。', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '停止生成', exact: true }).waitFor({ state: 'hidden', timeout: 500 })
+    await page.getByTestId('chat-send').waitFor()
+    await page.waitForTimeout(1600)
+    await openSession('梳理本周的工作重点')
+    await page.getByTestId('chat-mode-chat').click()
   })
   await check('search-results-no-results-and-clear', async () => {
     await search.fill('zz-no-matching-conversation')

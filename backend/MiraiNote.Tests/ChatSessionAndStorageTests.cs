@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using System.IO.Compression;
 using MiraiNote.Core.Services;
 using MiraiNote.Core.Services.Mirai;
 using MiraiNote.Core.Services.Tools;
@@ -201,5 +202,60 @@ public class FileStorageTests
         // 返回鉴权下载 URL（不再走静态 uploads 目录）
         Assert.Contains("/api/v1/mirai/exports/7/", json);
         Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task ExportFile_WritesHtmlAsUtf8Text()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mirai-test-html-export-" + Guid.NewGuid().ToString("N"));
+        var tool = new ServerExportFileTool(Options.Create(new FileSystemOptions { ExportsRoot = root }));
+
+        var json = await tool.ExecuteAsync(7, """
+            {"filename":"调研摘要.html","content":"<h1>调研摘要</h1><p>已完成</p>"}
+            """);
+
+        Assert.Contains("\"fileType\":\"html\"", json);
+        var file = Directory.EnumerateFiles(root, "*.html", SearchOption.AllDirectories).Single();
+        Assert.Equal("<h1>调研摘要</h1><p>已完成</p>", await File.ReadAllTextAsync(file));
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task ExportFile_CreatesZipWithMultipleTextEntries()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mirai-test-zip-export-" + Guid.NewGuid().ToString("N"));
+        var tool = new ServerExportFileTool(Options.Create(new FileSystemOptions { ExportsRoot = root }));
+
+        var json = await tool.ExecuteAsync(7, """
+            {
+              "filename":"产品调研.zip",
+              "files":[
+                {"filename":"摘要.html","content":"<h1>调研摘要</h1>"},
+                {"filename":"数据.tsv","content":"指标\t数值\n访谈数\t12"},
+                {"filename":"说明.yaml","content":"status: complete"}
+              ]
+            }
+            """);
+
+        Assert.Contains("\"fileType\":\"zip\"", json);
+        var zipPath = Directory.EnumerateFiles(root, "*.zip", SearchOption.AllDirectories).Single();
+        using (var zip = ZipFile.OpenRead(zipPath))
+        {
+            using var summaryReader = new StreamReader(zip.GetEntry("摘要.html")!.Open());
+            using var dataReader = new StreamReader(zip.GetEntry("数据.tsv")!.Open());
+            using var notesReader = new StreamReader(zip.GetEntry("说明.yaml")!.Open());
+            Assert.Equal("<h1>调研摘要</h1>", summaryReader.ReadToEnd());
+            Assert.Equal("指标\t数值\n访谈数\t12", dataReader.ReadToEnd());
+            Assert.Equal("status: complete", notesReader.ReadToEnd());
+        }
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public void ExportFile_Schema_DescribesZipFilesArray()
+    {
+        var tool = new ServerExportFileTool(Options.Create(new FileSystemOptions()));
+
+        Assert.Equal("array", tool.Parameters.Properties["files"].Type);
     }
 }

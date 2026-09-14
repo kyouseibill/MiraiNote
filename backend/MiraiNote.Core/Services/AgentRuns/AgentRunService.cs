@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
@@ -29,26 +30,40 @@ public sealed class AgentRunService : IAgentRunService
     private readonly MiraiNoteDbContext _db;
     private readonly AgentRunDispatcher _dispatcher;
     private readonly IChatService _chatService;
+    private readonly IChatModelRegistry _modelRegistry;
     private readonly ILogger<AgentRunService> _logger;
 
-    public AgentRunService(MiraiNoteDbContext db, AgentRunDispatcher dispatcher, IChatService chatService, ILogger<AgentRunService> logger)
+    public AgentRunService(MiraiNoteDbContext db, AgentRunDispatcher dispatcher, IChatService chatService, IChatModelRegistry modelRegistry, ILogger<AgentRunService> logger)
     {
         _db = db;
         _dispatcher = dispatcher;
         _chatService = chatService;
+        _modelRegistry = modelRegistry;
         _logger = logger;
     }
 
     public async Task<AgentRunSnapshot> CreateAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct)
     {
-        var exists = await _db.ChatSessions.AnyAsync(s => s.Id == sessionId && s.UserId == userId, ct);
-        if (!exists) throw new BusinessException("对话不存在", 404);
+        var session = await _db.ChatSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            ?? throw new BusinessException("对话不存在", 404);
         if (string.IsNullOrWhiteSpace(request.Content)) throw new BusinessException("消息内容不能为空", 400);
+        var model = _modelRegistry.ResolveForExistingSession(session.AiProvider, session.AiModel);
+        if (!model.SupportsWork || !model.SupportsTools)
+            throw new ChatModelUnavailableException("所选模型不支持工作模式，请创建新对话并选择其他模型。");
+        if (!string.Equals(session.AiProvider, model.Provider, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(session.AiModel, model.ModelId, StringComparison.OrdinalIgnoreCase))
+        {
+            session.AiProvider = model.Provider;
+            session.AiModel = model.ModelId;
+        }
 
         var run = new AgentRun
         {
             UserId = userId,
             SessionId = sessionId,
+            AiProvider = model.Provider,
+            AiModel = model.ModelId,
             Status = AgentRunStatus.Queued,
             RequestJson = JsonSerializer.Serialize(request),
             LastActivityAt = DateTime.UtcNow

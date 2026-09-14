@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using MiraiNote.Core.Services;
 using MiraiNote.Shared.Agent;
 using Moq;
@@ -31,18 +33,32 @@ public class AgentRunSupervisorTests
     public void RejectsMalformedCompletionVerdict(string json) => Assert.Null(AgentRunSupervisor.ParseDecision(json));
 
     [Fact]
-    public async Task FailedReviewNeverSilentlyCompletesOrLoopsForever()
+    public async Task FailedReviewStopsAfterOneAttemptInsteadOfRegeneratingAnAnswer()
     {
         var factory = MiraiTestFixture.MockDeepSeekFactory(_ => MiraiTestFixture.DeepSeekError());
         using var client = factory.CreateClient("test");
         client.BaseAddress = new Uri("https://test.invalid");
         var supervisor = new AgentRunSupervisor();
-        for (var i = 0; i < 3; i++)
-            Assert.True((await supervisor.ReviewAsync(client, "test", [], "计划", "stop", default)).Continue);
         var stopped = await supervisor.ReviewAsync(client, "test", [], "计划", "stop", default);
         Assert.False(stopped.Completed);
         Assert.False(stopped.Continue);
-        Assert.Contains("尚未完成", stopped.Reason);
+        Assert.Contains("完成检查", stopped.Reason);
+    }
+
+    [Fact]
+    public async Task RepeatedContinueVerdictsStopAfterOneAutomaticContinuationWithoutNewToolEvidence()
+    {
+        var factory = MiraiTestFixture.MockDeepSeekFactory(_ => MiraiTestFixture.DeepSeekContentResponse(
+            "{\"status\":\"continue\",\"reason\":\"仍有步骤\",\"next_step\":\"继续处理\"}"));
+        using var client = factory.CreateClient("test");
+        client.BaseAddress = new Uri("https://test.invalid");
+        var supervisor = new AgentRunSupervisor();
+
+        Assert.True((await supervisor.ReviewAsync(client, "test", [], "第一版", "stop", default)).Continue);
+        var stopped = await supervisor.ReviewAsync(client, "test", [], "第二版", "stop", default);
+
+        Assert.False(stopped.Continue);
+        Assert.False(stopped.Completed);
     }
 
     [Fact]
@@ -91,5 +107,35 @@ public class AgentRunSupervisorTests
         var registry = new ServerAgentToolRegistry();
         registry.Register(tool.Object);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.ExecuteAsync(1, "cancel_test", "{}", cts.Token));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task TokenPlanLimitIsReturnedWithoutRetrying(HttpStatusCode statusCode)
+    {
+        var attempts = 0;
+        using var client = new HttpClient(new DelegateHandler(_ =>
+        {
+            attempts++;
+            return new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(
+                    "{\"base_resp\":{\"status_code\":2056,\"status_msg\":\"token plan exhausted\"}}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        })) { BaseAddress = new Uri("https://test.invalid") };
+
+        using var response = await AgentRunSupervisor.SendModelRequestAsync(client, "{}", true, default);
+
+        Assert.Equal(statusCode, response.StatusCode);
+        Assert.Equal(1, attempts);
+    }
+
+    private sealed class DelegateHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(handler(request));
     }
 }

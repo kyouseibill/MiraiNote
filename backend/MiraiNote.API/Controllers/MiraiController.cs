@@ -212,7 +212,15 @@ public class MiraiController : ControllerBase
         ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".json" => MediaTypeNames.Application.Json,
         ".csv" => "text/csv",
-        ".md" or ".markdown" or ".txt" => MediaTypeNames.Text.Plain,
+        ".tsv" => "text/tab-separated-values",
+        ".html" or ".htm" => "text/html",
+        ".xml" => "application/xml",
+        ".yaml" or ".yml" => "application/yaml",
+        ".md" or ".markdown" or ".txt" or ".toml" or ".ini" or ".log" or ".sql"
+            or ".ts" or ".js" or ".tsx" or ".jsx" or ".py" or ".cs" or ".java" or ".go"
+            or ".rs" or ".c" or ".cpp" or ".h" or ".css" or ".scss" or ".less" or ".vue"
+            or ".sh" or ".bat" or ".ps1" or ".conf" or ".config" or ".properties" => MediaTypeNames.Text.Plain,
+        ".zip" => "application/zip",
         _ => MediaTypeNames.Application.Octet
     };
 }

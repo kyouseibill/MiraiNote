@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.IO.Compression;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -22,8 +23,13 @@ public class ServerExportFileTool : IServerAgentTool
 {
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".md", ".markdown", ".json", ".txt", ".csv"
+        ".md", ".markdown", ".json", ".txt", ".csv", ".tsv",
+        ".html", ".htm", ".xml", ".yaml", ".yml", ".toml", ".ini", ".log",
+        ".sql", ".ts", ".js", ".tsx", ".jsx", ".py", ".cs", ".java", ".go",
+        ".rs", ".c", ".cpp", ".h", ".css", ".scss", ".less", ".vue", ".sh",
+        ".bat", ".ps1", ".conf", ".config", ".properties"
     };
+    private const int MaxZipEntries = 20;
 
     private static readonly object PdfFontLock = new();
     private static bool _pdfFontConfigured;
@@ -35,7 +41,8 @@ public class ServerExportFileTool : IServerAgentTool
     public ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public string Description =>
         "将内容导出为可下载文件。支持真正的 PDF（.pdf）、Word（.docx）、Excel（.xlsx），" +
-        "以及 Markdown（.md）、JSON（.json）、TXT（.txt）、CSV（.csv）。" +
+        "以及 HTML（.html/.htm）、Markdown、JSON、TXT、CSV/TSV、XML、YAML、代码和配置等 UTF-8 文本格式。" +
+        "也支持 ZIP（.zip）：传 files 数组即可把多个文本文件压缩进一个真实 ZIP 文件。" +
         "filename 必须使用目标格式对应的扩展名；Word 使用 .docx，不支持旧版 .doc。" +
         "content 可使用 Markdown；导出 Excel 时优先传入 Markdown 表格、制表符分隔数据或逐行文本。" +
         "工具返回 markdown 下载链接，最终回复必须原样包含该链接。";
@@ -45,12 +52,24 @@ public class ServerExportFileTool : IServerAgentTool
         Properties = new()
         {
             ["filename"] = ToolParameterProperty.String("文件名（必填，扩展名决定真实格式，如 report.pdf、report.docx、data.xlsx）"),
-            ["content"] = ToolParameterProperty.String("要写入文件的完整内容（必填，可使用 Markdown）"),
+            ["content"] = ToolParameterProperty.String("要写入单个文件的完整内容；导出 ZIP 时改用 files 数组"),
             ["format"] = ToolParameterProperty.Enum(
                 "文件格式；filename 没有扩展名时用它补全扩展名",
-                new() { "pdf", "docx", "xlsx", "markdown", "json", "txt", "csv" })
+                new() { "pdf", "docx", "xlsx", "zip", "html", "htm", "markdown", "json", "txt", "csv", "tsv", "xml", "yaml", "yml", "toml", "ini", "log", "sql" }),
+            ["files"] = ToolParameterProperty.Array(
+                "仅 ZIP 使用：最多 20 个文本文件，每项包含 filename 和 content；例如 [{\"filename\":\"摘要.html\",\"content\":\"<h1>摘要</h1>\"}]",
+                new
+                {
+                    type = "object",
+                    properties = new Dictionary<string, object>
+                    {
+                        ["filename"] = new { type = "string", description = "压缩包内的文件名和扩展名" },
+                        ["content"] = new { type = "string", description = "该文件的 UTF-8 文本内容" }
+                    },
+                    required = new[] { "filename", "content" }
+                })
         },
-        Required = new() { "filename", "content" }
+        Required = new() { "filename" }
     };
 
     public ServerExportFileTool(IOptions<FileSystemOptions> fsOptions)
@@ -67,19 +86,28 @@ public class ServerExportFileTool : IServerAgentTool
         var args = doc.RootElement;
         if (!ToolArgHelper.TryGetString(args, "filename", out var filename))
             return Task.FromResult("导出失败：未提供 filename。");
-        if (!ToolArgHelper.TryGetString(args, "content", out var content))
-            return Task.FromResult("导出失败：未提供 content。");
-
         ToolArgHelper.TryGetString(args, "format", out var format);
         var safeName = NormalizeFileName(filename, format);
         if (string.IsNullOrWhiteSpace(safeName))
             return Task.FromResult("导出失败：文件名无效。");
 
         var extension = Path.GetExtension(safeName).ToLowerInvariant();
-        if (!TextExtensions.Contains(extension) && extension is not ".pdf" and not ".docx" and not ".xlsx")
+        if (!TextExtensions.Contains(extension) && extension is not ".pdf" and not ".docx" and not ".xlsx" and not ".zip")
         {
             return Task.FromResult(
-                $"导出失败：不支持扩展名 {extension}。支持 pdf、docx、xlsx、md、json、txt、csv。");
+                $"导出失败：不支持扩展名 {extension}。支持 pdf、docx、xlsx、zip、html、md、json、txt、csv、xml、yaml 及常见代码/配置文本。");
+        }
+
+        var content = string.Empty;
+        List<ZipEntryContent>? zipEntries = null;
+        if (extension == ".zip")
+        {
+            if (!TryReadZipEntries(args, out zipEntries, out var error))
+                return Task.FromResult(error);
+        }
+        else if (!ToolArgHelper.TryGetString(args, "content", out content))
+        {
+            return Task.FromResult("导出失败：未提供 content。");
         }
 
         try
@@ -106,6 +134,9 @@ public class ServerExportFileTool : IServerAgentTool
                     break;
                 case ".xlsx":
                     WriteExcel(filePath, content, ct);
+                    break;
+                case ".zip":
+                    WriteZip(filePath, zipEntries!, ct);
                     break;
                 default:
                     File.WriteAllText(filePath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -154,13 +185,83 @@ public class ServerExportFileTool : IServerAgentTool
             "pdf" => ".pdf",
             "docx" or "word" => ".docx",
             "xlsx" or "excel" => ".xlsx",
+            "zip" => ".zip",
+            "html" or "htm" => ".html",
             "markdown" or "md" => ".md",
             "json" => ".json",
             "csv" => ".csv",
+            "tsv" => ".tsv",
+            "xml" => ".xml",
+            "yaml" or "yml" => ".yaml",
+            "toml" => ".toml",
+            "ini" => ".ini",
+            "log" => ".log",
+            "sql" => ".sql",
             _ => ".txt"
         };
         return name + extension;
     }
+
+    private static bool TryReadZipEntries(JsonElement args, out List<ZipEntryContent>? entries, out string error)
+    {
+        entries = null;
+        error = string.Empty;
+        if (!args.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+        {
+            error = "导出失败：ZIP 必须提供 files 数组，且每项包含 filename 和 content。";
+            return false;
+        }
+        if (files.GetArrayLength() is < 1 or > MaxZipEntries)
+        {
+            error = $"导出失败：ZIP 文件数必须在 1 到 {MaxZipEntries} 之间。";
+            return false;
+        }
+
+        var result = new List<ZipEntryContent>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in files.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || !ToolArgHelper.TryGetString(item, "filename", out var fileName)
+                || !ToolArgHelper.TryGetString(item, "content", out var fileContent))
+            {
+                error = "导出失败：ZIP 的每个 files 项都必须包含非空 filename 和 content。";
+                return false;
+            }
+
+            var safeName = NormalizeFileName(fileName, null);
+            var extension = Path.GetExtension(safeName).ToLowerInvariant();
+            if (!TextExtensions.Contains(extension))
+            {
+                error = $"导出失败：ZIP 内不支持扩展名 {extension}。ZIP 内仅支持 UTF-8 文本格式。";
+                return false;
+            }
+            if (!names.Add(safeName))
+            {
+                error = $"导出失败：ZIP 内文件名重复：{safeName}。";
+                return false;
+            }
+            result.Add(new ZipEntryContent(safeName, fileContent));
+        }
+
+        entries = result;
+        return true;
+    }
+
+    private static void WriteZip(string filePath, IReadOnlyCollection<ZipEntryContent> entries, CancellationToken ct)
+    {
+        using var file = File.Create(filePath);
+        using var archive = new ZipArchive(file, ZipArchiveMode.Create);
+        foreach (var entry in entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            var zipEntry = archive.CreateEntry(entry.FileName, CompressionLevel.Optimal);
+            using var writer = new StreamWriter(zipEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            writer.Write(entry.Content);
+        }
+    }
+
+    private sealed record ZipEntryContent(string FileName, string Content);
 
     private static void WriteDocx(string filePath, string content, CancellationToken ct)
     {

@@ -9,6 +9,8 @@ public class CreateSessionRequest
 {
     public string Title { get; set; } = "新对话";
     public int? ProjectId { get; set; }
+    /// <summary>服务端允许列表中的模型键；为空时使用默认模型。</summary>
+    public string? ModelKey { get; set; }
 
     /// <summary>会话类型（Mirai M1 可选）：legacy | command | context。context 时下方挂载字段必填。</summary>
     public string? SessionType { get; set; }
@@ -153,6 +155,8 @@ public class ChatSessionDto
     public string? SessionType { get; set; }
     public string? AttachToType { get; set; }
     public int? AttachToObjectId { get; set; }
+    /// <summary>provider:modelId 格式的公开模型键。</summary>
+    public string? ModelKey { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -197,9 +201,24 @@ public class ChatSessionDetailDto
     public string? SessionType { get; set; }
     public string? AttachToType { get; set; }
     public int? AttachToObjectId { get; set; }
+    /// <summary>provider:modelId 格式的公开模型键。</summary>
+    public string? ModelKey { get; set; }
     public List<ChatMessageDto> Messages { get; set; } = new();
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>前端模型选择器使用的公开模型元数据；不包含密钥、Base URL 或上游错误。</summary>
+public class AiModelDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string ProviderDisplayName { get; set; } = string.Empty;
+    public string ModelId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool SupportsChat { get; set; }
+    public bool SupportsWork { get; set; }
+    public bool SupportsTools { get; set; }
 }
 
 public class ChatProjectDto

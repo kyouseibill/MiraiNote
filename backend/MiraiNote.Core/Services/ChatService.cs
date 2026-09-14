@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Agent;
@@ -126,12 +127,32 @@ public class ChatService : IChatService
     private readonly IAgentMemoryService _memoryService;
     private readonly ServerAgentToolRegistry _toolRegistry;
     private readonly Services.Mirai.IMiraiContextProvider _contextProvider;
+    private readonly IChatModelRegistry _modelRegistry;
+    private readonly IChatModelProviderResolver _modelProviderResolver;
+    private readonly TimeSpan _workVerificationTimeout;
     private readonly ILogger<ChatService> _logger;
 
     private static readonly JsonSerializerOptions _sendOpts = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+
+    private static readonly HashSet<string> ChatReadOnlyToolNames = new(StringComparer.Ordinal)
+    {
+        "search_work_logs", "search_memos", "search_life_logs", "get_weekly_reports",
+        "search_internet", "fetch_web_page", "get_weather", "query_calendar",
+        "get_current_time", "calculate", "record_overview", "read_file", "list_files",
+        "list_scheduled_tasks", "recall"
+    };
+
+    private const string ChatReadOnlyPrompt = """
+
+        【对话模式】
+        - 可以使用提供的只读工具搜索互联网、读取公开网页、读取工作区文件并查询个人记录。
+        - 用户上传或选择的文件内容已附在消息中，应直接基于真实内容回答。
+        - 当前模式不允许创建、修改、删除、发送、登录、运行 Shell 或写入文件；需要执行操作时，说明应切换到工作模式。
+        - 只读工具完成后直接回答，不运行任务完成检查。
+        """;
 
     public ChatService(
         MiraiNoteDbContext db,
@@ -184,6 +205,9 @@ public class ChatService : IChatService
         Tools.ServerScheduleTaskTool scheduleTask,
         Tools.ServerListScheduledTasksTool listScheduledTasks,
         Services.Mirai.IMiraiContextProvider contextProvider,
+        IChatModelRegistry modelRegistry,
+        IChatModelProviderResolver modelProviderResolver,
+        IOptions<AiOptions> aiOptions,
         ILogger<ChatService> logger)
     {
         _db = db;
@@ -199,6 +223,9 @@ public class ChatService : IChatService
         _memoryService = memoryService;
         _toolRegistry = toolRegistry;
         _contextProvider = contextProvider;
+        _modelRegistry = modelRegistry;
+        _modelProviderResolver = modelProviderResolver;
+        _workVerificationTimeout = TimeSpan.FromSeconds(Math.Clamp(aiOptions.Value.WorkVerificationTimeoutSeconds, 5, 60));
         _logger = logger;
 
         // 注册所有工具
@@ -313,6 +340,7 @@ public class ChatService : IChatService
             SessionType = string.IsNullOrEmpty(session.SessionType) ? "legacy" : session.SessionType,
             AttachToType = session.AttachToType,
             AttachToObjectId = session.AttachToObjectId,
+            ModelKey = BuildModelKey(session.AiProvider, session.AiModel),
             Messages = session.Messages
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => MapMessage(m))
@@ -332,6 +360,7 @@ public class ChatService : IChatService
         var (sessionType, attachToType, attachToObjectId) = await Services.Mirai.MiraiSessionRules.ValidateAsync(
             request.SessionType, request.AttachToType, request.AttachToObjectId, _db, userId, ct);
 
+        var model = _modelRegistry.ResolveForNewSession(request.ModelKey);
         var session = new ChatSession
         {
             UserId = userId,
@@ -339,7 +368,9 @@ public class ChatService : IChatService
             ProjectId = request.ProjectId,
             SessionType = sessionType,
             AttachToType = attachToType,
-            AttachToObjectId = attachToObjectId
+            AttachToObjectId = attachToObjectId,
+            AiProvider = model.Provider,
+            AiModel = model.ModelId
         };
         _db.ChatSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -448,7 +479,9 @@ public class ChatService : IChatService
                 ? $"{source.Title}（分支）"
                 : request.Title.Trim(),
             BranchedFromSessionId = source.Id,
-            BranchedFromMessageId = request.MessageId
+            BranchedFromMessageId = request.MessageId,
+            AiProvider = source.AiProvider,
+            AiModel = source.AiModel
         };
         _db.ChatSessions.Add(branch);
         await _db.SaveChangesAsync(ct);
@@ -521,6 +554,44 @@ public class ChatService : IChatService
 
     // ===== 流式发送消息（SSE） =====
 
+    private async Task<ChatModelConnection> ResolveSessionModelAsync(
+        ChatSession session,
+        bool requiresWork,
+        CancellationToken ct)
+    {
+        var model = _modelRegistry.ResolveForExistingSession(session.AiProvider, session.AiModel);
+        if (!model.SupportsChat || (requiresWork && (!model.SupportsWork || !model.SupportsTools)))
+            throw new ChatModelUnavailableException("所选模型不支持当前模式，请创建新对话并选择其他模型。");
+
+        // Existing sessions predating model locking are upgraded lazily to the
+        // configured default the first time they are used.
+        if (!string.Equals(session.AiProvider, model.Provider, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(session.AiModel, model.ModelId, StringComparison.OrdinalIgnoreCase))
+        {
+            session.AiProvider = model.Provider;
+            session.AiModel = model.ModelId;
+            await _db.SaveChangesAsync(ct);
+        }
+        return _modelProviderResolver.ResolveConnection(model);
+    }
+
+    private ChatModelConnection ResolveTemporaryModel(bool requiresWork)
+    {
+        var model = _modelRegistry.ResolveForNewSession(null);
+        if (!model.SupportsChat || (requiresWork && (!model.SupportsWork || !model.SupportsTools)))
+            throw new ChatModelUnavailableException("默认模型不支持当前模式，请联系管理员配置可用模型。");
+        return _modelProviderResolver.ResolveConnection(model);
+    }
+
+    private HttpClient CreateModelClient(ChatModelConnection connection)
+    {
+        var client = _httpClientFactory.CreateClient("ChatModel");
+        client.BaseAddress = new Uri(connection.BaseUrl);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", connection.ApiKey);
+        return client;
+    }
+
     public async Task SendMessageStreamAsync(
         int userId,
         int sessionId,
@@ -545,6 +616,7 @@ public class ChatService : IChatService
             return;
         }
         request.ProjectInstructions = session.Project?.Instructions;
+        var modelConnection = await ResolveSessionModelAsync(session, requiresWork: false, ct);
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         // 1. 存储用户消息
@@ -574,14 +646,13 @@ public class ChatService : IChatService
 
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
-        // 3. 流式调用 DeepSeek（含 Function Calling 循环）
+        // 3. 普通 Chat 可调用只读工具，但不开放副作用工具，也不进行完成检查。
         var partial = new StringBuilder();
         var trackingCallback = TrackTokenCallback(callback, partial);
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAsync(
-                userId, history, request, trackingCallback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, userId, history, request, trackingCallback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -638,11 +709,11 @@ public class ChatService : IChatService
             return;
         }
         var history = BuildTemporaryHistory(request);
+        var modelConnection = ResolveTemporaryModel(requiresWork: false);
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAsync(
-                userId, history, request, callback, ct);
+            assistantContent = await CallDeepSeekChatStreamAsync(modelConnection, userId, history, request, callback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -685,6 +756,7 @@ public class ChatService : IChatService
             return;
         }
         request.ProjectInstructions = session.Project?.Instructions;
+        var modelConnection = await ResolveSessionModelAsync(session, requiresWork: true, ct);
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         // 恢复 AgentRun 时复用既有用户消息，避免同一提示词写入两次。
@@ -719,6 +791,7 @@ public class ChatService : IChatService
         var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
         // ── 阶段 1：Plan ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "planning", message = "正在规划执行步骤…" }));
         if (request.EnablePlanner)
         {
             var toolNames = GetAvailableToolNames(request);
@@ -735,6 +808,7 @@ public class ChatService : IChatService
         }
 
         // ── 阶段 2：Execute ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "executing", message = "正在执行任务并收集结果…" }));
         int toolCallCount = 0;
         bool skipConfirm = request.SkipConfirmation;
 
@@ -749,7 +823,7 @@ public class ChatService : IChatService
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(modelConnection,
                 userId, history, request, TrackingWrapped, skipConfirm, confirmCallback, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -775,6 +849,7 @@ public class ChatService : IChatService
         await _db.SaveChangesAsync(ct);
 
         // ── 阶段 3：Reflect ──
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "verifying", message = "已生成初稿，正在核验结果是否完整…" }));
         if (request.EnableReflector && assistantContent.Length > 100)
         {
             var reflectionContext = await BuildReflectionContextAsync(userId, agentInput, toolCallCount, ct);
@@ -799,10 +874,7 @@ public class ChatService : IChatService
             }
         }
 
-        // ── 阶段 5：Auto Memory ──
-        await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
-
-        // 通知前端完成
+        // 先通知前端完成。自动记忆属于非关键后处理，不能让已显示的答案继续停留在“回复中”。
         await callback("done", JsonSerializer.Serialize(new
         {
             messageId = assistantMsg.Id,
@@ -810,6 +882,8 @@ public class ChatService : IChatService
             title = session.Title,
             createdAt = assistantMsg.CreatedAt
         }));
+
+        await _memoryService.AutoExtractAsync(userId, agentInput, assistantContent, ct);
     }
 
     public async Task SendTemporaryMessageAgentStreamAsync(
@@ -827,8 +901,10 @@ public class ChatService : IChatService
             return;
         }
         var history = BuildTemporaryHistory(request);
+        var modelConnection = ResolveTemporaryModel(requiresWork: true);
         var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "planning", message = "正在规划执行步骤…" }));
         if (request.EnablePlanner)
         {
             var toolNames = GetAvailableToolNames(request);
@@ -844,10 +920,11 @@ public class ChatService : IChatService
             }
         }
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "executing", message = "正在执行任务并收集结果…" }));
         string assistantContent;
         try
         {
-            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(
+            assistantContent = await CallDeepSeekStreamWithToolsAgentAsync(modelConnection,
                 userId,
                 history,
                 request,
@@ -862,6 +939,7 @@ public class ChatService : IChatService
         }
         if (ct.IsCancellationRequested) return;
 
+        await callback("heartbeat", JsonSerializer.Serialize(new { phase = "finalizing", message = "正在整理交付内容…" }));
         // 临时聊天刻意跳过 AutoExtractAsync，避免从临时内容生成长期记忆。
         await callback("done", JsonSerializer.Serialize(new
         {
@@ -913,6 +991,35 @@ public class ChatService : IChatService
             .Where(t => request is not TemporaryChatRequest || !TemporaryExcludedToolNames.Contains(t.Name))
             .Select(t => t.Name)
             .ToList();
+
+    private static readonly Regex WorkQuestionOnlyPattern = new(
+        @"^(?:为什么|为何|怎么|如何|是否|什么|哪些|哪里|哪儿|谁|何时|多久|有何|有什么|区别)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkInformationalLeadPattern = new(
+        @"^(?:请(?:解释|说明|介绍)|告诉我|解释|说明|介绍|回答)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkCompletionReviewPattern = new(
+        @"开始|继续|完成|生成|产出|创建|写入|修改|更新|删除|发布|部署|登录|测试|调研|导出|下载|上传|安装|运行|执行|保存|发送|整理|处理|检查|核验|制作|搭建|实现|开发|编写|修复|修一下|打开|合并|提交|推送|同步|做个|做一下",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex WorkMixedActionPattern = new(
+        @"(?:并|并且|然后|随后|同时|再|接着).{0,12}(?:生成|产出|创建|写入|修改|更新|删除|发布|部署|登录|测试|调研|导出|下载|上传|安装|运行|执行|保存|发送|整理|处理|检查|核验|制作|搭建|实现|开发|编写|修复|打开|合并|提交|推送|同步|做个|做一下)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    internal static bool ShouldReviewWorkCompletion(
+        SendMessageRequest request,
+        string finishReason)
+    {
+        if (finishReason != "stop" || !string.IsNullOrWhiteSpace(request.ResumeCheckpointJson)) return true;
+
+        var prompt = request.Content?.Trim() ?? string.Empty;
+        if (WorkQuestionOnlyPattern.IsMatch(prompt)) return false;
+        if (WorkInformationalLeadPattern.IsMatch(prompt) && !WorkMixedActionPattern.IsMatch(prompt)) return false;
+
+        return WorkCompletionReviewPattern.IsMatch(prompt);
+    }
 
     private Task<string> ExecuteToolAsync(
         int userId,
@@ -1140,6 +1247,7 @@ public class ChatService : IChatService
     /// Agent 模式的 FC 循环。使用 _toolRegistry 执行工具，支持危险操作确认。
     /// </summary>
     private async Task<string> CallDeepSeekStreamWithToolsAgentAsync(
+        ChatModelConnection modelConnection,
         int userId,
         List<ChatMessage> history,
         SendMessageRequest request,
@@ -1148,13 +1256,7 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
-            throw new BusinessException("DeepSeek API Key 未配置", 500);
-
-        var client = _httpClientFactory.CreateClient("DeepSeek");
-        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
+        var client = CreateModelClient(modelConnection);
 
         // 构建带语义匹配记忆的 system prompt
         var userQuery = history.LastOrDefault(m => m.Role == "user")?.Content ?? "";
@@ -1177,7 +1279,7 @@ public class ChatService : IChatService
         var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
         var exportedFiles = new List<ExportedFileLink>();
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
 
         while (true)
         {
@@ -1187,35 +1289,33 @@ public class ChatService : IChatService
             if (supervisor.RecoveryHint is { } hint)
                 messages.Add(new { role = "system", content = hint });
 
-            var body = new
-            {
-                model = _deepSeekOptions.Model,
-                messages,
-                tools,
-                tool_choice = "auto",
-                stream = true
-            };
+            var body = modelConnection.CreateRequestBody(messages, stream: true, tools: tools, includeTools: true);
 
             var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
             using var httpResp = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                await callback("error", JsonSerializer.Serialize(new { message = $"AI 服务错误 {(int)httpResp.StatusCode}" }));
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}", 500);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
             }
 
             var (content, toolCalls, finishReason, reasoningContent, modelContent) = await ParseDeepSeekStreamAsync(
+                modelConnection,
                 await httpResp.Content.ReadAsStreamAsync(ct), callback, ct);
 
             if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
 
             if (finishReason != "tool_calls" || toolCalls.Count == 0)
             {
-                var decision = await supervisor.ReviewAsync(client, _deepSeekOptions.Model, messages, content, finishReason, ct);
+                if (!ShouldReviewWorkCompletion(request, finishReason))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback, ct);
+                var decision = await supervisor.ReviewAsync(client, modelConnection, messages, content, finishReason, ct);
                 if (decision.Continue)
                 {
-                    AgentRunSupervisor.AddContinuation(messages, modelContent, decision, reasoningContent);
+                    AgentRunSupervisor.AddContinuation(messages, modelConnection, modelContent, decision, reasoningContent);
                     await callback("token", JsonSerializer.Serialize(new { content = "\n\n" }));
                     fullContent.Append("\n\n");
                     continue;
@@ -1228,17 +1328,14 @@ public class ChatService : IChatService
 
             if (finishReason == "tool_calls" && toolCalls.Count > 0)
             {
-                messages.Add(new
-                {
-                    role = "assistant",
-                    content = string.IsNullOrEmpty(modelContent) ? null : modelContent,
-                    reasoning_content = reasoningContent,
-                    tool_calls = toolCalls.Select(tc => new
+                messages.Add(modelConnection.CreateAssistantHistoryMessage(
+                    string.IsNullOrEmpty(modelContent) ? null : modelContent,
+                    reasoningContent,
+                    toolCalls.Select(tc => new
                     {
                         id = tc.Id, type = "function",
                         function = new { name = tc.FunctionName, arguments = tc.Arguments }
-                    }).ToArray()
-                });
+                    }).ToArray()));
 
                 foreach (var tc in toolCalls)
                 {
@@ -1518,25 +1615,93 @@ public class ChatService : IChatService
         return content.ToArray();
     }
 
-    // ===== DeepSeek 流式 Function Calling 循环 =====
+    // ===== 普通 Chat 流式调用：无执行工具、无完成检查 =====
 
-    private async Task<string> CallDeepSeekStreamWithToolsAsync(
+    private async Task<string> CallDeepSeekChatStreamAsync(
+        ChatModelConnection modelConnection,
         int userId,
         List<ChatMessage> history,
         SendMessageRequest request,
         ChatStreamCallback callback,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
-        {
-            await callback("error", "{\"message\":\"DeepSeek API Key 未配置\"}");
-            throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
-        }
+        var client = CreateModelClient(modelConnection);
+        var messages = BuildMessages(history, BuildSystemPromptForRequest(request) + ChatReadOnlyPrompt, request);
+        var excluded = request is TemporaryChatRequest ? TemporaryExcludedToolNames : null;
+        var tools = _toolRegistry.BuildToolDefinitions(excluded, ChatReadOnlyToolNames);
+        var fullContent = new StringBuilder();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
 
-        var client = _httpClientFactory.CreateClient("DeepSeek");
-        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (supervisor.CheckStalled() is { } stalled)
+                return fullContent + AgentRunSupervisor.StopMessage(stalled);
+
+            var body = modelConnection.CreateRequestBody(messages, stream: true, tools: tools, includeTools: true);
+            var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
+            using var response = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)response.StatusCode, errorBody);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
+            }
+
+            var (content, toolCalls, finishReason, reasoningContent, modelContent) = await ParseDeepSeekStreamAsync(
+                modelConnection, await response.Content.ReadAsStreamAsync(ct), callback, ct);
+            if (!string.IsNullOrEmpty(content)) fullContent.Append(content);
+            if (finishReason != "tool_calls" || toolCalls.Count == 0) return fullContent.ToString();
+
+            messages.Add(modelConnection.CreateAssistantHistoryMessage(
+                string.IsNullOrEmpty(modelContent) ? null : modelContent,
+                reasoningContent,
+                toolCalls.Select(tc => new
+                {
+                    id = tc.Id, type = "function",
+                    function = new { name = tc.FunctionName, arguments = tc.Arguments }
+                }).ToArray()));
+
+            foreach (var toolCall in toolCalls)
+            {
+                if (!ChatReadOnlyToolNames.Contains(toolCall.FunctionName))
+                {
+                    var boundaryMessage = "对话模式不能执行写入或其他操作，请切换到工作模式后重试。";
+                    return string.IsNullOrWhiteSpace(fullContent.ToString())
+                        ? boundaryMessage
+                        : fullContent + "\n\n" + boundaryMessage;
+                }
+
+                await callback("tool_call", JsonSerializer.Serialize(new
+                {
+                    name = toolCall.FunctionName, arguments = toolCall.Arguments, id = toolCall.Id
+                }));
+                var result = await ExecuteToolAsync(
+                    userId, toolCall.FunctionName, toolCall.Arguments, request, ct);
+                supervisor.ObserveTool(toolCall.FunctionName, toolCall.Arguments, result);
+                await callback("tool_result", JsonSerializer.Serialize(new
+                {
+                    toolCallId = toolCall.Id,
+                    name = toolCall.FunctionName,
+                    result = PrepareToolResultForClient(toolCall.FunctionName, result)
+                }));
+                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = result });
+            }
+        }
+    }
+
+    // ===== DeepSeek 流式 Function Calling 循环（仅 Work） =====
+
+    private async Task<string> CallDeepSeekStreamWithToolsAsync(
+        ChatModelConnection modelConnection,
+        int userId,
+        List<ChatMessage> history,
+        SendMessageRequest request,
+        ChatStreamCallback callback,
+        CancellationToken ct)
+    {
+        var client = CreateModelClient(modelConnection);
 
         var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
 
@@ -1544,7 +1709,7 @@ public class ChatService : IChatService
         var fullContent = new StringBuilder();
         var exportedFiles = new List<ExportedFileLink>();
 
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -1553,14 +1718,7 @@ public class ChatService : IChatService
             if (supervisor.RecoveryHint is { } hint)
                 messages.Add(new { role = "system", content = hint });
 
-            var body = new
-            {
-                model = _deepSeekOptions.Model,
-                messages,
-                tools,
-                tool_choice = "auto",
-                stream = true  // 开启流式
-            };
+            var body = modelConnection.CreateRequestBody(messages, stream: true, tools: tools, includeTools: true);
 
             var bodyJson = JsonSerializer.Serialize(body, _sendOpts);
             using var httpResp = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, true, ct);
@@ -1568,16 +1726,15 @@ public class ChatService : IChatService
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                await callback("error", JsonSerializer.Serialize(new
-                {
-                    message = $"AI 服务错误 {(int)httpResp.StatusCode}"
-                }));
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+                var message = AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err);
+                await callback("error", JsonSerializer.Serialize(new { message }));
+                throw new BusinessException(message, 500);
             }
 
             // 解析 SSE 流
             var (assistantContent, toolCalls, finishReason, reasoningContent, modelContent) =
                 await ParseDeepSeekStreamAsync(
+                    modelConnection,
                     await httpResp.Content.ReadAsStreamAsync(ct),
                     callback,
                     ct);
@@ -1590,10 +1747,13 @@ public class ChatService : IChatService
 
             if (finishReason != "tool_calls" || toolCalls.Count == 0)
             {
-                var decision = await supervisor.ReviewAsync(client, _deepSeekOptions.Model, messages, assistantContent, finishReason, ct);
+                if (!ShouldReviewWorkCompletion(request, finishReason))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback, ct);
+                var decision = await supervisor.ReviewAsync(client, modelConnection, messages, assistantContent, finishReason, ct);
                 if (decision.Continue)
                 {
-                    AgentRunSupervisor.AddContinuation(messages, modelContent, decision, reasoningContent);
+                    AgentRunSupervisor.AddContinuation(messages, modelConnection, modelContent, decision, reasoningContent);
                     await callback("token", JsonSerializer.Serialize(new { content = "\n\n" }));
                     fullContent.Append("\n\n");
                     continue;
@@ -1607,18 +1767,15 @@ public class ChatService : IChatService
             if (finishReason == "tool_calls" && toolCalls.Count > 0)
             {
                 // 将 assistant 消息（含 tool_calls）加入 messages
-                messages.Add(new
-                {
-                    role = "assistant",
-                    content = string.IsNullOrEmpty(modelContent) ? null : modelContent,
-                    reasoning_content = reasoningContent,
-                    tool_calls = toolCalls.Select(tc => new
+                messages.Add(modelConnection.CreateAssistantHistoryMessage(
+                    string.IsNullOrEmpty(modelContent) ? null : modelContent,
+                    reasoningContent,
+                    toolCalls.Select(tc => new
                     {
                         id = tc.Id,
                         type = "function",
                         function = new { name = tc.FunctionName, arguments = tc.Arguments }
-                    }).ToArray()
-                });
+                    }).ToArray()));
 
                 // 执行每个工具调用
                 foreach (var tc in toolCalls)
@@ -1649,13 +1806,22 @@ public class ChatService : IChatService
         }
     }
 
+    private static string? NormalizeStreamDelta(StringBuilder previous, string? incoming, bool cumulative)
+    {
+        if (string.IsNullOrEmpty(incoming)) return incoming;
+        if (!cumulative) return incoming;
+        var existing = previous.ToString();
+        return incoming.StartsWith(existing, StringComparison.Ordinal) ? incoming[existing.Length..] : incoming;
+    }
+
     /// <summary>
-    /// 解析 DeepSeek 流式 SSE 响应。
+    /// 解析 OpenAI 兼容的流式 SSE 响应。
     /// 返回展示文本、工具调用、结束原因，以及独立的原始思考和正文供后续请求原样回传。
     /// </summary>
     private async Task<(string assistantContent, List<ToolCallInfo> toolCalls, string finishReason,
         string? reasoningContent, string modelContent)>
         ParseDeepSeekStreamAsync(
+        ChatModelConnection modelConnection,
         Stream responseStream,
         ChatStreamCallback callback,
         CancellationToken ct)
@@ -1739,7 +1905,7 @@ public class ChatService : IChatService
                     if (delta.TryGetProperty("reasoning_content", out var reasoningEl) &&
                         reasoningEl.ValueKind == JsonValueKind.String)
                     {
-                        var token = reasoningEl.GetString();
+                        var token = NormalizeStreamDelta(reasoningContent, reasoningEl.GetString(), modelConnection.UsesReasoningSplit);
                         receivedReasoningContent = true;
                         reasoningContent.Append(token);
                         if (!string.IsNullOrEmpty(token))
@@ -1760,7 +1926,7 @@ public class ChatService : IChatService
                     if (delta.TryGetProperty("content", out var contentEl) &&
                         contentEl.ValueKind == JsonValueKind.String)
                     {
-                        var token = contentEl.GetString();
+                        var token = NormalizeStreamDelta(modelContent, contentEl.GetString(), modelConnection.UsesReasoningSplit);
                         modelContent.Append(token);
                         if (!string.IsNullOrEmpty(token))
                         {
@@ -1872,6 +2038,7 @@ public class ChatService : IChatService
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
             ?? throw new BusinessException("对话不存在", 404);
         request.ProjectInstructions = session.Project?.Instructions;
+        var modelConnection = await ResolveSessionModelAsync(session, requiresWork: true, ct);
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         var userMsg = new ChatMessage
@@ -1891,7 +2058,7 @@ public class ChatService : IChatService
 
         AppendAttachmentsToHistory(history, request, _deepSeekOptions.MaxAttachmentTextChars);
 
-        var assistantContent = await CallDeepSeekWithToolsAsync(userId, history, request, ct);
+        var assistantContent = await CallDeepSeekWithToolsAsync(modelConnection, userId, history, request, ct);
 
         var assistantMsg = new ChatMessage
         {
@@ -1915,21 +2082,15 @@ public class ChatService : IChatService
 
     // ===== DeepSeek Function Calling 循环 =====
 
-    private async Task<string> CallDeepSeekWithToolsAsync(int userId, List<ChatMessage> history, SendMessageRequest request, CancellationToken ct)
+    private async Task<string> CallDeepSeekWithToolsAsync(ChatModelConnection modelConnection, int userId, List<ChatMessage> history, SendMessageRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_deepSeekOptions.ApiKey))
-            throw new BusinessException("DeepSeek API Key 未配置，请联系管理员", 500);
-
-        var client = _httpClientFactory.CreateClient("DeepSeek");
-        client.BaseAddress = new Uri(_deepSeekOptions.BaseUrl);
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _deepSeekOptions.ApiKey);
+        var client = CreateModelClient(modelConnection);
 
         var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
 
         var tools = BuildToolDefinitions(request);
         var exportedFiles = new List<ExportedFileLink>();
-        var supervisor = new AgentRunSupervisor();
+        var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
         var fullContent = new StringBuilder();
         while (true)
         {
@@ -1939,20 +2100,17 @@ public class ChatService : IChatService
             if (supervisor.RecoveryHint is { } hint)
                 messages.Add(new { role = "system", content = hint });
 
-            var bodyJson = JsonSerializer.Serialize(new
-            {
-                model = _deepSeekOptions.Model,
-                messages,
-                tools,
-                tool_choice = "auto"
-            }, _sendOpts);
+            var bodyJson = JsonSerializer.Serialize(
+                modelConnection.CreateRequestBody(messages, stream: false, tools: tools, includeTools: true),
+                _sendOpts);
 
             using var httpResp = await AgentRunSupervisor.SendModelRequestAsync(client, bodyJson, false, ct);
 
             if (!httpResp.IsSuccessStatusCode)
             {
                 var err = await httpResp.Content.ReadAsStringAsync(ct);
-                throw new BusinessException($"AI 服务错误 {(int)httpResp.StatusCode}: {err[..Math.Min(300, err.Length)]}", 500);
+                throw new BusinessException(
+                    AgentRunSupervisor.ProviderErrorMessage((int)httpResp.StatusCode, err), 500);
             }
 
             using var doc = JsonDocument.Parse(await httpResp.Content.ReadAsStringAsync(ct));
@@ -1967,10 +2125,13 @@ public class ChatService : IChatService
 
             if (finishReason != "tool_calls" || !msgEl.TryGetProperty("tool_calls", out var calls) || calls.GetArrayLength() == 0)
             {
-                var decision = await supervisor.ReviewAsync(client, _deepSeekOptions.Model, messages, candidate, finishReason ?? "", ct);
+                if (!ShouldReviewWorkCompletion(request, finishReason ?? ""))
+                    return await EnsureRequestedExportAsync(
+                        userId, request, fullContent.ToString(), exportedFiles, callback: null, ct);
+                var decision = await supervisor.ReviewAsync(client, modelConnection, messages, candidate, finishReason ?? "", ct);
                 if (decision.Continue)
                 {
-                    AgentRunSupervisor.AddContinuation(messages, candidate, decision, reasoningContent);
+                    AgentRunSupervisor.AddContinuation(messages, modelConnection, candidate, decision, reasoningContent);
                     fullContent.Append("\n\n");
                     continue;
                 }
@@ -1993,12 +2154,10 @@ public class ChatService : IChatService
                 if (msgEl.TryGetProperty("content", out var cEl) && cEl.ValueKind != JsonValueKind.Null)
                     assistantContent = cEl.GetString();
 
-                messages.Add(new
-                {
-                    role = "assistant",
-                    content = assistantContent,
-                    reasoning_content = reasoningContent,
-                    tool_calls = toolCallsEl.EnumerateArray().Select(tc => new
+                messages.Add(modelConnection.CreateAssistantHistoryMessage(
+                    assistantContent,
+                    reasoningContent,
+                    toolCallsEl.EnumerateArray().Select(tc => new
                     {
                         id = tc.GetProperty("id").GetString(),
                         type = "function",
@@ -2007,8 +2166,7 @@ public class ChatService : IChatService
                             name = tc.GetProperty("function").GetProperty("name").GetString(),
                             arguments = tc.GetProperty("function").GetProperty("arguments").GetString()
                         }
-                    }).ToArray()
-                });
+                    }).ToArray()));
 
                 foreach (var tc in toolCallsEl.EnumerateArray())
                 {
@@ -2978,9 +3136,15 @@ public class ChatService : IChatService
         SessionType = string.IsNullOrEmpty(s.SessionType) ? "legacy" : s.SessionType,
         AttachToType = s.AttachToType,
         AttachToObjectId = s.AttachToObjectId,
+        ModelKey = BuildModelKey(s.AiProvider, s.AiModel),
         CreatedAt = s.CreatedAt,
         UpdatedAt = s.UpdatedAt
     };
+
+    private static string? BuildModelKey(string? provider, string? model) =>
+        string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(model)
+            ? null
+            : $"{provider}:{model}";
 
     private const string StoppedAssistantMarker = "（已停止）";
 
