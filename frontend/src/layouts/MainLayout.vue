@@ -11,6 +11,7 @@ import {
   IconNotebook,
   IconReportAnalytics,
   IconSettings,
+  IconSparkles,
   IconX,
 } from '@tabler/icons-vue'
 import { useReminderStore } from '@/stores/reminder'
@@ -49,7 +50,10 @@ const groups: NavGroup[] = [
   },
   {
     title: '智能',
-    items: [{ to: '/chat', label: 'Mirai Chat', icon: IconMessageCircle }],
+    items: [
+      { to: '/chat', label: 'Mirai Chat', icon: IconMessageCircle },
+      { to: '/skills', label: '技能管理', icon: IconSparkles },
+    ],
   },
 ]
 

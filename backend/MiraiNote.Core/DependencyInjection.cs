@@ -33,6 +33,7 @@ public static class DependencyInjection
         services.AddHostedService<Services.MemoryDecayBackgroundService>();
         services.AddHostedService<Services.ScheduledTaskExecutionService>();
         services.AddScoped<Services.IAgentMemoryService, Services.AgentMemoryService>();
+        services.AddScoped<Services.IFileSkillService, Services.FileSkillService>();
         services.AddScoped<Services.IAgentPlannerService, Services.AgentPlannerService>();
         services.AddScoped<Services.IAgentReflectorService, Services.AgentReflectorService>();
         // Mirai M1：收件箱分拣 / 晨报 / 今日流 / AI 统计 / context 会话快照
@@ -81,6 +82,7 @@ public static class DependencyInjection
         services.AddScoped<Services.Tools.ServerShellTool>();
         services.AddScoped<Services.Tools.ServerScheduleTaskTool>();
         services.AddScoped<Services.Tools.ServerListScheduledTasksTool>();
+        services.AddScoped<Services.Tools.ServerLoadSkillTool>();
         // 混合推理模型"思考+正文"可能远超 HttpClient 默认 100s 超时导致流被掐断，
         // 改为无限超时；由 ChatService 读取循环里的空闲超时兜底（长时间收不到新行才中断）。
         services.AddHttpClient("DeepSeek").ConfigureHttpClient(c =>

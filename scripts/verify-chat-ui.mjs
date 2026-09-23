@@ -132,6 +132,10 @@ async function installMocks(context, state) {
       return route.fulfill({ status: 200, contentType: 'application/pdf', body: '%PDF-1.4 mock export' })
     }
     if (path === '/memos/due-popups') return json([])
+    if (path === '/skills' && method === 'GET') return json([
+      { name: 'yahoo-transit-jp', description: '查询日本铁路和公交换乘。', enabled: true, allowImplicitInvocation: true, error: null },
+      { name: 'weekly-report', description: '整理本周工作记录。', enabled: true, allowImplicitInvocation: true, error: null },
+    ])
     if (path === '/ai/models' && method === 'GET') return json([
       { key: 'deepseek:deepseek-chat', provider: 'deepseek', providerDisplayName: 'DeepSeek', modelId: 'deepseek-chat', displayName: 'DeepSeek Chat', supportsChat: true, supportsWork: true, supportsTools: true },
       { key: 'minimax:MiniMax-M2.7', provider: 'minimax', providerDisplayName: 'MiniMax', modelId: 'MiniMax-M2.7', displayName: 'MiniMax M2.7', supportsChat: true, supportsWork: true, supportsTools: true },
@@ -290,6 +294,39 @@ async function runRegression(page, state) {
     await page.getByText(/工作模式 · .* · 执行操作并检查交付/).waitFor()
     await page.getByText('可执行工具、修改文件并检查交付', { exact: true }).waitFor()
     await page.getByTestId('chat-mode-chat').click()
+  })
+  await check('skill-picker-inserts-explicit-mention', async () => {
+    await page.getByRole('button', { name: '选择 Skill' }).click()
+    const dialog = page.getByRole('dialog', { name: '选择 Skill' })
+    await dialog.getByRole('button', { name: /yahoo-transit-jp/ }).click()
+    assert.match(await input.inputValue(), /^\$yahoo-transit-jp\s/)
+    await input.fill('')
+  })
+  await check('skill-inline-suggestions-filter-and-complete', async () => {
+    await input.fill('$')
+    assert.equal(await page.getByTestId('chat-skill-suggestions').count(), 0)
+    await input.press('Space')
+    const suggestions = page.getByTestId('chat-skill-suggestions')
+    await suggestions.waitFor()
+    await suggestions.getByRole('option', { name: /yahoo-transit-jp/ }).waitFor()
+    assert.equal(await suggestions.getByRole('option').count(), 2)
+    await screenshot(page, 'skill-autocomplete-desktop')
+    await input.type('yah')
+    assert.equal(await suggestions.getByRole('option').count(), 1)
+    await input.press('Enter')
+    assert.equal(await input.inputValue(), '$yahoo-transit-jp ')
+    assert.equal(await suggestions.count(), 0)
+
+    await input.fill('$ zz')
+    await suggestions.getByText('没有匹配的技能').waitFor()
+    await input.press('Escape')
+    assert.equal(await suggestions.count(), 0)
+    assert.equal(await input.inputValue(), '$ zz')
+
+    await input.fill('请用 $ ')
+    await suggestions.getByRole('option', { name: /weekly-report/ }).click()
+    assert.equal(await input.inputValue(), '请用 $weekly-report ')
+    await input.fill('')
   })
   await check('terminal-event-unlocks-before-transport-close', async () => {
     await input.fill('结束后延迟断开')

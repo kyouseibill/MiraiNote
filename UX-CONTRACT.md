@@ -34,6 +34,12 @@ Project, rename and message edit inputs retain their contents on failure with in
 
 The visible stream reaches its terminal state before noncritical memory extraction begins. A failed or malformed completion review ends with an explanatory status instead of repeatedly regenerating the same answer. A review may request at most one automatic continuation without new tool evidence. Provider quota errors that are known to be permanent for the current request are surfaced directly and are not retried as transient throttling.
 
+## Skills
+
+Skill 管理页读取当前用户私有工作区 `skills/<name>/SKILL.md`，保留原始 Markdown 与附属文件；编辑失败保留输入内容。列表显示无效文件的原因，启停状态由 Skill 目录内的 MiraiNote 设置文件控制。删除经 AppDialog 确认后移至 `skills/.trash/`，不是硬删除。
+
+Chat 与 Work 的输入区共用 Skill 选择器，选择后仅插入 `$名称` 草稿，不自动发送。显式提及时服务端加载完整步骤；自动调用只暴露已启用且允许自动调用的名称与描述，模型必须通过只读 `load_skill` 再读取正文。Skill 不提升 Chat 的工具权限，也不绕过 Work 的危险操作确认。相关存储与授权约束以 `WorkspacePaths` 和 `FileSkillService` 为准。
+
 ## Verification boundary
 
 `scripts/verify-chat-ui.mjs` uses mock APIs in a real browser to exercise UI transitions without credentials, persistent database mutations or paid model calls. Backend tests validate the existing service contract. Neither proves live model availability or production deployment.

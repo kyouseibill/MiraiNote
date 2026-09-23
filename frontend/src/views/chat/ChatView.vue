@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, onErrorCaptured } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/composables/useToast'
 import { renderMarkdown } from '@/composables/useMarkdown'
@@ -21,6 +22,7 @@ import {
   sessionDateGroup as sessionDateGroupByAccountTz,
 } from '@/utils/accountTime'
 import { chatApi } from '@/api/chat'
+import { skillsApi, type SkillSummary } from '@/api/skills'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
@@ -53,10 +55,12 @@ import {
   IconMaximize,
   IconMinimize,
   IconBulb,
+  IconSparkles,
 } from '@tabler/icons-vue'
 
 const store = useChatStore()
 const toast = useToast()
+const route = useRoute()
 
 const renderError = ref<string | null>(null)
 onErrorCaptured((err) => {
@@ -168,6 +172,18 @@ const inputContent = computed({
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingFiles = ref<Set<string>>(new Set())
 const showWorkspaceBrowser = ref(false)
+const showSkillPicker = ref(false)
+const availableSkills = ref<SkillSummary[]>([])
+const skillsLoaded = ref(false)
+const skillPickerLoading = ref(false)
+const skillPickerError = ref('')
+const skillSuggestion = ref<{ start: number; end: number; query: string } | null>(null)
+const skillSuggestionIndex = ref(0)
+const inputComposing = ref(false)
+const filteredSkillSuggestions = computed(() => {
+  const query = skillSuggestion.value?.query.toLowerCase() ?? ''
+  return availableSkills.value.filter((skill) => skill.name.toLowerCase().includes(query))
+})
 const messagesContainer = ref<HTMLElement | null>(null)
 const showArchiveManager = ref(false)
 const showSessionList = ref(false)
@@ -301,6 +317,65 @@ const starters = [
 async function focusInput() {
   await nextTick()
   inputRef.value?.focus()
+}
+async function loadAvailableSkills() {
+  skillPickerLoading.value = true
+  skillPickerError.value = ''
+  try {
+    availableSkills.value = (await skillsApi.list()).filter((skill) => skill.enabled && !skill.error)
+    skillsLoaded.value = true
+  } catch {
+    skillPickerError.value = '技能列表加载失败，请稍后重试。'
+  } finally {
+    skillPickerLoading.value = false
+  }
+}
+async function openSkillPicker() {
+  skillSuggestion.value = null
+  showSkillPicker.value = true
+  await loadAvailableSkills()
+}
+function currentSkillTrigger() {
+  const input = inputRef.value
+  if (!input || input.selectionStart !== input.selectionEnd) return null
+  const beforeCaret = inputContent.value.slice(0, input.selectionStart)
+  const match = beforeCaret.match(/(^|\s)\$ ([a-z0-9_-]*)$/i)
+  if (!match) return null
+  return {
+    start: input.selectionStart - match[0].length + (match[1] ?? '').length,
+    end: input.selectionStart,
+    query: match[2] ?? '',
+  }
+}
+function updateSkillSuggestion() {
+  if (inputComposing.value || showSkillPicker.value) return
+  const trigger = currentSkillTrigger()
+  if (trigger?.query !== skillSuggestion.value?.query || trigger?.start !== skillSuggestion.value?.start)
+    skillSuggestionIndex.value = 0
+  skillSuggestion.value = trigger
+  if (trigger && !skillsLoaded.value && !skillPickerLoading.value && !skillPickerError.value)
+    void loadAvailableSkills()
+}
+async function completeSkillSuggestion(name: string, trigger = skillSuggestion.value) {
+  if (!trigger) return
+  const mention = `$${name} `
+  inputContent.value = inputContent.value.slice(0, trigger.start) + mention + inputContent.value.slice(trigger.end)
+  skillSuggestion.value = null
+  await focusInput()
+  const caret = trigger.start + mention.length
+  inputRef.value?.setSelectionRange(caret, caret)
+}
+async function insertSkill(name: string) {
+  const trigger = currentSkillTrigger()
+  if (trigger) {
+    showSkillPicker.value = false
+    await completeSkillSuggestion(name, trigger)
+    return
+  }
+  const mention = `$${name}`
+  if (!inputContent.value.includes(mention)) inputContent.value = `${mention} ${inputContent.value}`.trimEnd() + ' '
+  showSkillPicker.value = false
+  await focusInput()
 }
 async function useStarter(prompt: string) {
   inputContent.value = prompt
@@ -1052,6 +1127,7 @@ async function selectSession(id: number) {
 }
 
 async function send() {
+  skillSuggestion.value = null
   const text = inputContent.value.trim()
   if (
     (!text && store.pendingAttachments.length === 0) ||
@@ -1139,10 +1215,34 @@ function startRename(id: number, currentTitle: string, e: Event) {
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.isComposing || e.keyCode === 229) return
+  if (skillSuggestion.value) {
+    const count = filteredSkillSuggestions.value.length
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (count) {
+        skillSuggestionIndex.value = (skillSuggestionIndex.value + (e.key === 'ArrowDown' ? 1 : -1) + count) % count
+        void nextTick(() => document.getElementById(`chat-skill-option-${skillSuggestionIndex.value}`)?.scrollIntoView({ block: 'nearest' }))
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      skillSuggestion.value = null
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey || e.key === 'Tab' && count) {
+      e.preventDefault()
+      if (count) void completeSkillSuggestion(filteredSkillSuggestions.value[skillSuggestionIndex.value]!.name)
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     send()
   }
+}
+function handleInputKeyup(e: KeyboardEvent) {
+  if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) updateSkillSuggestion()
 }
 
 watch(
@@ -1158,6 +1258,7 @@ watch(
 watch(
   () => store.currentSession?.id,
   () => {
+    skillSuggestion.value = null
     atBottom.value = true
     void scrollToBottom()
   },
@@ -1167,6 +1268,12 @@ watch([inputContent, inputExpanded], resizeInput)
 onMounted(async () => {
   await Promise.all([reloadConversations(), store.fetchAvailableModels().catch(() => [])])
   selectedModelKey.value = store.availableModels[0]?.key || ''
+  const requestedSkill = typeof route.query.skill === 'string' ? route.query.skill : ''
+  if (requestedSkill) {
+    await loadAvailableSkills()
+    if (availableSkills.value.some((skill) => skill.name === requestedSkill))
+      await insertSkill(requestedSkill)
+  }
   await resizeInput()
 })
 
@@ -1559,9 +1666,7 @@ async function reloadConversations() {
                     class="chat-tool-events is-collapsed"
                     data-testid="chat-tool-list-collapsed"
                   >
-                    <summary
-                      >工具过程（已折叠）· {{ toolEventsSummary(toolEventsForMessage(msg)) }}</summary
-                    >
+                    <summary>工具过程（<span class="chat-tool-state-closed">已折叠</span><span class="chat-tool-state-open">已展开</span>）· {{ toolEventsSummary(toolEventsForMessage(msg)) }}</summary>
                     <article
                       v-for="tc in toolEventsForMessage(msg)"
                       :key="tc.id"
@@ -1608,7 +1713,7 @@ async function reloadConversations() {
                     >
                       <IconPencil :size="15" /><span>编辑</span>
                     </button>
-                    <button v-else :disabled="store.sending" @click="retryAssistantMessage(msg)">
+                    <button v-else :disabled="store.sending || actionBusy" @click="retryAssistantMessage(msg)">
                       <IconRefresh :size="15" /><span>重新回答</span>
                     </button>
                     <button :disabled="store.sending" @click="branchFromMessage(msg)">
@@ -1643,6 +1748,25 @@ async function reloadConversations() {
           data-testid="chat-composer"
           :class="{ 'is-generating': isCurrentStreaming }"
         >
+          <div v-if="skillSuggestion" class="chat-skill-suggestions" data-testid="chat-skill-suggestions">
+            <div class="chat-skill-suggestions-heading"><span>选择技能</span><span>↑↓ 选择 · Enter 插入 · Esc 关闭</span></div>
+            <p v-if="skillPickerLoading" class="chat-skill-suggestions-state" role="status">正在读取技能…</p>
+            <p v-else-if="skillPickerError" class="chat-skill-suggestions-state" role="alert">{{ skillPickerError }}<button type="button" @mousedown.prevent @click="loadAvailableSkills">重试</button></p>
+            <p v-else-if="!filteredSkillSuggestions.length" class="chat-skill-suggestions-state" role="status">{{ availableSkills.length ? '没有匹配的技能' : '暂无可用技能' }}</p>
+            <ul v-else id="chat-skill-options" role="listbox" aria-label="可用技能">
+              <li v-for="(skill, index) in filteredSkillSuggestions" :key="skill.name" role="presentation">
+                <button
+                  :id="`chat-skill-option-${index}`"
+                  type="button"
+                  role="option"
+                  :aria-selected="index === skillSuggestionIndex"
+                  :class="{ 'is-active': index === skillSuggestionIndex }"
+                  @mousedown.prevent
+                  @click="completeSkillSuggestion(skill.name)"
+                ><span class="chat-skill-suggestions-name">${{ skill.name }}</span><span class="chat-skill-suggestions-description">{{ skill.description }}</span></button>
+              </li>
+            </ul>
+          </div>
           <div
             v-if="store.pendingAttachments.length || uploadingFiles.size"
             class="chat-attachments"
@@ -1671,10 +1795,23 @@ async function reloadConversations() {
             ref="inputRef"
             v-model="inputContent"
             data-testid="chat-input"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            :aria-expanded="!!skillSuggestion"
+            :aria-controls="skillSuggestion && filteredSkillSuggestions.length ? 'chat-skill-options' : undefined"
+            :aria-activedescendant="skillSuggestion && filteredSkillSuggestions.length ? `chat-skill-option-${skillSuggestionIndex}` : undefined"
             :placeholder="store.sending ? '可以先写下一个想法…' : '写下你的问题，或附上一份文件…'"
             rows="2"
             :disabled="creatingSession"
             @keydown="handleKeydown"
+            @keyup="handleInputKeyup"
+            @input="updateSkillSuggestion"
+            @click="updateSkillSuggestion"
+            @focus="updateSkillSuggestion"
+            @blur="skillSuggestion = null"
+            @compositionstart="inputComposing = true; skillSuggestion = null"
+            @compositionend="inputComposing = false; updateSkillSuggestion()"
             @paste="handlePaste"
           />
           <div class="chat-composer-tools">
@@ -1703,6 +1840,15 @@ async function reloadConversations() {
               @click="showWorkspaceBrowser = true"
             >
               <IconFolder :size="19" />
+            </button>
+            <button
+              class="chat-icon"
+              aria-label="选择 Skill"
+              title="选择 Skill，在消息中插入 $名称"
+              :disabled="store.sending || creatingSession"
+              @click="openSkillPicker"
+            >
+              <IconSparkles :size="19" />
             </button>
             <span class="chat-composer-label">{{
               store.isTemporary ? '临时聊天' : currentProject ? currentProject.name : 'Mirai 助手'
@@ -1770,6 +1916,20 @@ async function reloadConversations() {
         @attach="onWorkspaceAttach"
         @close="showWorkspaceBrowser = false"
     /></AppDialog>
+    <AppDialog :open="showSkillPicker" title="选择 Skill" description="插入 $名称后发送，即可明确调用。也可以直接在输入框手写。" @close="showSkillPicker = false">
+      <div v-if="skillPickerLoading" role="status" class="py-6 text-[13px] text-[var(--mn-muted)]">正在读取技能…</div>
+      <div v-else-if="skillPickerError" role="alert" class="py-4 text-[13px] text-[#b4493f]">{{ skillPickerError }}<button type="button" class="ml-3 text-[var(--mn-indigo)] underline" @click="loadAvailableSkills">重试</button></div>
+      <div v-else-if="!availableSkills.length" class="py-5 text-[13px] leading-6 text-[var(--mn-muted)]">没有可用的 Skill。可以先到技能管理页新建，或检查工作区中的 SKILL.md。</div>
+      <ul v-else class="space-y-2">
+        <li v-for="skill in availableSkills" :key="skill.name">
+          <button type="button" class="w-full rounded-md border border-[var(--mn-line)] px-4 py-3 text-left transition hover:border-[var(--mn-indigo)] hover:bg-[#f4f1eb] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--mn-indigo)]" @click="insertSkill(skill.name)">
+            <span class="block font-mono text-[13px] text-[var(--mn-ink)]">${{ skill.name }}</span>
+            <span class="mt-1 block text-[11px] leading-5 text-[var(--mn-muted)]">{{ skill.description }}</span>
+          </button>
+        </li>
+      </ul>
+      <template #footer><RouterLink to="/skills" class="mr-auto inline-flex h-9 items-center text-[13px] text-[var(--mn-indigo)] hover:underline" @click="showSkillPicker = false">管理技能</RouterLink><button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" @click="showSkillPicker = false">关闭</button></template>
+    </AppDialog>
     <AppDialog
       :open="showArtifacts"
       title="对话文件"

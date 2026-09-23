@@ -122,6 +122,7 @@ public class ChatService : IChatService
     private readonly IAgentPlannerService _plannerService;
     private readonly IAgentReflectorService _reflectorService;
     private readonly IAgentMemoryService _memoryService;
+    private readonly IFileSkillService _skillService;
     private readonly ServerAgentToolRegistry _toolRegistry;
     private readonly Services.Mirai.IMiraiContextProvider _contextProvider;
     private readonly IChatModelRegistry _modelRegistry;
@@ -139,7 +140,7 @@ public class ChatService : IChatService
         "search_work_logs", "search_memos", "search_life_logs", "get_weekly_reports",
         "search_internet", "fetch_web_page", "get_weather", "query_calendar",
         "get_current_time", "calculate", "record_overview", "read_file", "list_files",
-        "list_scheduled_tasks", "recall"
+        "list_scheduled_tasks", "recall", "load_skill"
     };
 
     private const string ChatReadOnlyPrompt = """
@@ -163,6 +164,7 @@ public class ChatService : IChatService
         IAgentPlannerService plannerService,
         IAgentReflectorService reflectorService,
         IAgentMemoryService memoryService,
+        IFileSkillService skillService,
         ServerAgentToolRegistry toolRegistry,
         Tools.ServerSearchWorkLogsTool searchWorkLogs,
         Tools.ServerSearchMemosTool searchMemos,
@@ -201,6 +203,7 @@ public class ChatService : IChatService
         Tools.ServerShellTool runShell,
         Tools.ServerScheduleTaskTool scheduleTask,
         Tools.ServerListScheduledTasksTool listScheduledTasks,
+        Tools.ServerLoadSkillTool loadSkill,
         Services.Mirai.IMiraiContextProvider contextProvider,
         IChatModelRegistry modelRegistry,
         IChatModelProviderResolver modelProviderResolver,
@@ -218,6 +221,7 @@ public class ChatService : IChatService
         _plannerService = plannerService;
         _reflectorService = reflectorService;
         _memoryService = memoryService;
+        _skillService = skillService;
         _toolRegistry = toolRegistry;
         _contextProvider = contextProvider;
         _modelRegistry = modelRegistry;
@@ -236,7 +240,7 @@ public class ChatService : IChatService
             getWeather, sendEmail, exportFile, queryCalendar,
             currentTime, calculator, recordOverview,
             readFile, writeFile, deleteFile, moveFile, publishWorkspaceFile, listFiles, runShell,
-            scheduleTask, listScheduledTasks
+            scheduleTask, listScheduledTasks, loadSkill
         }) _toolRegistry.Register(t);
     }
 
@@ -1267,7 +1271,7 @@ public class ChatService : IChatService
                 }));
         }
 
-        var messages = BuildMessages(history, BuildSystemPromptForRequest(request, skipConfirm) + memoryContext, request);
+        var messages = BuildMessages(history, BuildSystemPromptWithSkills(userId, request, skipConfirm) + memoryContext, request);
 
         var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
@@ -1617,7 +1621,7 @@ public class ChatService : IChatService
         CancellationToken ct)
     {
         var client = CreateModelClient(modelConnection);
-        var messages = BuildMessages(history, BuildSystemPromptForRequest(request) + ChatReadOnlyPrompt, request);
+        var messages = BuildMessages(history, BuildSystemPromptWithSkills(userId, request) + ChatReadOnlyPrompt, request);
         var excluded = request is TemporaryChatRequest ? TemporaryExcludedToolNames : null;
         var tools = _toolRegistry.BuildToolDefinitions(excluded, ChatReadOnlyToolNames);
         var fullContent = new StringBuilder();
@@ -1694,7 +1698,7 @@ public class ChatService : IChatService
     {
         var client = CreateModelClient(modelConnection);
 
-        var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
+        var messages = BuildMessages(history, BuildSystemPromptWithSkills(userId, request), request);
 
         var tools = BuildToolDefinitions(request);
         var fullContent = new StringBuilder();
@@ -2075,7 +2079,7 @@ public class ChatService : IChatService
     {
         var client = CreateModelClient(modelConnection);
 
-        var messages = BuildMessages(history, BuildSystemPromptForRequest(request), request);
+        var messages = BuildMessages(history, BuildSystemPromptWithSkills(userId, request), request);
 
         var tools = BuildToolDefinitions(request);
         var exportedFiles = new List<ExportedFileLink>();
@@ -2613,6 +2617,9 @@ public class ChatService : IChatService
 
         return $"{systemPrompt}\n\n【当前项目专属指令】\n{request.ProjectInstructions.Trim()}";
     }
+
+    private string BuildSystemPromptWithSkills(int userId, SendMessageRequest request, bool autoMode = false) =>
+        BuildSystemPromptForRequest(request, autoMode) + _skillService.BuildPrompt(userId, request.Content);
 
     private static string BuildSystemPrompt(bool autoMode = false)
     {

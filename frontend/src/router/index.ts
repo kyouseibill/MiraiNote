@@ -51,6 +51,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, title: 'Mirai Chat' },
       },
       {
+        path: 'skills',
+        name: 'skills',
+        component: () => import('@/views/SkillsView.vue'),
+        meta: { requiresAuth: true, title: '技能管理' },
+      },
+      {
         path: 'export-download',
         name: 'export-download',
         component: () => import('@/views/ExportDownloadView.vue'),

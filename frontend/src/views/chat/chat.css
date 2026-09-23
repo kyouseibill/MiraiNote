@@ -485,6 +485,13 @@
 .chat-tool-events.is-collapsed > summary::-webkit-details-marker {
   display: none;
 }
+.chat-tool-events.is-collapsed > summary .chat-tool-state-open,
+.chat-tool-events.is-collapsed[open] > summary .chat-tool-state-closed {
+  display: none;
+}
+.chat-tool-events.is-collapsed[open] > summary .chat-tool-state-open {
+  display: inline;
+}
 .chat-tool-events.is-collapsed .chat-tool-card {
   margin-top: 6px;
 }
@@ -991,6 +998,7 @@
   padding: 8px 30px 20px;
 }
 .chat-composer {
+  position: relative;
   padding: 15px 16px 10px;
   background: #fff;
   border: 1px solid #d4cfc6;
@@ -1001,6 +1009,79 @@
 .chat-composer:focus-within {
   border-color: #8d9bab;
   box-shadow: 0 0 0 3px #4c61780a;
+}
+.chat-skill-suggestions {
+  position: absolute;
+  z-index: var(--z-dropdown, 20);
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: min(320px, 42dvh);
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #d4cfc6;
+  border-radius: 12px;
+  box-shadow: 0 14px 36px #26252120;
+}
+.chat-skill-suggestions-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--mn-line);
+  color: var(--chat-text-secondary);
+  font-size: 11px;
+}
+.chat-skill-suggestions-heading span:first-child {
+  color: var(--mn-ink);
+  font-weight: 600;
+}
+.chat-skill-suggestions ul {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+.chat-skill-suggestions li button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 7px;
+  text-align: left;
+}
+.chat-skill-suggestions li button:hover,
+.chat-skill-suggestions li button.is-active {
+  background: var(--chat-surface-selected);
+}
+.chat-skill-suggestions li button:focus-visible {
+  outline: 2px solid var(--mn-indigo);
+  outline-offset: -2px;
+}
+.chat-skill-suggestions-name {
+  color: var(--mn-ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+.chat-skill-suggestions-description {
+  overflow: hidden;
+  width: 100%;
+  color: var(--chat-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-skill-suggestions-state {
+  padding: 17px 14px;
+  color: var(--chat-text-secondary);
+  font-size: 12px;
+}
+.chat-skill-suggestions-state button {
+  margin-left: 8px;
+  color: var(--mn-indigo);
+  text-decoration: underline;
 }
 .chat-composer textarea {
   display: block;
@@ -1555,6 +1636,9 @@
   .chat-composer {
     padding: 12px 12px 8px;
     border-radius: 11px;
+  }
+  .chat-skill-suggestions-heading span:last-child {
+    display: none;
   }
   .chat-composer textarea {
     min-height: 55px;
