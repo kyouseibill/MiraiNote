@@ -172,6 +172,22 @@ async function installMocks(context, state) {
       if (action === 'branch') { const branched = { ...clone(session), id: state.nextId++, title: body.title || `${session.title} · 分支`, branchedFromSessionId: session.id, messages: body.messageId ? session.messages.slice(0, session.messages.findIndex(m => m.id === body.messageId) + 1) : [] }; state.sessions.unshift(branched); return json(branched) }
       return json(summary(session))
     }
+    if (session && sessionMatch[2] === 'messages/agent/runs' && method === 'POST') {
+      const runId = 'mock-agent-run'
+      const userMessage = { id: state.nextId++, role: 'user', content: body.content + (body.attachments?.length ? '\n' + body.attachments.map(a => `📎${a.fileName}`).join(' ') : ''), createdAt: now }
+      const assistant = { id: state.nextId++, role: 'assistant', content: '工作模式已收到图片附件。', createdAt: now }
+      session.messages.push(userMessage, assistant)
+      state.lastSend = { path, body: clone(body) }
+      state.agentRun = { runId, sessionId: session.id, status: 'completed', lastSequence: 3 }
+      return json(state.agentRun)
+    }
+    const agentEvents = path.match(/^\/chat\/agent-runs\/([^/]+)\/events$/)
+    if (agentEvents && method === 'GET') {
+      const frame = (event, data, id) => `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+      const run = state.agentRun || { runId: agentEvents[1], sessionId: 1 }
+      const sse = frame('user_msg', { id: state.nextId - 2 }, 1) + frame('token', { content: '工作模式已收到图片附件。' }, 2) + frame('done', { messageId: state.nextId - 1, content: '工作模式已收到图片附件。', title: '新对话', createdAt: now, runId: run.runId }, 3)
+      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'x-chat-ui-mock-stream': '1', 'access-control-expose-headers': 'x-chat-ui-mock-stream' }, body: sse })
+    }
     if (session && sessionMatch[2] === 'stop' && method === 'POST') return json(null)
     if (path.endsWith('/stream')) {
       const id = state.nextId++
@@ -191,7 +207,16 @@ async function installMocks(context, state) {
       const closeDelay = body.content.includes('结束后延迟断开') ? '1500' : '0'
       return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'x-chat-ui-mock-stream': '1', 'x-chat-ui-mock-close-delay': closeDelay, 'access-control-expose-headers': 'x-chat-ui-mock-stream, x-chat-ui-mock-close-delay' }, body: sse })
     }
-    if (path === '/chat/attachments') return json({ fileName: 'notes.txt', fileType: 'text', textContent: '用于验证附件的示例文本。', fileSizeBytes: 36, mimeType: 'text/plain', isImage: false })
+    if (path === '/chat/attachments') {
+      const fileName = state.nextAttachmentFile
+      delete state.nextAttachmentFile
+      if (fileName) {
+        const dataUrl = state.nextAttachmentDataUrl || 'data:image/png;base64,iVBORw=='
+        delete state.nextAttachmentDataUrl
+        return json({ fileName, fileType: '图片', textContent: `[图片文件: ${fileName}]`, fileSizeBytes: 4, mimeType: 'image/png', dataUrl, isImage: true })
+      }
+      return json({ fileName: 'notes.txt', fileType: 'text', textContent: '用于验证附件的示例文本。', fileSizeBytes: 36, mimeType: 'text/plain', isImage: false })
+    }
     if (path === '/workspace/files') return json({ scope: url.searchParams.get('scope') || 'private', currentPath: '', entries: [] })
     if (path.endsWith('/confirm')) return json(null)
     report.unhandledApi.push({ method, path })
@@ -394,6 +419,42 @@ async function runRegression(page, state) {
     assert.equal(state.lastSend.body.attachments[0].fileName, 'notes.txt')
     assert.equal(state.lastSend.body.attachments[0].textContent, '这是待分析的附件示例文本。')
     assert.equal(await attachment.count(), 0)
+  })
+  await check('chat-and-work-accept_image_file_upload_and_clipboard_paste', async () => {
+    const image = { name: 'image-upload.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }
+    state.nextAttachmentFile = 'image-upload.png'
+    await page.locator('input[type=file]').setInputFiles(image)
+    const uploadAttachment = page.getByRole('button', { name: '移除附件 image-upload.png', exact: true })
+    await uploadAttachment.waitFor()
+    await input.fill('请描述这张图片')
+    await page.getByTestId('chat-send').click()
+    await waitForSend()
+    assert.equal(state.lastSend.body.attachments[0].isImage, true)
+    assert.equal(state.lastSend.body.attachments[0].dataUrl, 'data:image/png;base64,iVBORw==')
+
+    await page.getByTestId('chat-mode-work').click()
+    state.nextAttachmentFile = 'image-paste.png'
+    await input.evaluate((element) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'image-paste.png', { type: 'image/png' }))
+      element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }))
+    })
+    const pasteAttachment = page.getByRole('button', { name: '移除附件 image-paste.png', exact: true })
+    await pasteAttachment.waitFor()
+    await input.fill('请在工作模式分析图片')
+    await page.getByTestId('chat-send').click()
+    await waitForSend()
+    assert.equal(state.lastSend.path.endsWith('/messages/agent/runs'), true)
+    assert.equal(state.lastSend.body.attachments[0].fileName, 'image-paste.png')
+    assert.equal(state.lastSend.body.attachments[0].isImage, true)
+    await page.getByTestId('chat-mode-chat').click()
+  })
+  await check('oversized_image_payload_is_rejected_before_sending', async () => {
+    state.nextAttachmentFile = 'oversized.png'
+    state.nextAttachmentDataUrl = `data:image/png;base64,${'A'.repeat(16 * 1024 * 1024)}`
+    await page.locator('input[type=file]').setInputFiles({ name: 'oversized.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) })
+    await page.getByText('图片总大小超过限制', { exact: false }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '移除附件 oversized.png', exact: true }).count(), 0)
   })
   await check('project-form-validation-save-and-dialog-keyboard', async () => {
     await page.getByRole('button', { name: '管理项目', exact: true }).click()

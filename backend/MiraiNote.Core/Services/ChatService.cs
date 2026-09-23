@@ -111,9 +111,6 @@ public interface IChatService
 /// </summary>
 public class ChatService : IChatService
 {
-    private const string ImageAttachmentsUnsupportedMessage =
-        "当前模型不支持图片解析，请上传 PDF、Word、Excel 或文本文件";
-
     private readonly MiraiNoteDbContext _db;
     private readonly DeepSeekOptions _deepSeekOptions;
     private readonly TavilyOptions _tavilyOptions;
@@ -599,8 +596,6 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct = default)
     {
-        if (await RejectUnsupportedImageAttachmentsAsync(request, callback)) return;
-
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -617,6 +612,7 @@ public class ChatService : IChatService
         }
         request.ProjectInstructions = session.Project?.Instructions;
         var modelConnection = await ResolveSessionModelAsync(session, requiresWork: false, ct);
+        if (await RejectInvalidImagesAsync(request, modelConnection, callback)) return;
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         // 1. 存储用户消息
@@ -701,8 +697,6 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct = default)
     {
-        if (await RejectUnsupportedImageAttachmentsAsync(request, callback)) return;
-
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -710,6 +704,7 @@ public class ChatService : IChatService
         }
         var history = BuildTemporaryHistory(request);
         var modelConnection = ResolveTemporaryModel(requiresWork: false);
+        if (await RejectInvalidImagesAsync(request, modelConnection, callback)) return;
         string assistantContent;
         try
         {
@@ -739,8 +734,6 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
-        if (await RejectUnsupportedImageAttachmentsAsync(request, callback)) return;
-
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -757,6 +750,7 @@ public class ChatService : IChatService
         }
         request.ProjectInstructions = session.Project?.Instructions;
         var modelConnection = await ResolveSessionModelAsync(session, requiresWork: true, ct);
+        if (await RejectInvalidImagesAsync(request, modelConnection, callback)) return;
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         // 恢复 AgentRun 时复用既有用户消息，避免同一提示词写入两次。
@@ -893,8 +887,6 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
-        if (await RejectUnsupportedImageAttachmentsAsync(request, callback)) return;
-
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -902,6 +894,7 @@ public class ChatService : IChatService
         }
         var history = BuildTemporaryHistory(request);
         var modelConnection = ResolveTemporaryModel(requiresWork: true);
+        if (await RejectInvalidImagesAsync(request, modelConnection, callback)) return;
         var agentInput = BuildAgentAuxiliaryInput(request, _deepSeekOptions.MaxAttachmentTextChars);
 
         await callback("heartbeat", JsonSerializer.Serialize(new { phase = "planning", message = "正在规划执行步骤…" }));
@@ -1544,25 +1537,23 @@ public class ChatService : IChatService
 
     private static bool HasMessageContent(SendMessageRequest request) =>
         !string.IsNullOrWhiteSpace(request.Content) ||
-        request.Attachments?.Any(a => !string.IsNullOrWhiteSpace(a.TextContent)) == true;
+        request.Attachments?.Any(a =>
+            !string.IsNullOrWhiteSpace(a.TextContent) ||
+            (a.IsImage && !string.IsNullOrWhiteSpace(a.DataUrl))) == true;
 
-    private static bool HasUnsupportedImageAttachments(SendMessageRequest request) =>
-        request.Attachments?.Any(attachment =>
-            attachment.IsImage ||
-            attachment.MimeType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true ||
-            string.Equals(attachment.FileType, "图片", StringComparison.OrdinalIgnoreCase)) == true;
-
-    private static async Task<bool> RejectUnsupportedImageAttachmentsAsync(
-        SendMessageRequest request,
-        ChatStreamCallback callback)
+    private static async Task<bool> RejectInvalidImagesAsync(
+        SendMessageRequest request, ChatModelConnection modelConnection, ChatStreamCallback callback)
     {
-        if (!HasUnsupportedImageAttachments(request)) return false;
-
-        await callback("error", JsonSerializer.Serialize(new
+        try
         {
-            message = ImageAttachmentsUnsupportedMessage
-        }));
-        return true;
+            ChatImagePolicy.Validate(request, modelConnection);
+            return false;
+        }
+        catch (BusinessException error)
+        {
+            await callback("error", JsonSerializer.Serialize(new { message = error.Message }));
+            return true;
+        }
     }
 
     private static List<object> BuildMessages(
@@ -2027,9 +2018,6 @@ public class ChatService : IChatService
 
     public async Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default)
     {
-        if (HasUnsupportedImageAttachments(request))
-            throw new BusinessException(ImageAttachmentsUnsupportedMessage, 400);
-
         if (!HasMessageContent(request))
             throw new BusinessException("消息内容不能为空", 400);
 
@@ -2039,6 +2027,7 @@ public class ChatService : IChatService
             ?? throw new BusinessException("对话不存在", 404);
         request.ProjectInstructions = session.Project?.Instructions;
         var modelConnection = await ResolveSessionModelAsync(session, requiresWork: true, ct);
+        ChatImagePolicy.Validate(request, modelConnection);
         await InjectContextSnapshotAsync(userId, session, request, ct);
 
         var userMsg = new ChatMessage
@@ -2671,7 +2660,7 @@ public class ChatService : IChatService
             - 用户通过聊天输入框上传或粘贴的附件已经随当前用户消息提供，不是工作区文件路径。
             - PDF、Word、Excel、文本、代码等文件的可提取文本会直接出现在当前用户消息的"用户上传的文件内容"部分。
               你必须优先基于这些已提供内容完成分析，不要再要求用户复制文本，不要说附件不在工作区，除非当前消息确实没有附件内容。
-            - 当前模型不支持图片解析；图片附件会在进入模型调用前被拒绝，并向用户返回明确提示。
+            - 图片附件会作为当前用户消息的多模态 image_url 一并发送；请结合用户文字和图片内容完成分析。
             - 只有用户明确要求读取工作区内某个路径，或需要处理已存在于工作区的文件时，才调用 read_file/list_files。
             - 如果附件文本提示"无法提取文本内容"或"解析失败"，如实说明该附件无法从服务端解析，并继续处理其他已成功解析的附件。
             - 不要声称当前环境没有 PDF 解析库、无法安装库、无法访问上传附件路径；附件解析由 MiraiNote 服务端在调用模型前完成。

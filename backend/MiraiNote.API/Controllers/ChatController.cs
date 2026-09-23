@@ -653,12 +653,15 @@ public class ChatController : ControllerBase
             ".rb", ".sh", ".bat", ".ps1", ".vue", ".css", ".scss", ".less",
             ".conf", ".config", ".csproj", ".sln",
             // 图片
-            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
-            ".tiff", ".tif", ".avif"
+            ".jpg", ".jpeg", ".png", ".gif", ".webp"
         };
 
         if (!allowedExtensions.Contains(ext))
             return BadRequest(ApiResponse.Fail($"不支持的文件类型：{ext}"));
+
+        var isImageExtension = ext is ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp";
+        if (isImageExtension && file.Length > 6 * 1024 * 1024)
+            return BadRequest(ApiResponse.Fail("图片大小不能超过 6MB"));
 
         // 确定文件类型描述
         var fileType = ext switch
@@ -666,8 +669,7 @@ public class ChatController : ControllerBase
             ".pdf" => "PDF",
             ".docx" => "Word",
             ".xlsx" or ".xls" => "Excel",
-            ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" or ".bmp"
-                or ".svg" or ".tiff" or ".tif" or ".avif" => "图片",
+            ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" => "图片",
             _ => "文本"
         };
 
@@ -676,10 +678,15 @@ public class ChatController : ControllerBase
         await stream.CopyToAsync(buffer, ct);
         buffer.Position = 0;
 
+        if (isImageExtension && !HasSupportedImageSignature(ext, buffer.ToArray()))
+            return BadRequest(ApiResponse.Fail("图片内容与文件格式不符，或图片已损坏"));
+
         var textContent = await _fileParser.ExtractTextAsync(buffer, file.FileName, ct);
         var mimeType = GetMimeType(ext);
         var isImage = mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
-        string? dataUrl = null;
+        var dataUrl = isImage
+            ? $"data:{mimeType};base64,{Convert.ToBase64String(buffer.ToArray())}"
+            : null;
 
         var result = new ChatAttachmentResponseDto
         {
@@ -695,16 +702,25 @@ public class ChatController : ControllerBase
         return Ok(ApiResponse<ChatAttachmentResponseDto>.Ok(result, "文件已解析"));
     }
 
+    private static bool HasSupportedImageSignature(string ext, byte[] bytes)
+    {
+        var data = bytes.AsSpan();
+        return ext switch
+        {
+            ".jpg" or ".jpeg" => data.Length >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff,
+            ".png" => data.StartsWith(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }),
+            ".gif" => data.StartsWith("GIF87a"u8) || data.StartsWith("GIF89a"u8),
+            ".webp" => data.Length >= 12 && data.StartsWith("RIFF"u8) && data[8..].StartsWith("WEBP"u8),
+            _ => false
+        };
+    }
+
     private static string GetMimeType(string ext) => ext.ToLowerInvariant() switch
     {
         ".jpg" or ".jpeg" => "image/jpeg",
         ".png" => "image/png",
         ".gif" => "image/gif",
         ".webp" => "image/webp",
-        ".bmp" => "image/bmp",
-        ".svg" => "image/svg+xml",
-        ".tiff" or ".tif" => "image/tiff",
-        ".avif" => "image/avif",
         ".pdf" => "application/pdf",
         ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

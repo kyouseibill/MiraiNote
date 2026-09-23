@@ -730,6 +730,11 @@ onUnmounted(() => {
 })
 
 const ACCEPTED_TYPES = [
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
   '.pdf',
   '.docx',
   '.xlsx',
@@ -802,6 +807,7 @@ const LOCAL_TEXT_EXTENSIONS = new Set([
   '.sln',
 ])
 const LOCAL_TEXT_MAX_CHARS = 800_000
+const MAX_IMAGE_DATA_URL_CHARS = 16 * 1024 * 1024
 
 function triggerFileInput() {
   fileInputRef.value?.click()
@@ -820,11 +826,6 @@ async function uploadFiles(files: File[]) {
     uploadingFiles.value = new Set([...uploadingFiles.value, file.name])
 
     try {
-      if (isImageFile(file)) {
-        toast.warning('当前模型不支持图片解析，请上传 PDF、Word、Excel 或文本文件')
-        continue
-      }
-
       if (isLocalTextFile(file)) {
         const textContent = truncateLocalText(await readFileAsText(file), file.name)
         store.pendingAttachments.push({
@@ -838,6 +839,15 @@ async function uploadFiles(files: File[]) {
       }
 
       const result = await chatApi.uploadAttachment(file)
+      if (result.isImage && result.dataUrl) {
+        const pendingImageChars = store.pendingAttachments.reduce(
+          (total, attachment) => total + (attachment.isImage ? (attachment.dataUrl?.length ?? 0) : 0),
+          0,
+        )
+        if (pendingImageChars + result.dataUrl.length > MAX_IMAGE_DATA_URL_CHARS) {
+          throw new Error('图片总大小超过限制，请移除部分图片后重试')
+        }
+      }
       store.pendingAttachments.push({
         fileName: result.fileName,
         fileType: result.fileType,
@@ -879,11 +889,6 @@ function isLocalTextFile(file: File): boolean {
 function fileExtension(fileName: string): string {
   const idx = fileName.lastIndexOf('.')
   return idx >= 0 ? fileName.slice(idx).toLowerCase() : ''
-}
-
-function isImageFile(file: File): boolean {
-  if (file.type.startsWith('image/')) return true
-  return /\.(jpe?g|png|gif|webp|bmp|svg|tiff?|avif)$/i.test(file.name)
 }
 
 function textMimeType(fileName: string): string {
@@ -1684,7 +1689,7 @@ async function reloadConversations() {
             <button
               class="chat-icon"
               aria-label="上传文件"
-              title="上传 PDF、Word、Excel 或文本文件"
+              title="上传图片、PDF、Word、Excel 或文本文件（也支持 Ctrl+V 粘贴）"
               :disabled="store.sending || creatingSession"
               @click="triggerFileInput"
             >

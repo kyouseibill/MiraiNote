@@ -47,10 +47,13 @@ public sealed class AgentRunService : IAgentRunService
         var session = await _db.ChatSessions
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct)
             ?? throw new BusinessException("对话不存在", 404);
-        if (string.IsNullOrWhiteSpace(request.Content)) throw new BusinessException("消息内容不能为空", 400);
+        if (string.IsNullOrWhiteSpace(request.Content) &&
+            request.Attachments?.Any(attachment => attachment.IsImage && !string.IsNullOrWhiteSpace(attachment.DataUrl)) != true)
+            throw new BusinessException("消息内容不能为空", 400);
         var model = _modelRegistry.ResolveForExistingSession(session.AiProvider, session.AiModel);
         if (!model.SupportsWork || !model.SupportsTools)
             throw new ChatModelUnavailableException("所选模型不支持工作模式，请创建新对话并选择其他模型。");
+        ChatImagePolicy.Validate(request, model.Provider, model.ModelId);
         if (!string.Equals(session.AiProvider, model.Provider, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(session.AiModel, model.ModelId, StringComparison.OrdinalIgnoreCase))
         {
