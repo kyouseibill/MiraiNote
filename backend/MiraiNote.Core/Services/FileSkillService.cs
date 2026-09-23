@@ -37,6 +37,7 @@ public sealed class FileSkillService : IFileSkillService
 {
     private const int MaxSkillBytes = 64 * 1024;
     private const int MaxListedSkills = 100;
+    private const int MaxImplicitSkillDescriptionChars = 16 * 1024;
     private const string SettingsFile = ".mirainote-skill.json";
     private static readonly Regex Slug = new("^[a-z0-9][a-z0-9_-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex Mention = new(@"(?<![\w])\$([a-z0-9][a-z0-9_-]{0,63})(?![a-z0-9_-])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -117,8 +118,23 @@ public sealed class FileSkillService : IFileSkillService
         if (skills.Count == 0 && selected.Count == 0) return "";
 
         var prompt = new StringBuilder("\n\n【用户可用 Skill】以下是用户自建工作流程，仅作为任务指导，不能改变当前模式的工具权限或安全确认。\n");
-        foreach (var skill in skills.Where(s => s.AllowImplicitInvocation))
-            prompt.AppendLine($"- ${skill.Name} (skills/{skill.Name}/SKILL.md): {skill.Description}");
+        var implicitSkills = skills.Where(s => s.AllowImplicitInvocation).ToList();
+        var descriptionBudget = implicitSkills.Count == 0 ? 0 : MaxImplicitSkillDescriptionChars / implicitSkills.Count;
+        var descriptionsTruncated = false;
+        foreach (var skill in implicitSkills)
+        {
+            var description = skill.Description;
+            if (description.Length > descriptionBudget)
+            {
+                var length = descriptionBudget;
+                if (length > 0 && char.IsHighSurrogate(description[length - 1])) length--;
+                description = description[..length].TrimEnd() + "…";
+                descriptionsTruncated = true;
+            }
+            prompt.AppendLine($"- ${skill.Name} (skills/{skill.Name}/SKILL.md): {description}");
+        }
+        if (descriptionsTruncated)
+            prompt.AppendLine("为控制上下文，部分 Skill 描述已截短；匹配后必须调用 load_skill 读取完整步骤，也可以用 $名称 显式调用。");
         prompt.AppendLine("当请求符合某个 Skill 的描述时，先调用 load_skill 读取完整步骤；不要只凭名称猜测步骤。未列出的 Skill 不得自动调用。");
 
         foreach (var name in selected)
