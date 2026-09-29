@@ -136,6 +136,7 @@ public sealed class BarkNotificationChannel
 {
     public const string HttpClientName = "HouseholdBark";
     public const string TimeSensitiveLevel = "timeSensitive";
+    public const int TimeoutSeconds = 5;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -144,17 +145,22 @@ public sealed class BarkNotificationChannel
     };
 
     private readonly IHttpClientFactory _http;
+    private readonly HouseholdOptions _options;
     private readonly ILogger<BarkNotificationChannel> _logger;
 
-    public BarkNotificationChannel(IHttpClientFactory http, ILogger<BarkNotificationChannel> logger)
+    public BarkNotificationChannel(
+        IHttpClientFactory http,
+        IOptions<HouseholdOptions> options,
+        ILogger<BarkNotificationChannel> logger)
     {
         _http = http;
+        _options = options.Value;
         _logger = logger;
     }
 
     public async Task SendAsync(string barkAddress, HouseholdNotificationMessage message, CancellationToken ct)
     {
-        var address = HouseholdUrls.Require(barkAddress, HouseholdFieldLimits.PurchaseLink, "Bark 地址");
+        var address = HouseholdBarkAddresses.Require(barkAddress, _options.Notifications, HouseholdFieldLimits.PurchaseLink);
         var body = message.Text;
         if (!string.IsNullOrEmpty(message.PurchaseLink))
             body += "\n购买链接：" + message.PurchaseLink;
@@ -177,6 +183,11 @@ public sealed class BarkNotificationChannel
         try
         {
             using var response = await client.SendAsync(request, ct);
+            if ((int)response.StatusCode is >= 300 and < 400)
+            {
+                _logger.LogError("Bark 通知被重定向，已拒绝跟随");
+                throw new HouseholdNotificationDeliveryException("Bark 通知发送失败");
+            }
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Bark 通知发送失败，HTTP {StatusCode}", (int)response.StatusCode);

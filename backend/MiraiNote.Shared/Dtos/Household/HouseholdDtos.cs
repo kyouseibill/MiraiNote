@@ -385,6 +385,8 @@ public class HouseholdNotificationSettingsDto
     public bool BarkConfigured { get; set; }
     public string? BarkAddressSuffix { get; set; }
     public bool EmailEnabled { get; set; }
+
+    /// <summary>账号邮箱。第一版不能改成其他地址。</summary>
     public string? Email { get; set; }
     public int PushHour { get; set; } = 9;
     public int PushMinute { get; set; }
@@ -406,7 +408,7 @@ public class UpdateHouseholdNotificationSettingsRequest
     public bool ClearBarkAddress { get; set; }
     public bool EmailEnabled { get; set; } = true;
 
-    /// <summary>空字符串表示清除。null 也按空处理，保存时以表单为准。</summary>
+    /// <summary>只能是账号邮箱。空值表示不修改收件人；其它地址返回 400。未传的推送时间、通道和间隔会恢复默认。</summary>
     public string? Email { get; set; }
 
     public int PushHour { get; set; } = 9;
@@ -424,6 +426,6 @@ public class TestHouseholdBarkRequest
 
 public class TestHouseholdEmailRequest
 {
-    /// <summary>不填则用已保存的邮箱。</summary>
+    /// <summary>不填则发给账号邮箱。与账号邮箱不一致时返回 400。</summary>
     public string? Email { get; set; }
 }

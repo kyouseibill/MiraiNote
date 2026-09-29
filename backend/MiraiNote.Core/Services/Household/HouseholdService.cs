@@ -146,6 +146,7 @@ public sealed class HouseholdService : IHouseholdService
         if (member.Role == HouseholdRole.Admin)
             await EnsureAnotherAdminAsync(ctx.Household.Id, member.Id, ct);
 
+        // 负责人离开后事项变为未指派，提醒改走「通知全体成员」。
         var assigned = await _db.HouseholdItems
             .Where(i => i.HouseholdId == ctx.Household.Id && i.AssigneeMemberId == member.Id)
             .ToListAsync(ct);

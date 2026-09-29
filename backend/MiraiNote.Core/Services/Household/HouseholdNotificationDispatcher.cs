@@ -26,6 +26,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
     private readonly BarkNotificationChannel _bark;
     private readonly EmailNotificationChannel _email;
     private readonly IHouseholdSecretProtector _protector;
+    private readonly HouseholdNotificationRateLimiter _rates;
     private readonly ILogger<HouseholdNotificationDispatcher> _logger;
     private readonly TimeZoneInfo _shanghai;
 
@@ -40,6 +41,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         BarkNotificationChannel bark,
         EmailNotificationChannel email,
         IHouseholdSecretProtector protector,
+        HouseholdNotificationRateLimiter rates,
         ILogger<HouseholdNotificationDispatcher> logger)
     {
         _db = db;
@@ -49,6 +51,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         _bark = bark;
         _email = email;
         _protector = protector;
+        _rates = rates;
         _logger = logger;
         _shanghai = ShanghaiClock.Resolve();
     }
@@ -83,7 +86,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             .Where(s => memberIds.Contains(s.MemberId))
             .ToListAsync(ct);
         var settingByMember = settings.ToDictionary(s => s.MemberId);
-        var usernames = await LoadUsernamesAsync(members, ct);
+        var users = await LoadUsersAsync(members, ct);
 
         var items = await _db.HouseholdItems.AsNoTracking()
             .Where(i => i.HouseholdId == householdId && !i.IsPaused && !i.IsArchived && i.NextDueDate != null)
@@ -113,14 +116,15 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                 : members;
             foreach (var member in recipients)
             {
-                var preference = PreferenceOf(settingByMember, member.Id);
+                users.TryGetValue(member.UserId, out var user);
+                var preference = PreferenceOf(settingByMember, member.Id, member.UserId, user.Email);
                 if (minuteOfDay < preference.PushMinuteOfDay)
                     continue;
-                await TrySendItemAsync(item, consumable, member, preference, today, usernames, ct);
+                await TrySendItemAsync(item, consumable, member, preference, today, user.Username, ct);
             }
         }
 
-        await DispatchRestocksAsync(householdId, members, settingByMember, minuteOfDay, ct);
+        await DispatchRestocksAsync(householdId, members, settingByMember, users, minuteOfDay, ct);
     }
 
     private async Task TrySendItemAsync(
@@ -129,11 +133,11 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         MemberRow member,
         NotificationPreference preference,
         DateOnly today,
-        IReadOnlyDictionary<int, string> usernames,
+        string? username,
         CancellationToken ct)
     {
         var lastSent = await _db.HouseholdReminderLogs.AsNoTracking()
-            .Where(r => r.HouseholdItemId == item.Id && r.MemberId == member.Id)
+            .Where(r => r.HouseholdItemId == item.Id && r.MemberId == member.Id && r.Status == HouseholdReminderDeliveryStatus.Sent)
             .MaxAsync(r => (DateOnly?)r.ReminderDate, ct);
         if (!HouseholdReminderSchedule.ShouldNotify(today, item.Due, item.LeadDays, preference.OverdueIntervalDays, lastSent))
             return;
@@ -142,9 +146,11 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         var channel = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
         if (!preference.CanDeliver(channel, _protector.IsConfigured))
             return;
+        if (!AllowScheduledEmail(preference, channel))
+            return;
 
-        var reserved = await ReserveItemLogAsync(item, member.Id, today, channel, kind, preference.OverdueIntervalDays, ct);
-        if (!reserved)
+        var logId = await ClaimItemLogAsync(item, member.Id, today, channel, kind, preference.OverdueIntervalDays, ct);
+        if (logId == null)
             return;
 
         if (BeforeDeliveryAsync != null)
@@ -154,10 +160,12 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             .Where(i => i.Id == item.Id && !i.IsPaused && !i.IsArchived && i.NextDueDate != null)
             .Select(i => new { i.NextDueDate, i.LeadDays, i.Name, i.PurchaseLink, i.ConsumableId })
             .FirstOrDefaultAsync(ct);
-        if (fresh?.NextDueDate is not DateOnly due)
+        if (fresh?.NextDueDate is not DateOnly due
+            || !HouseholdReminderSchedule.ShouldNotify(today, due, fresh.LeadDays, preference.OverdueIntervalDays, lastSent))
+        {
+            await FinishItemLogAsync(logId.Value, HouseholdReminderDeliveryStatus.Skipped, null, ct);
             return;
-        if (!HouseholdReminderSchedule.ShouldNotify(today, due, fresh.LeadDays, preference.OverdueIntervalDays, lastSent))
-            return;
+        }
 
         var freshKind = HouseholdReminderSchedule.LatestKind(today, due, fresh.LeadDays);
         ConsumableRow? stock = consumable;
@@ -188,20 +196,58 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             fresh.PurchaseLink,
             stock?.PurchaseLink,
             _links.ItemPage(item.Id));
-        usernames.TryGetValue(member.UserId, out var username);
         if (!string.IsNullOrWhiteSpace(username))
             message = message with { Text = $"你好，{username}。\n" + message.Text };
 
-        await DeliverAsync(preference, channel, message, member.Id, item.Id, ct);
+        var error = await DeliverAsync(preference, channel, message, member.Id, item.Id, ct);
+        await FinishItemLogAsync(
+            logId.Value,
+            error == null ? HouseholdReminderDeliveryStatus.Sent : HouseholdReminderDeliveryStatus.Failed,
+            error,
+            ct);
     }
 
-    private async Task<bool> ReserveItemLogAsync(
+    private async Task<int?> ClaimItemLogAsync(
         ItemRow item,
         int memberId,
         DateOnly today,
         HouseholdNotificationChannel channel,
         HouseholdReminderKind kind,
         int overdueInterval,
+        CancellationToken ct)
+    {
+        var now = DateTime.SpecifyKind(_clock.UtcNow.UtcDateTime, DateTimeKind.Utc);
+        var existing = await _db.HouseholdReminderLogs
+            .FirstOrDefaultAsync(r => r.HouseholdItemId == item.Id && r.MemberId == memberId && r.ReminderDate == today && r.Channel == channel, ct);
+        if (existing == null)
+            return await InsertItemLogAsync(item, memberId, today, channel, kind, overdueInterval, now, ct);
+
+        if (!HouseholdReminderAttempt.CanClaim(existing.Status, existing.AttemptCount, existing.LastAttemptAt, now))
+            return null;
+
+        var previousStatus = existing.Status;
+        var previousAttempts = existing.AttemptCount;
+        var nextAttempts = HouseholdReminderAttempt.NextAttemptCount(previousStatus, previousAttempts);
+        var updated = await _db.HouseholdReminderLogs
+            .Where(r => r.Id == existing.Id && r.Status == previousStatus && r.AttemptCount == previousAttempts)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(r => r.Status, HouseholdReminderDeliveryStatus.Pending)
+                .SetProperty(r => r.AttemptCount, nextAttempts)
+                .SetProperty(r => r.LastAttemptAt, now)
+                .SetProperty(r => r.LastError, (string?)null)
+                .SetProperty(r => r.Kind, kind.ToString()), ct);
+        _db.Entry(existing).State = EntityState.Detached;
+        return updated == 1 ? existing.Id : null;
+    }
+
+    private async Task<int?> InsertItemLogAsync(
+        ItemRow item,
+        int memberId,
+        DateOnly today,
+        HouseholdNotificationChannel channel,
+        HouseholdReminderKind kind,
+        int overdueInterval,
+        DateTime now,
         CancellationToken ct)
     {
         var log = new HouseholdReminderLog
@@ -211,25 +257,51 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             ReminderDate = today,
             Channel = channel,
             Kind = kind.ToString(),
-            IsCatchUp = !HouseholdReminderSchedule.IsExactScheduleDay(today, item.Due, item.LeadDays, overdueInterval)
+            IsCatchUp = !HouseholdReminderSchedule.IsExactScheduleDay(today, item.Due, item.LeadDays, overdueInterval),
+            Status = HouseholdReminderDeliveryStatus.Pending,
+            AttemptCount = 1,
+            LastAttemptAt = now
         };
         _db.HouseholdReminderLogs.Add(log);
         try
         {
             await _db.SaveChangesAsync(ct);
-            return true;
+            return log.Id;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (HouseholdUniqueConflict.IsExpected(ex))
         {
             _db.Entry(log).State = EntityState.Detached;
-            return false;
+            _logger.LogDebug("提醒日志唯一约束冲突，视为其他执行已占用。事项 {ItemId} 成员 {MemberId}", item.Id, memberId);
+            return null;
         }
+    }
+
+    private async Task FinishItemLogAsync(int logId, HouseholdReminderDeliveryStatus status, string? error, CancellationToken ct)
+    {
+        var log = await _db.HouseholdReminderLogs.FirstAsync(r => r.Id == logId, ct);
+        log.Status = status;
+        log.LastError = error;
+        if (status == HouseholdReminderDeliveryStatus.Skipped)
+            log.AttemptCount = 0;
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private bool AllowScheduledEmail(NotificationPreference preference, HouseholdNotificationChannel channel)
+    {
+        if (channel != HouseholdNotificationChannel.Email)
+            return true;
+        if (_rates.TryConsume(HouseholdNotificationRateLimiter.ScheduledEmail, preference.UserId))
+            return true;
+
+        _logger.LogInformation("家务邮件达到频率上限，本轮跳过。用户 {UserId}", preference.UserId);
+        return false;
     }
 
     private async Task DispatchRestocksAsync(
         int householdId,
         List<MemberRow> members,
         Dictionary<int, HouseholdNotificationSetting> settingByMember,
+        Dictionary<int, UserRow> users,
         int minuteOfDay,
         CancellationToken ct)
     {
@@ -239,16 +311,17 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
 
         foreach (var consumable in lows)
         {
-            var waitingForPushTime = false;
+            var deferEpisode = false;
             foreach (var member in members)
             {
-                var preference = PreferenceOf(settingByMember, member.Id);
+                users.TryGetValue(member.UserId, out var user);
+                var preference = PreferenceOf(settingByMember, member.Id, member.UserId, user.Email);
                 var channels = preference.DeliverableChannels(_protector.IsConfigured).ToList();
                 if (channels.Count == 0)
                     continue;
                 if (minuteOfDay < preference.PushMinuteOfDay)
                 {
-                    waitingForPushTime = true;
+                    deferEpisode = true;
                     continue;
                 }
 
@@ -258,10 +331,18 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                     consumable.RestockThreshold,
                     consumable.PurchaseLink);
                 foreach (var channel in channels)
+                {
+                    if (!AllowScheduledEmail(preference, channel))
+                    {
+                        deferEpisode = true;
+                        continue;
+                    }
+
                     await TrySendRestockAsync(consumable.Id, member.Id, preference, channel, message, ct);
+                }
             }
 
-            if (!waitingForPushTime)
+            if (!deferEpisode)
                 consumable.LowStockReminderSent = true;
         }
 
@@ -288,16 +369,17 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         {
             await _db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (HouseholdUniqueConflict.IsExpected(ex))
         {
             _db.Entry(log).State = EntityState.Detached;
+            _logger.LogDebug("补货提醒唯一约束冲突，视为已占用。耗材 {ConsumableId} 成员 {MemberId}", consumableId, memberId);
             return;
         }
 
         await DeliverAsync(preference, channel, message, memberId, itemId: null, ct);
     }
 
-    private async Task DeliverAsync(
+    private async Task<string?> DeliverAsync(
         NotificationPreference preference,
         HouseholdNotificationChannel channel,
         HouseholdNotificationMessage message,
@@ -322,6 +404,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                 memberId,
                 itemId,
                 channel.ToString());
+            return null;
         }
         catch (Exception ex) when (ex is HouseholdNotificationDeliveryException or BusinessException)
         {
@@ -331,25 +414,32 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                 itemId,
                 channel.ToString(),
                 ex.GetType().Name);
+            return HouseholdReminderAttempt.Summarize(ex);
         }
     }
 
-    private async Task<Dictionary<int, string>> LoadUsernamesAsync(List<MemberRow> members, CancellationToken ct)
+    private async Task<Dictionary<int, UserRow>> LoadUsersAsync(List<MemberRow> members, CancellationToken ct)
     {
         var userIds = members.Select(m => m.UserId).ToArray();
         return await _db.Users.AsNoTracking()
             .Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.Username, ct);
+            .ToDictionaryAsync(u => u.Id, u => new UserRow(u.Username, u.Email), ct);
     }
 
-    private static NotificationPreference PreferenceOf(Dictionary<int, HouseholdNotificationSetting> settings, int memberId)
+    private static NotificationPreference PreferenceOf(
+        Dictionary<int, HouseholdNotificationSetting> settings,
+        int memberId,
+        int userId,
+        string? accountEmail)
     {
         if (!settings.TryGetValue(memberId, out var setting))
             setting = new HouseholdNotificationSetting();
-        return NotificationPreference.From(setting);
+        return NotificationPreference.From(setting, userId, accountEmail);
     }
 
     private readonly record struct MemberRow(int Id, int UserId);
+
+    private readonly record struct UserRow(string? Username, string? Email);
 
     private readonly record struct ItemRow(
         int Id,
@@ -363,6 +453,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
     private readonly record struct ConsumableRow(int Id, string Name, int Stock, int Threshold, string? PurchaseLink);
 
     private sealed record NotificationPreference(
+        int UserId,
         bool BarkEnabled,
         string? BarkAddressProtected,
         bool EmailEnabled,
@@ -372,11 +463,12 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         HouseholdNotificationChannel DueChannel,
         int OverdueIntervalDays)
     {
-        public static NotificationPreference From(HouseholdNotificationSetting setting) => new(
+        public static NotificationPreference From(HouseholdNotificationSetting setting, int userId, string? accountEmail) => new(
+            userId,
             setting.BarkEnabled,
             setting.BarkAddressProtected,
             setting.EmailEnabled,
-            setting.NotificationEmail,
+            string.IsNullOrWhiteSpace(accountEmail) ? null : accountEmail.Trim(),
             setting.PushHour * 60 + setting.PushMinute,
             setting.LeadChannel,
             setting.DueChannel,

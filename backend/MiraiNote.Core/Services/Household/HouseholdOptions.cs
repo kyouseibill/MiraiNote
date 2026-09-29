@@ -21,7 +21,8 @@ public sealed class HouseholdOptions
 
 /// <summary>
 /// 家务通知。默认关闭：到点不发送，设置页和「发送测试」仍可用。
-/// 环境变量：Household__Notifications__Enabled、Household__Notifications__ProtectionKey。
+/// 环境变量：Household__Notifications__Enabled、Household__Notifications__ProtectionKey、
+/// Household__Notifications__BarkAllowedHosts__0。
 /// ProtectionKey 是 Bark 地址的加密密钥，只从配置读取，不写进代码。
 /// </summary>
 public sealed class HouseholdNotificationOptions
@@ -31,6 +32,12 @@ public sealed class HouseholdNotificationOptions
 
     /// <summary>Bark 地址加密用的密钥材料。为空时不能保存 Bark 地址。</summary>
     public string? ProtectionKey { get; set; }
+
+    /// <summary>
+    /// 追加允许的 Bark 主机，不含协议。api.day.app 始终放行，这里不会把它拿掉。
+    /// 环境变量从 Household__Notifications__BarkAllowedHosts__0 开始。默认空。
+    /// </summary>
+    public string[] BarkAllowedHosts { get; set; } = [];
 }
 
 public sealed class HouseholdTestClockOptions

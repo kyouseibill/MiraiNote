@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalHttpUrl, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
+import { barkAddressError, canonicalHttpsUrl, canonicalHttpUrl, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
 
 /**
  * 与后端 HouseholdCycleRulesTests 的购买链接用例同一组（PRD 6-8b）。
@@ -57,5 +57,20 @@ describe('购买链接校验', () => {
   it.each([null, '', '   '])('空值 %j 不报错也不生成链接', (value) => {
     expect(purchaseLinkError(value ?? '')).toBe('')
     expect(safeHttpUrl(value)).toBeNull()
+  })
+})
+
+describe('Bark 地址', () => {
+  it('只接受 https', () => {
+    expect(canonicalHttpsUrl('https://api.day.app/device')).toBe('https://api.day.app/device')
+    expect(canonicalHttpsUrl('http://api.day.app/device')).toBeNull()
+    expect(canonicalHttpsUrl('http:evil.com')).toBeNull()
+    expect(canonicalHttpsUrl('http:///evil')).toBeNull()
+    expect(canonicalHttpsUrl('javascript:alert(1)')).toBeNull()
+    expect(canonicalHttpsUrl('https://example.com/\n')).toBeNull()
+  })
+
+  it('提示文案只提 https', () => {
+    expect(barkAddressError).toBe('Bark 地址只接受 https')
   })
 })

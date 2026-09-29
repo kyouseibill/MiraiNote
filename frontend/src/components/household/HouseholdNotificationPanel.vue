@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { IconLoader2 } from '@tabler/icons-vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import type { HouseholdNotificationChannel, HouseholdNotificationSettings } from '@/types/household'
-import { canonicalHttpUrl } from '@/utils/householdFormat'
+import { barkAddressError, canonicalHttpsUrl } from '@/utils/householdFormat'
 
 const { toast, store, report } = useHouseholdFeedback()
 const loading = ref(true)
@@ -12,7 +12,6 @@ const testingBark = ref(false)
 const testingEmail = ref(false)
 const pageError = ref('')
 const barkAddress = ref('')
-const email = ref('')
 const barkEnabled = ref(true)
 const emailEnabled = ref(true)
 const pushTime = ref('09:00')
@@ -32,7 +31,6 @@ const barkHint = computed(() => {
 function apply(next: HouseholdNotificationSettings) {
   barkEnabled.value = next.barkEnabled
   emailEnabled.value = next.emailEnabled
-  email.value = next.email ?? ''
   pushTime.value = `${String(next.pushHour).padStart(2, '0')}:${String(next.pushMinute).padStart(2, '0')}`
   leadChannel.value = next.leadChannel
   dueChannel.value = next.dueChannel
@@ -70,10 +68,9 @@ function validate(forTest: 'bark' | 'email' | null) {
   if (!/^\d+$/.test(overdueIntervalDays.value) || Number(overdueIntervalDays.value) < 1 || Number(overdueIntervalDays.value) > 365) {
     return '逾期重复间隔需在 1 到 365 天之间'
   }
-  if (barkAddress.value.trim() && !canonicalHttpUrl(barkAddress.value)) return 'Bark 地址只接受 http 或 https'
-  if (email.value.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) return '收件邮箱格式不正确'
+  if (barkAddress.value.trim() && !canonicalHttpsUrl(barkAddress.value)) return barkAddressError
   if (forTest === 'bark' && !barkAddress.value.trim() && !settings.value?.barkConfigured) return '请先填写 Bark 地址'
-  if (forTest === 'email' && !email.value.trim()) return '请先填写收件邮箱'
+  if (forTest === 'email' && !settings.value?.email) return '账号没有邮箱'
   return ''
 }
 
@@ -91,7 +88,7 @@ async function save() {
       barkAddress: barkAddress.value.trim() || null,
       clearBarkAddress: clearBark.value,
       emailEnabled: emailEnabled.value,
-      email: email.value.trim() || null,
+      email: settings.value?.email ?? null,
       pushHour: time.hour,
       pushMinute: time.minute,
       leadChannel: leadChannel.value,
@@ -120,7 +117,7 @@ async function sendTest(kind: 'bark' | 'email') {
   const flag = kind === 'bark' ? testingBark : testingEmail
   flag.value = true
   try {
-    await store.testNotificationChannel(kind, kind === 'bark' ? barkAddress.value.trim() : email.value.trim())
+    await store.testNotificationChannel(kind, kind === 'bark' ? barkAddress.value.trim() : settings.value?.email)
     toast.success('测试通知已发送')
   } catch (error) {
     await report(error)
@@ -133,7 +130,7 @@ async function sendTest(kind: 'bark' | 'email') {
 <template>
   <div>
     <p class="mb-4 max-w-2xl text-[13px] leading-6 text-[#68665f]">
-      只保存你自己的通知。Bark 地址不会再显示完整内容，其他成员也看不到你的地址和邮箱。单个事项的提前提醒天数在事项里改，默认 7 天。
+      只保存你自己的通知。Bark 地址只接受 https，保存后不再显示完整内容。邮件只会发到账号邮箱，不能改成其他地址。单个事项的提前提醒天数在事项里改，默认 7 天。
     </p>
     <p v-if="settings && !settings.notificationsEnabled" class="mb-4 rounded-md border border-[#e4d3a8] bg-[#fffaf0] px-4 py-3 text-[13px] leading-6 text-[#6d5a2d]">
       提醒功能尚未在服务器开启。可以先保存设置、发送测试；到点不会自动推送。
@@ -175,7 +172,8 @@ async function sendTest(kind: 'bark' | 'email') {
         </label>
         <div>
           <label class="text-[13px] font-medium" for="notify-email">收件邮箱</label>
-          <input id="notify-email" v-model="email" type="email" autocomplete="off" class="form-input mt-1.5 h-10" :disabled="saving" />
+          <input id="notify-email" :value="settings?.email || ''" type="email" readonly autocomplete="off" class="form-input mt-1.5 h-10" />
+          <p class="mt-1 text-[12px] text-[var(--mn-muted)]">只会发到这个账号邮箱。要换邮箱，去改账号本身。</p>
         </div>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px]" :disabled="saving || testingEmail" @click="sendTest('email')">
           {{ testingEmail ? '发送中…' : '发送测试' }}

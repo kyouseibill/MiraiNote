@@ -190,6 +190,9 @@ const DISALLOWED_URL_CHARS = /\p{Cc}|\p{Cf}/u
 /** 同样内容在 3 秒内换新 key 再完成时，接口返回 409。 */
 export const duplicateCompletionMessage = '刚刚已提交过，请稍后再试'
 
+/** Bark 推送地址只接受 https。主机白名单由服务器判断。 */
+export const barkAddressError = 'Bark 地址只接受 https'
+
 /**
  * 只接受带主机名的 http/https，并返回解析后的绝对地址。
  * `http:evil.com`、`http:///evil`、javascript、data，以及控制字符、零宽字符都拒绝。
@@ -208,6 +211,13 @@ export function canonicalHttpUrl(raw: string): string | null {
   } catch {
     return null
   }
+}
+
+/** Bark 地址。购买链接仍允许 http，这里只留下 https。 */
+export function canonicalHttpsUrl(raw: string): string | null {
+  const canonical = canonicalHttpUrl(raw)
+  if (!canonical?.startsWith('https://')) return null
+  return canonical
 }
 
 /** 空链接合法。非空时必须是有主机名的 http/https，含控制字符直接拒绝。 */

@@ -40,17 +40,20 @@ public static class DependencyInjection
         services.AddSingleton<Services.Household.IHouseholdSecretProtector, Services.Household.HouseholdSecretProtector>();
         services.AddScoped<Services.Household.BarkNotificationChannel>();
         services.AddScoped<Services.Household.EmailNotificationChannel>();
+        services.AddSingleton<Services.Household.HouseholdNotificationRateLimiter>();
         services.AddScoped<Services.Household.IHouseholdNotificationSettingsService, Services.Household.HouseholdNotificationSettingsService>();
         services.AddScoped<Services.Household.IHouseholdNotificationDispatcher, Services.Household.HouseholdNotificationDispatcher>();
         services.AddHostedService<Services.Household.HouseholdNotificationBackgroundService>();
         services.AddHttpClient(Services.Household.BarkNotificationChannel.HttpClientName, client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(15);
+            client.Timeout = TimeSpan.FromSeconds(Services.Household.BarkNotificationChannel.TimeoutSeconds);
         })
         .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
         {
             AllowAutoRedirect = false,
-            UseCookies = false
+            UseCookies = false,
+            ConnectTimeout = TimeSpan.FromSeconds(Services.Household.BarkNotificationChannel.TimeoutSeconds),
+            ConnectCallback = Services.Household.HouseholdBarkConnector.ConnectCallback
         })
         .RemoveAllLoggers();
         services.AddScoped<Services.IWeeklyReportService, Services.WeeklyReportService>();

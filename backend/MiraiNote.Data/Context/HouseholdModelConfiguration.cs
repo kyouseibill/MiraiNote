@@ -117,8 +117,12 @@ internal static class HouseholdModelConfiguration
     private static void ConfigureNotificationSetting(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<HouseholdNotificationSetting>();
-        entity.Property(s => s.LeadChannel).HasConversion<string>().HasMaxLength(16).HasDefaultValue(HouseholdNotificationChannel.Email);
-        entity.Property(s => s.DueChannel).HasConversion<string>().HasMaxLength(16).HasDefaultValue(HouseholdNotificationChannel.Bark);
+        entity.Property(s => s.LeadChannel).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdNotificationChannel.Email)
+            .HasSentinel((HouseholdNotificationChannel)0);
+        entity.Property(s => s.DueChannel).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdNotificationChannel.Bark)
+            .HasSentinel((HouseholdNotificationChannel)0);
         entity.Property(s => s.BarkEnabled).HasDefaultValue(true);
         entity.Property(s => s.EmailEnabled).HasDefaultValue(true);
         entity.Property(s => s.PushHour).HasDefaultValue(9);
@@ -136,6 +140,11 @@ internal static class HouseholdModelConfiguration
     {
         var entity = modelBuilder.Entity<HouseholdReminderLog>();
         entity.Property(r => r.Channel).HasConversion<string>().HasMaxLength(16);
+        entity.Property(r => r.Status).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdReminderDeliveryStatus.Sent)
+            .HasSentinel((HouseholdReminderDeliveryStatus)0);
+        entity.Property(r => r.AttemptCount).HasDefaultValue(1);
+        entity.Property(r => r.LastError).HasMaxLength(200);
         entity.HasIndex(r => new { r.HouseholdItemId, r.MemberId, r.ReminderDate, r.Channel })
             .IsUnique()
             .HasFilter("[IsDeleted] = 0");

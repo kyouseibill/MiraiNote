@@ -1,4 +1,3 @@
-using System.Net.Mail;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MiraiNote.Data.Context;
@@ -21,12 +20,16 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
     public const int BarkAddressMaxLength = 500;
     public const int EmailMaxLength = 200;
 
+    /// <summary>测试发送失败时对调用方只给这一句，避免用耗时或文案区分超时和连接拒绝。</summary>
+    public const string TestFailureMessage = "测试通知发送失败";
+
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
     private readonly IHouseholdSecretProtector _protector;
     private readonly HouseholdOptions _options;
     private readonly BarkNotificationChannel _bark;
     private readonly EmailNotificationChannel _email;
+    private readonly HouseholdNotificationRateLimiter _rates;
 
     public HouseholdNotificationSettingsService(
         MiraiNoteDbContext db,
@@ -34,7 +37,8 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         IHouseholdSecretProtector protector,
         IOptions<HouseholdOptions> options,
         BarkNotificationChannel bark,
-        EmailNotificationChannel email)
+        EmailNotificationChannel email,
+        HouseholdNotificationRateLimiter rates)
     {
         _db = db;
         _access = access;
@@ -42,6 +46,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         _options = options.Value;
         _bark = bark;
         _email = email;
+        _rates = rates;
     }
 
     public async Task<HouseholdNotificationSettingsDto> GetAsync(int userId, CancellationToken ct = default)
@@ -49,7 +54,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var setting = await _db.HouseholdNotificationSettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.MemberId == ctx.Member.Id, ct);
-        return ToDto(setting);
+        return ToDto(setting, await AccountEmailAsync(userId, ct));
     }
 
     public async Task<HouseholdNotificationSettingsDto> UpdateAsync(
@@ -58,15 +63,30 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var setting = await _db.HouseholdNotificationSettings
             .FirstOrDefaultAsync(s => s.MemberId == ctx.Member.Id, ct);
+        var added = false;
         if (setting == null)
         {
             setting = new HouseholdNotificationSetting { MemberId = ctx.Member.Id };
             _db.HouseholdNotificationSettings.Add(setting);
+            added = true;
         }
 
-        Apply(setting, request);
-        await _db.SaveChangesAsync(ct);
-        return ToDto(setting);
+        var accountEmail = await AccountEmailAsync(userId, ct);
+        try
+        {
+            Apply(setting, request, accountEmail);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            if (added)
+                _db.Entry(setting).State = EntityState.Detached;
+            else
+                await _db.Entry(setting).ReloadAsync(ct);
+            throw;
+        }
+
+        return ToDto(setting, accountEmail);
     }
 
     public async Task SendBarkTestAsync(int userId, string? barkAddress, CancellationToken ct = default)
@@ -75,7 +95,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         string address;
         if (!string.IsNullOrWhiteSpace(barkAddress))
         {
-            address = HouseholdUrls.Require(barkAddress, BarkAddressMaxLength, "Bark 地址");
+            address = HouseholdBarkAddresses.Require(barkAddress, _options.Notifications, BarkAddressMaxLength);
         }
         else
         {
@@ -84,32 +104,22 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
             if (string.IsNullOrEmpty(setting?.BarkAddressProtected))
                 throw new BusinessException("请先填写 Bark 地址", 400);
             address = _protector.Unprotect(setting.BarkAddressProtected);
+            address = HouseholdBarkAddresses.Require(address, _options.Notifications, BarkAddressMaxLength);
         }
 
-        await DeliverAsync(() => _bark.SendAsync(address, HouseholdNotificationComposer.Test(), ct));
+        _rates.EnsureAllowed(HouseholdNotificationRateLimiter.TestBark, userId);
+        await DeliverTestAsync(() => _bark.SendAsync(address, HouseholdNotificationComposer.Test(), ct));
     }
 
     public async Task SendEmailTestAsync(int userId, string? email, CancellationToken ct = default)
     {
-        var ctx = await _access.GetOrCreateAsync(userId, ct);
-        string target;
-        if (!string.IsNullOrWhiteSpace(email))
-        {
-            target = NormalizeEmail(email);
-        }
-        else
-        {
-            var setting = await _db.HouseholdNotificationSettings.AsNoTracking()
-                .FirstOrDefaultAsync(s => s.MemberId == ctx.Member.Id, ct);
-            if (string.IsNullOrWhiteSpace(setting?.NotificationEmail))
-                throw new BusinessException("请先填写收件邮箱", 400);
-            target = setting.NotificationEmail;
-        }
-
-        await DeliverAsync(() => _email.SendAsync(target, HouseholdNotificationComposer.Test(), ct));
+        var accountEmail = await AccountEmailAsync(userId, ct);
+        EnsureAccountEmail(email, accountEmail);
+        _rates.EnsureAllowed(HouseholdNotificationRateLimiter.TestEmail, userId);
+        await DeliverTestAsync(() => _email.SendAsync(accountEmail, HouseholdNotificationComposer.Test(), ct));
     }
 
-    private void Apply(HouseholdNotificationSetting setting, UpdateHouseholdNotificationSettingsRequest request)
+    private void Apply(HouseholdNotificationSetting setting, UpdateHouseholdNotificationSettingsRequest request, string accountEmail)
     {
         if (request.PushHour is < 0 or > 23 || request.PushMinute is < 0 or > 59)
             throw new BusinessException("推送时间不正确", 400);
@@ -118,6 +128,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         if (!Enum.IsDefined(request.LeadChannel) || !Enum.IsDefined(request.DueChannel))
             throw new BusinessException("通知通道不正确", 400);
 
+        EnsureAccountEmail(request.Email, accountEmail);
         setting.BarkEnabled = request.BarkEnabled;
         setting.EmailEnabled = request.EmailEnabled;
         setting.PushHour = request.PushHour;
@@ -125,7 +136,8 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         setting.LeadChannel = request.LeadChannel;
         setting.DueChannel = request.DueChannel;
         setting.OverdueIntervalDays = request.OverdueIntervalDays;
-        setting.NotificationEmail = string.IsNullOrWhiteSpace(request.Email) ? null : NormalizeEmail(request.Email);
+        // 第一版不保存自填邮箱。以后若允许改地址，只改 EnsureAccountEmail / 调度里的收件人。
+        setting.NotificationEmail = null;
 
         if (request.ClearBarkAddress)
         {
@@ -134,13 +146,13 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         }
         else if (!string.IsNullOrWhiteSpace(request.BarkAddress))
         {
-            var normalized = HouseholdUrls.Require(request.BarkAddress, BarkAddressMaxLength, "Bark 地址");
+            var normalized = HouseholdBarkAddresses.Require(request.BarkAddress, _options.Notifications, BarkAddressMaxLength);
             setting.BarkAddressProtected = _protector.Protect(normalized);
             setting.BarkAddressSuffix = Suffix(normalized);
         }
     }
 
-    private HouseholdNotificationSettingsDto ToDto(HouseholdNotificationSetting? setting)
+    private HouseholdNotificationSettingsDto ToDto(HouseholdNotificationSetting? setting, string accountEmail)
     {
         setting ??= new HouseholdNotificationSetting();
         return new HouseholdNotificationSettingsDto
@@ -149,7 +161,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
             BarkConfigured = !string.IsNullOrEmpty(setting.BarkAddressProtected),
             BarkAddressSuffix = setting.BarkAddressSuffix,
             EmailEnabled = setting.EmailEnabled,
-            Email = setting.NotificationEmail,
+            Email = accountEmail,
             PushHour = setting.PushHour,
             PushMinute = setting.PushMinute,
             LeadChannel = setting.LeadChannel,
@@ -159,29 +171,40 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         };
     }
 
-    private static string NormalizeEmail(string value)
+    private async Task<string> AccountEmailAsync(int userId, CancellationToken ct)
     {
-        if (HouseholdUrls.ContainsControlOrFormat(value))
-            throw new BusinessException("收件邮箱格式不正确", 400);
-        var trimmed = value.Trim();
-        if (trimmed.Length > EmailMaxLength || trimmed.Contains(' ') || trimmed.Contains('\t'))
-            throw new BusinessException("收件邮箱格式不正确", 400);
-        if (!MailAddress.TryCreate(trimmed, out var parsed) || !string.Equals(parsed.Address, trimmed, StringComparison.OrdinalIgnoreCase))
-            throw new BusinessException("收件邮箱格式不正确", 400);
-        return parsed.Address;
+        var email = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.Email)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(email))
+            throw new BusinessException("账号没有邮箱", 400);
+        return email.Trim();
+    }
+
+    /// <summary>空值表示沿用账号邮箱。传入其它地址时拒绝。换邮箱应改账号本身。</summary>
+    private static void EnsureAccountEmail(string? requested, string accountEmail)
+    {
+        if (string.IsNullOrWhiteSpace(requested))
+            return;
+        if (HouseholdUrls.ContainsControlOrFormat(requested))
+            throw new BusinessException("收件邮箱只能是账号邮箱", 400);
+        var trimmed = requested.Trim();
+        if (trimmed.Length > EmailMaxLength || !string.Equals(trimmed, accountEmail, StringComparison.OrdinalIgnoreCase))
+            throw new BusinessException("收件邮箱只能是账号邮箱", 400);
     }
 
     private static string? Suffix(string value) => value.Length >= 4 ? value[^4..] : null;
 
-    private static async Task DeliverAsync(Func<Task> send)
+    private static async Task DeliverTestAsync(Func<Task> send)
     {
         try
         {
             await send();
         }
-        catch (HouseholdNotificationDeliveryException ex)
+        catch (HouseholdNotificationDeliveryException)
         {
-            throw new BusinessException(ex.Message, 400);
+            throw new BusinessException(TestFailureMessage, 400);
         }
     }
 }

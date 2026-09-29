@@ -533,7 +533,7 @@ export const useHouseholdStore = defineStore('household', () => {
       barkConfigured: false,
       barkAddressSuffix: null,
       emailEnabled: true,
-      email: null,
+      email: 'preview@mirainote.local',
       pushHour: 9,
       pushMinute: 0,
       leadChannel: 'Email',
