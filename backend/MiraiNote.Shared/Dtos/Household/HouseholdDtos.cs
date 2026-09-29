@@ -44,10 +44,10 @@ public enum HouseholdCycleUnit
 [JsonConverter(typeof(CaseInsensitiveEnumConverter<HouseholdRole>))]
 public enum HouseholdRole
 {
-    /// <summary>管理员：可管理成员，且默认是唯一可以删除事项的角色。</summary>
+    /// <summary>管理员：管理成员，并可编辑、暂停、删除事项和删除耗材。</summary>
     Admin = 1,
 
-    /// <summary>成员：可查看、新建、编辑、暂停和完成事项。</summary>
+    /// <summary>成员：可查看、新建事项、标记完成。不能编辑、暂停或删除事项，也不能删除耗材。</summary>
     Member = 2
 }
 
@@ -65,7 +65,8 @@ public class HouseholdMemberDto
     public int Id { get; set; }
     public int UserId { get; set; }
     public string Username { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
+    /// <summary>仅家庭管理员可见。普通成员为 null。</summary>
+    public string? Email { get; set; }
     public HouseholdRole Role { get; set; }
 }
 
@@ -247,7 +248,7 @@ public class CompleteHouseholdItemRequest
     /// <summary>扣减数量。关联了耗材且未跳过时，缺省为 1；0 表示不扣。</summary>
     public int? ConsumableQuantity { get; set; }
 
-    /// <summary>仅一次性到期事项可填。填写后把到期日改为该日期，并写入完成记录。</summary>
+    /// <summary>仅一次性到期事项可填。必须晚于今天（Asia/Shanghai）且晚于完成日期。补记更早日期时只写入历史，不改到期日。</summary>
     public DateOnly? NewExpiryDate { get; set; }
 }
 

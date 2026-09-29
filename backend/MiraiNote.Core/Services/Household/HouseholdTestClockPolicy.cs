@@ -3,10 +3,20 @@ using Microsoft.Extensions.Hosting;
 namespace MiraiNote.Core.Services.Household;
 
 /// <summary>
-/// 测试时钟只在非 Production 且配置显式打开时生效。Production 强制关闭。
+/// 测试时钟白名单：仅 Development 或 Testing，且配置显式打开。
+/// Staging、Production 以及任何其他环境名都关闭。
 /// </summary>
 public static class HouseholdTestClockPolicy
 {
-    public static bool IsEnabled(HouseholdOptions options, IHostEnvironment environment) =>
-        !environment.IsProduction() && options.TestClock.Enabled;
+    public const string TestingEnvironmentName = "Testing";
+
+    public static bool IsEnabled(HouseholdOptions options, IHostEnvironment environment)
+    {
+        if (!options.TestClock.Enabled)
+            return false;
+
+        var name = environment.EnvironmentName;
+        return string.Equals(name, Environments.Development, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, TestingEnvironmentName, StringComparison.OrdinalIgnoreCase);
+    }
 }

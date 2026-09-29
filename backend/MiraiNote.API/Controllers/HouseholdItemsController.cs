@@ -74,9 +74,12 @@ public class HouseholdItemsController : ControllerBase
 
     [HttpPost("items/{id:int}/complete")]
     public async Task<ActionResult<ApiResponse<CompleteHouseholdItemResult>>> Complete(
-        int id, [FromBody] CompleteHouseholdItemRequest request, CancellationToken ct)
+        int id,
+        [FromBody] CompleteHouseholdItemRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken ct)
     {
-        var result = await _service.CompleteAsync(_currentUser.UserId, id, request, ct);
+        var result = await _service.CompleteAsync(_currentUser.UserId, id, request, idempotencyKey, ct);
         return Ok(ApiResponse<CompleteHouseholdItemResult>.Ok(result, "已完成"));
     }
 

@@ -4,6 +4,7 @@ using Xunit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services.Household;
@@ -28,10 +29,33 @@ public class HouseholdTestClockTests
     {
         var options = new HouseholdOptions { TestClock = new HouseholdTestClockOptions { Enabled = true } };
         Assert.False(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment(Environments.Production)));
+        Assert.False(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment("production")));
+        Assert.False(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment("Staging")));
+        Assert.False(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment("ProductionLike")));
         Assert.True(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment(Environments.Development)));
+        Assert.True(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment("development")));
+        Assert.True(HouseholdTestClockPolicy.IsEnabled(options, new TestHostEnvironment(HouseholdTestClockPolicy.TestingEnvironmentName)));
         Assert.False(HouseholdTestClockPolicy.IsEnabled(
             new HouseholdOptions(),
             new TestHostEnvironment(Environments.Development)));
+    }
+
+    [Fact]
+    public async Task Startup_LogsWarningOnlyWhenWhitelistAllowsTheClock()
+    {
+        var enabled = new CaptureLogger();
+        await new HouseholdTestClockStartupLogger(
+            enabled,
+            Options.Create(new HouseholdOptions { TestClock = new HouseholdTestClockOptions { Enabled = true } }),
+            new TestHostEnvironment("Testing")).StartAsync(CancellationToken.None);
+        Assert.Contains(enabled.Warnings, m => m.Contains("测试时钟已启用", StringComparison.Ordinal));
+
+        var staging = new CaptureLogger();
+        await new HouseholdTestClockStartupLogger(
+            staging,
+            Options.Create(new HouseholdOptions { TestClock = new HouseholdTestClockOptions { Enabled = true } }),
+            new TestHostEnvironment("Staging")).StartAsync(CancellationToken.None);
+        Assert.Empty(staging.Warnings);
     }
 
     [Fact]
@@ -124,6 +148,40 @@ public class HouseholdTestClockTests
         Assert.Equal("https://example.test/app/household/items/12", builder.ItemPage(12));
     }
 
+    [Fact]
+    public async Task OffsetAndAbsoluteTime_AreClampedToTenYears()
+    {
+        await using var fx = new HouseholdFixture(Sep30At2359Shanghai);
+        await fx.MakeOwnerAdminAsync();
+        var enabled = fx.CreateClock(enabled: true, Environments.Development);
+
+        var overflow = await Assert.ThrowsAsync<BusinessException>(() => enabled.SetAsync(fx.OwnerId, new SetHouseholdTestClockRequest
+        {
+            OffsetSeconds = long.MaxValue
+        }));
+        Assert.Equal(400, overflow.StatusCode);
+        Assert.Equal(AdjustableHouseholdTimeProvider.OutOfRangeMessage, overflow.Message);
+        Assert.Equal("System", (await enabled.GetAsync(fx.OwnerId)).Mode);
+
+        var tooFar = await Assert.ThrowsAsync<BusinessException>(() => enabled.SetAsync(fx.OwnerId, new SetHouseholdTestClockRequest
+        {
+            UtcNow = Sep30At2359Shanghai.AddYears(10).AddSeconds(1)
+        }));
+        Assert.Equal(400, tooFar.StatusCode);
+        Assert.Equal(new DateOnly(2026, 9, 30), new HouseholdCycleRules(fx.Clock).Today());
+
+        var edge = await enabled.SetAsync(fx.OwnerId, new SetHouseholdTestClockRequest
+        {
+            UtcNow = Sep30At2359Shanghai.AddYears(-10)
+        });
+        Assert.Equal("Absolute", edge.Mode);
+        Assert.Equal(new DateOnly(2016, 9, 30), edge.ShanghaiToday);
+
+        var staging = fx.CreateClock(enabled: true, "Staging");
+        var hidden = await Assert.ThrowsAsync<BusinessException>(() => staging.GetAsync(fx.OwnerId));
+        Assert.Equal(404, hidden.StatusCode);
+    }
+
     private sealed class HouseholdFixture : IAsyncDisposable
     {
         private readonly MiraiTestFixture _fx;
@@ -160,6 +218,22 @@ public class HouseholdTestClockTests
         {
             await _db.DisposeAsync();
             _fx.Dispose();
+        }
+    }
+
+    private sealed class CaptureLogger : ILogger<HouseholdTestClockStartupLogger>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+                Warnings.Add(formatter(state, exception));
         }
     }
 

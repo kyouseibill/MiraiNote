@@ -17,6 +17,12 @@ public interface IHouseholdService
 
 public sealed class HouseholdService : IHouseholdService
 {
+    /// <summary>
+    /// 「用户不存在」和「已属于其他家庭」共用这一句，避免探测账号是否存在。
+    /// 邀请确认流程属于后续 PR，这里仍是管理员直接添加。
+    /// </summary>
+    public const string AddMemberRejectedMessage = "邀请未能发出，请确认对方账号";
+
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
 
@@ -41,7 +47,7 @@ public sealed class HouseholdService : IHouseholdService
     public async Task<List<HouseholdMemberDto>> ListMembersAsync(int userId, CancellationToken ct = default)
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
-        return await _db.HouseholdMembers.AsNoTracking()
+        var members = await _db.HouseholdMembers.AsNoTracking()
             .Where(m => m.HouseholdId == ctx.Household.Id)
             .Join(
                 _db.Users.AsNoTracking(),
@@ -58,6 +64,13 @@ public sealed class HouseholdService : IHouseholdService
             .OrderBy(m => m.Role)
             .ThenBy(m => m.Id)
             .ToListAsync(ct);
+        if (!ctx.IsAdmin)
+        {
+            foreach (var member in members)
+                member.Email = null;
+        }
+
+        return members;
     }
 
     public async Task<HouseholdMemberDto> AddMemberAsync(int userId, AddHouseholdMemberRequest request, CancellationToken ct = default)
@@ -75,18 +88,16 @@ public sealed class HouseholdService : IHouseholdService
 
         var lowered = identifier.ToLowerInvariant();
         var user = await _db.Users.FirstOrDefaultAsync(u =>
-            u.Username.ToLower() == lowered || u.Email.ToLower() == lowered, ct)
-            ?? throw new BusinessException("用户不存在", 404);
-
-        if (!user.IsActive)
-            throw new BusinessException("该用户未启用", 400);
+            u.Username.ToLower() == lowered || u.Email.ToLower() == lowered, ct);
+        if (user == null || !user.IsActive)
+            throw new BusinessException(AddMemberRejectedMessage, 400);
 
         var membership = await _db.HouseholdMembers
             .FirstOrDefaultAsync(m => m.UserId == user.Id, ct);
         if (membership != null)
         {
             throw new BusinessException(
-                membership.HouseholdId == ctx.Household.Id ? "该用户已是家庭成员" : "该用户已属于其他家庭",
+                membership.HouseholdId == ctx.Household.Id ? "该用户已是家庭成员" : AddMemberRejectedMessage,
                 400);
         }
 
