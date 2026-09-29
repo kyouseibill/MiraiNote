@@ -167,6 +167,12 @@ public class HouseholdTestClockTests
             PublicBaseUrl = "https://example.test/app/"
         }));
         Assert.Equal("https://example.test/app/household/items/12", builder.ItemPage(12));
+
+        var script = new HouseholdLinkBuilder(Options.Create(new HouseholdOptions
+        {
+            PublicBaseUrl = "javascript:alert(1)"
+        }));
+        Assert.Null(script.ItemPage(12));
     }
 
     [Fact]

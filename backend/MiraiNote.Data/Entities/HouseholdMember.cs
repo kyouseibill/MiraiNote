@@ -5,7 +5,7 @@ using MiraiNote.Shared.Dtos.Household;
 namespace MiraiNote.Data.Entities;
 
 /// <summary>
-/// 家庭成员。PR3 的按成员通知设置应挂在独立表上（成员 Id 唯一），不要把通道密钥写进本表。
+/// 家庭成员。通知设置在 <see cref="HouseholdNotificationSetting"/>，Bark 地址不写在本表。
 /// </summary>
 [Table("HouseholdMember")]
 public class HouseholdMember : BaseEntity

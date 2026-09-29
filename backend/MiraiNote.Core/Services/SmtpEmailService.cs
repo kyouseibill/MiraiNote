@@ -171,10 +171,28 @@ public class SmtpEmailService : IEmailService
         }
         catch (Exception ex)
         {
-            // 邮件发送失败不应阻断主业务流程（如注册），向上抛由调用方决定策略
-            _logger.LogError(ex, "邮件发送失败：{Subject} → {To}", subject, toEmail);
+            // 不把异常对象写进日志，避免 SMTP 对话里带上授权码或账号。
+            _logger.LogError(
+                "邮件发送失败：{Subject} → {To}，类型 {ExceptionType}，原因 {Reason}",
+                subject,
+                toEmail,
+                ex.GetType().Name,
+                SanitizeMailError(ex.Message));
             throw;
         }
+    }
+
+    private string SanitizeMailError(string? message)
+    {
+        if (string.IsNullOrEmpty(message))
+            return "";
+
+        var sanitized = message;
+        if (!string.IsNullOrEmpty(_options.SmtpPassword))
+            sanitized = sanitized.Replace(_options.SmtpPassword, "***", StringComparison.Ordinal);
+        if (!string.IsNullOrEmpty(_options.SmtpUser))
+            sanitized = sanitized.Replace(_options.SmtpUser, "***", StringComparison.Ordinal);
+        return sanitized;
     }
 
     private static string Escape(string input) =>

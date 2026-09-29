@@ -7,6 +7,7 @@ import type { CompleteHouseholdItemResult, HouseholdItem } from '@/types/househo
 import { apiFailure } from '@/utils/apiError'
 import {
   backfillRenewalMessage,
+  duplicateCompletionMessage,
   formatCalendarDate,
   purchaseLinkError,
   shanghaiToday,
@@ -154,7 +155,7 @@ async function submit() {
   } catch (error) {
     const failure = apiFailure(error)
     if (failure.status === 409) {
-      toast.info('刚刚已提交')
+      toast.info(duplicateCompletionMessage)
       emit('refresh')
       emit('close')
       return

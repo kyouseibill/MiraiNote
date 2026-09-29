@@ -213,6 +213,16 @@ public class HouseholdCycleRulesTests
     [InlineData("http://")]
     [InlineData("https://")]
     [InlineData(" HTTPS:// ")]
+    [InlineData("http:evil.com")]
+    [InlineData("http:///evil")]
+    [InlineData("http:/evil.com")]
+    [InlineData("https://example.com/\n")]
+    [InlineData("https://example.com/\tpath")]
+    [InlineData("https://ex\u200bample.com")]
+    [InlineData("https://example.com/\u200c")]
+    [InlineData("https://example.com/\u200d")]
+    [InlineData("\uFEFFhttps://example.com")]
+    [InlineData("\t")]
     public void PurchaseLink_RejectsUnsafeValues(string value)
     {
         var ex = Assert.Throws<BusinessException>(() => HouseholdText.CleanPurchaseLink(value));
@@ -220,20 +230,22 @@ public class HouseholdCycleRulesTests
     }
 
     [Theory]
-    [InlineData("http://example.com")]
-    [InlineData("https://example.com")]
-    [InlineData("https://example.com/item")]
-    [InlineData(" HTTP://shop.example/a ")]
-    public void PurchaseLink_AllowsHttpAndHttps(string value)
+    [InlineData("http://example.com", "http://example.com/")]
+    [InlineData("https://example.com", "https://example.com/")]
+    [InlineData("https://example.com/item", "https://example.com/item")]
+    [InlineData(" HTTP://shop.example/a ", "http://shop.example/a")]
+    [InlineData("https://example.com/filter", "https://example.com/filter")]
+    [InlineData("http://example.com/order", "http://example.com/order")]
+    [InlineData("http://example.com/template", "http://example.com/template")]
+    public void PurchaseLink_AllowsHttpAndHttps(string value, string expected)
     {
-        Assert.Equal(value.Trim(), HouseholdText.CleanPurchaseLink(value));
+        Assert.Equal(expected, HouseholdText.CleanPurchaseLink(value));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    [InlineData("\t")]
     public void PurchaseLink_AllowsEmpty(string? value)
     {
         Assert.Null(HouseholdText.CleanPurchaseLink(value));

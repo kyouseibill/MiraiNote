@@ -40,6 +40,17 @@ public enum HouseholdCycleUnit
     Year = 3
 }
 
+/// <summary>通知通道。提前 N 天、到期当天和逾期各选一个。</summary>
+[JsonConverter(typeof(CaseInsensitiveEnumConverter<HouseholdNotificationChannel>))]
+public enum HouseholdNotificationChannel
+{
+    /// <summary>邮件。</summary>
+    Email = 1,
+
+    /// <summary>Bark。</summary>
+    Bark = 2
+}
+
 /// <summary>家庭角色。</summary>
 [JsonConverter(typeof(CaseInsensitiveEnumConverter<HouseholdRole>))]
 public enum HouseholdRole
@@ -306,7 +317,7 @@ public class HouseholdConsumableDto
     public int RestockThreshold { get; set; }
     public bool IsLowStock { get; set; }
 
-    /// <summary>PR5 补货提醒去重用。补货后重置为 false。客户端不能直接修改。</summary>
+    /// <summary>本轮低库存已经提醒过。补货后重置。客户端不能直接修改。</summary>
     public bool LowStockReminderSent { get; set; }
 
     public string? Unit { get; set; }
@@ -363,4 +374,56 @@ public class SetHouseholdTestClockRequest
 
     /// <summary>相对系统时钟的偏移秒数。正数把“现在”拨到未来。</summary>
     public long? OffsetSeconds { get; set; }
+}
+
+/// <summary>
+/// 当前成员自己的通知设置。没有 Bark 地址字段，响应里只有「已配置」和末 4 位。
+/// </summary>
+public class HouseholdNotificationSettingsDto
+{
+    public bool BarkEnabled { get; set; }
+    public bool BarkConfigured { get; set; }
+    public string? BarkAddressSuffix { get; set; }
+    public bool EmailEnabled { get; set; }
+    public string? Email { get; set; }
+    public int PushHour { get; set; } = 9;
+    public int PushMinute { get; set; }
+    public HouseholdNotificationChannel LeadChannel { get; set; } = HouseholdNotificationChannel.Email;
+    public HouseholdNotificationChannel DueChannel { get; set; } = HouseholdNotificationChannel.Bark;
+    public int OverdueIntervalDays { get; set; } = 3;
+
+    /// <summary>服务器总开关。关闭时到点不推送，设置和发送测试仍可用。</summary>
+    public bool NotificationsEnabled { get; set; }
+}
+
+public class UpdateHouseholdNotificationSettingsRequest
+{
+    public bool BarkEnabled { get; set; } = true;
+
+    /// <summary>非空时替换 Bark 地址。空值表示不修改。</summary>
+    public string? BarkAddress { get; set; }
+
+    public bool ClearBarkAddress { get; set; }
+    public bool EmailEnabled { get; set; } = true;
+
+    /// <summary>空字符串表示清除。null 也按空处理，保存时以表单为准。</summary>
+    public string? Email { get; set; }
+
+    public int PushHour { get; set; } = 9;
+    public int PushMinute { get; set; }
+    public HouseholdNotificationChannel LeadChannel { get; set; } = HouseholdNotificationChannel.Email;
+    public HouseholdNotificationChannel DueChannel { get; set; } = HouseholdNotificationChannel.Bark;
+    public int OverdueIntervalDays { get; set; } = 3;
+}
+
+public class TestHouseholdBarkRequest
+{
+    /// <summary>不填则用已保存的地址。响应不会回显这个值。</summary>
+    public string? BarkAddress { get; set; }
+}
+
+public class TestHouseholdEmailRequest
+{
+    /// <summary>不填则用已保存的邮箱。</summary>
+    public string? Email { get; set; }
 }

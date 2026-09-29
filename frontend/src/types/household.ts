@@ -211,6 +211,35 @@ export interface SaveHouseholdConsumablePayload {
   note?: string | null
 }
 
+export type HouseholdNotificationChannel = 'Email' | 'Bark'
+
+export interface HouseholdNotificationSettings {
+  barkEnabled: boolean
+  barkConfigured: boolean
+  barkAddressSuffix: string | null
+  emailEnabled: boolean
+  email: string | null
+  pushHour: number
+  pushMinute: number
+  leadChannel: HouseholdNotificationChannel
+  dueChannel: HouseholdNotificationChannel
+  overdueIntervalDays: number
+  notificationsEnabled: boolean
+}
+
+export interface UpdateHouseholdNotificationSettingsPayload {
+  barkEnabled: boolean
+  barkAddress?: string | null
+  clearBarkAddress?: boolean
+  emailEnabled: boolean
+  email?: string | null
+  pushHour: number
+  pushMinute: number
+  leadChannel: HouseholdNotificationChannel
+  dueChannel: HouseholdNotificationChannel
+  overdueIntervalDays: number
+}
+
 export interface UpdateHouseholdConsumablePayload {
   name: string
   specModel?: string | null

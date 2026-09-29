@@ -36,27 +36,12 @@ internal static class HouseholdText
     }
 
     /// <summary>
-    /// 购买链接只接受 http/https 绝对地址。空值保持为空。
-    /// 必须 Uri.TryCreate 成功且 Scheme 为 http 或 https。没有主机的 http://、相对路径、
-    /// javascript/data/vbscript 以及夹杂空白的伪协议都返回 400。
+    /// 购买链接只接受 http/https，并且必须有主机名。空值保持为空。
+    /// 保存解析后的绝对地址。含控制字符或格式字符、以及 http:evil.com、http:///evil、
+    /// javascript/data 等输入返回 400。
     /// </summary>
-    public static string? CleanPurchaseLink(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var trimmed = value.Trim();
-        if (trimmed.Length > HouseholdFieldLimits.PurchaseLink)
-            throw new BusinessException($"购买链接不能超过 {HouseholdFieldLimits.PurchaseLink} 个字符", 400);
-
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
-            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            return trimmed;
-        }
-
-        throw new BusinessException("购买链接只接受 http 或 https", 400);
-    }
+    public static string? CleanPurchaseLink(string? value) =>
+        HouseholdUrls.NormalizeOptional(value, HouseholdFieldLimits.PurchaseLink, "购买链接");
 }
 
 /// <summary>

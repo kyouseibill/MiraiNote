@@ -99,8 +99,18 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
 
         entity.CurrentStock += request.Quantity;
         entity.LowStockReminderSent = false;
+        await ClearConsumableRemindersAsync(entity.Id, ct);
         await _db.SaveChangesAsync(ct);
         return ToDto(entity);
+    }
+
+    private async Task ClearConsumableRemindersAsync(int consumableId, CancellationToken ct)
+    {
+        var logs = await _db.HouseholdConsumableReminders
+            .Where(r => r.ConsumableId == consumableId)
+            .ToListAsync(ct);
+        foreach (var log in logs)
+            log.IsDeleted = true;
     }
 
     private async Task<HouseholdConsumable> LoadAsync(int householdId, int id, bool tracking, CancellationToken ct)

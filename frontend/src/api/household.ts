@@ -13,10 +13,12 @@ import type {
   HouseholdItemTemplate,
   HouseholdMember,
   HouseholdServerToday,
+  HouseholdNotificationSettings,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
   UpdateHouseholdConsumablePayload,
   UpdateHouseholdItemPayload,
+  UpdateHouseholdNotificationSettingsPayload,
 } from '@/types/household'
 
 function itemParams(query: HouseholdItemQuery = {}) {
@@ -86,4 +88,16 @@ export const householdApi = {
 
   restockConsumable: (id: number, quantity: number) =>
     unwrap<HouseholdConsumable>(http.post(`/household/consumables/${id}/restock`, { quantity })),
+
+  getNotificationSettings: () =>
+    unwrap<HouseholdNotificationSettings>(http.get('/household/notification-settings')),
+
+  updateNotificationSettings: (payload: UpdateHouseholdNotificationSettingsPayload) =>
+    unwrap<HouseholdNotificationSettings>(http.put('/household/notification-settings', payload)),
+
+  testBark: (barkAddress?: string | null) =>
+    unwrap<null>(http.post('/household/notification-settings/test-bark', { barkAddress: barkAddress || null })),
+
+  testEmail: (email?: string | null) =>
+    unwrap<null>(http.post('/household/notification-settings/test-email', { email: email || null })),
 }
