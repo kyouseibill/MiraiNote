@@ -41,7 +41,8 @@ public sealed record HouseholdItemDraft(
         string? note,
         string? purchaseLink,
         int? mileageCycleKm,
-        IEnumerable<string>? aliases)
+        IEnumerable<string>? aliases,
+        DateOnly today)
     {
         if (!Enum.IsDefined(itemType))
             throw new BusinessException("请指定事项类型（周期型或一次性到期）", 400);
@@ -52,6 +53,9 @@ public sealed record HouseholdItemDraft(
 
         if (cycleUnit is HouseholdCycleUnit unit && !Enum.IsDefined(unit))
             throw new BusinessException("周期单位无效", 400);
+
+        if (lastDoneDate is DateOnly doneOn && doneOn > today)
+            throw new BusinessException("上次完成日期不能晚于今天", 400);
 
         var hasCycle = cycleValue != null || cycleUnit != null;
         DateOnly nextDue;

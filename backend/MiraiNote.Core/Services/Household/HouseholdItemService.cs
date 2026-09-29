@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
@@ -14,7 +17,8 @@ public interface IHouseholdItemService
     Task<HouseholdItemDto> UpdateAsync(int userId, int id, UpdateHouseholdItemRequest request, CancellationToken ct = default);
     Task<HouseholdItemDto> SetPausedAsync(int userId, int id, bool paused, CancellationToken ct = default);
     Task DeleteAsync(int userId, int id, CancellationToken ct = default);
-    Task<CompleteHouseholdItemResult> CompleteAsync(int userId, int id, CompleteHouseholdItemRequest request, CancellationToken ct = default);
+    Task<CompleteHouseholdItemResult> CompleteAsync(
+        int userId, int id, CompleteHouseholdItemRequest request, string? idempotencyKey = null, CancellationToken ct = default);
     Task<List<HouseholdCompletionDto>> HistoryAsync(int userId, int id, CancellationToken ct = default);
     Task<HouseholdUpcomingDto> UpcomingAsync(int userId, HouseholdUpcomingQuery? query, CancellationToken ct = default);
     Task<List<HouseholdItemTemplateDto>> ListTemplatesAsync(int userId, CancellationToken ct = default);
@@ -23,6 +27,11 @@ public interface IHouseholdItemService
 
 public sealed class HouseholdItemService : IHouseholdItemService
 {
+    /// <summary>同一事项、相同提交内容在此窗口内的第二次完成会被拒绝。</summary>
+    public const int DuplicateCompletionWindowSeconds = 3;
+
+    private static readonly ConcurrentDictionary<int, SemaphoreSlim> CompletionGates = new();
+
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
     private readonly HouseholdCycleRules _rules;
@@ -75,6 +84,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        _policy.EnsureCanUpdateItem(ctx.IsAdmin);
         var draft = Normalize(request.Name, request.Category, request.Location, request.ModelSpec, request.ItemType,
             request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
             request.AssigneeMemberId, request.ConsumableId, request.Note, request.PurchaseLink,
@@ -90,6 +100,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        _policy.EnsureCanPauseItem(ctx.IsAdmin);
         entity.IsPaused = paused;
         await _db.SaveChangesAsync(ct);
         return await MapOneAsync(entity, ct);
@@ -98,82 +109,133 @@ public sealed class HouseholdItemService : IHouseholdItemService
     public async Task DeleteAsync(int userId, int id, CancellationToken ct = default)
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
-        if (_policy.OnlyAdminCanDeleteItems && !ctx.IsAdmin)
-            throw new BusinessException("只有管理员可以删除事项", 403);
-
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        _policy.EnsureCanDeleteItem(ctx.IsAdmin);
         entity.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
     }
 
     public async Task<CompleteHouseholdItemResult> CompleteAsync(
-        int userId, int id, CompleteHouseholdItemRequest request, CancellationToken ct = default)
+        int userId, int id, CompleteHouseholdItemRequest request, string? idempotencyKey = null, CancellationToken ct = default)
     {
+        var key = NormalizeIdempotencyKey(idempotencyKey);
         var ctx = await _access.GetOrCreateAsync(userId, ct);
-        var item = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
-        var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
-
-        if (item.ItemType == HouseholdItemType.Recurring && request.NewExpiryDate != null)
-            throw new BusinessException("周期型事项不能填写新的到期日", 400);
-
-        var member = await RequireMemberAsync(
-            ctx.Household.Id,
-            request.CompletedByMemberId ?? ctx.Member.Id,
-            "执行人必须是本家庭成员",
-            ct);
-        var username = await _db.Users.AsNoTracking()
-            .Where(u => u.Id == member.UserId)
-            .Select(u => u.Username)
-            .FirstOrDefaultAsync(ct)
-            ?? throw new BusinessException("用户不存在", 400);
-
-        var deduction = await DeductAsync(ctx.Household.Id, item, request, ct);
-        DateOnly? renewal = null;
-        if (item.ItemType == HouseholdItemType.Recurring)
+        var gate = CompletionGates.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
         {
-            if (item.CycleValue is not int cycle || item.CycleUnit is not HouseholdCycleUnit unit)
-                throw new BusinessException("周期型事项缺少周期", 400);
-            item.LastDoneDate = completedOn;
-            item.NextDueDate = HouseholdCycleRules.AddCycle(completedOn, cycle, unit);
+            if (key != null)
+            {
+                var replay = await FindByIdempotencyKeyAsync(id, key, ct);
+                if (replay != null)
+                    return await ReplayAsync(ctx.Household.Id, replay, ct);
+            }
+
+            var item = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+            var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
+            if (item.ItemType == HouseholdItemType.Recurring && request.NewExpiryDate != null)
+                throw new BusinessException("周期型事项不能填写新的到期日", 400);
+            if (request.NewExpiryDate is DateOnly renewalDate)
+                _rules.EnsureRenewalExpiry(renewalDate, completedOn);
+
+            var member = await RequireMemberAsync(
+                ctx.Household.Id,
+                request.CompletedByMemberId ?? ctx.Member.Id,
+                "执行人必须是本家庭成员",
+                ct);
+            var username = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == member.UserId)
+                .Select(u => u.Username)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new BusinessException("用户不存在", 400);
+
+            var cost = NormalizeCost(request.Cost);
+            var note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
+            var purchaseLink = HouseholdText.Clean(request.PurchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接");
+            var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
+            var fingerprint = SubmissionFingerprint(request, completedOn, member.Id, cost, note, purchaseLink, photos);
+            await RejectDuplicateSubmissionAsync(item.Id, fingerprint, ct);
+
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var deduction = await DeductAsync(ctx.Household.Id, item, request, ct);
+                var advancesSchedule = item.LastDoneDate is not DateOnly last || completedOn >= last;
+                DateOnly? renewal = request.NewExpiryDate;
+                if (advancesSchedule)
+                {
+                    if (item.ItemType == HouseholdItemType.Recurring)
+                    {
+                        if (item.CycleValue is not int cycle || item.CycleUnit is not HouseholdCycleUnit unit)
+                            throw new BusinessException("周期型事项缺少周期", 400);
+                        item.LastDoneDate = completedOn;
+                        item.NextDueDate = HouseholdCycleRules.AddCycle(completedOn, cycle, unit);
+                    }
+                    else
+                    {
+                        if (item.ExpiryDate == null && request.NewExpiryDate == null)
+                            throw new BusinessException("一次性到期事项缺少到期日", 400);
+                        if (request.NewExpiryDate is DateOnly nextExpiry)
+                        {
+                            item.ExpiryDate = nextExpiry;
+                            item.NextDueDate = nextExpiry;
+                        }
+
+                        item.LastDoneDate = completedOn;
+                    }
+                }
+
+                var record = new HouseholdCompletionRecord
+                {
+                    HouseholdItemId = item.Id,
+                    CompletedOn = completedOn,
+                    CompletedByMemberId = member.Id,
+                    CompletedByUserId = member.UserId,
+                    CompletedByUsername = username,
+                    PhotoRefs = photos.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(photos),
+                    Cost = cost,
+                    PurchaseLink = purchaseLink,
+                    Note = note,
+                    ConsumableId = deduction.ConsumableId,
+                    ConsumableQuantityDeducted = deduction.Actual,
+                    NeedsRestock = deduction.NeedsRestock,
+                    NewExpiryDate = renewal,
+                    IdempotencyKey = key,
+                    SubmissionFingerprint = fingerprint
+                };
+                _db.HouseholdCompletionRecords.Add(record);
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+
+                return new CompleteHouseholdItemResult
+                {
+                    Item = await MapOneAsync(item, ct),
+                    Record = ToCompletionDto(record),
+                    ConsumableQuantityDeducted = deduction.Actual,
+                    ConsumableStockAfter = deduction.StockAfter,
+                    NeedsRestock = deduction.NeedsRestock
+                };
+            }
+            catch (DbUpdateException) when (key != null)
+            {
+                await tx.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                var raced = await FindByIdempotencyKeyAsync(id, key, ct);
+                if (raced != null)
+                    return await ReplayAsync(ctx.Household.Id, raced, ct);
+                throw;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                throw;
+            }
         }
-        else
+        finally
         {
-            var expiry = request.NewExpiryDate ?? item.ExpiryDate
-                ?? throw new BusinessException("一次性到期事项缺少到期日", 400);
-            renewal = request.NewExpiryDate;
-            item.ExpiryDate = expiry;
-            item.NextDueDate = expiry;
-            item.LastDoneDate = completedOn;
+            gate.Release();
         }
-
-        var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
-        var record = new HouseholdCompletionRecord
-        {
-            HouseholdItemId = item.Id,
-            CompletedOn = completedOn,
-            CompletedByMemberId = member.Id,
-            CompletedByUserId = member.UserId,
-            CompletedByUsername = username,
-            PhotoRefs = photos.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(photos),
-            Cost = NormalizeCost(request.Cost),
-            PurchaseLink = HouseholdText.Clean(request.PurchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接"),
-            Note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注"),
-            ConsumableId = deduction.ConsumableId,
-            ConsumableQuantityDeducted = deduction.Actual,
-            NeedsRestock = deduction.NeedsRestock,
-            NewExpiryDate = renewal
-        };
-        _db.HouseholdCompletionRecords.Add(record);
-        await _db.SaveChangesAsync(ct);
-
-        return new CompleteHouseholdItemResult
-        {
-            Item = await MapOneAsync(item, ct),
-            Record = ToCompletionDto(record),
-            ConsumableQuantityDeducted = deduction.Actual,
-            ConsumableStockAfter = deduction.StockAfter,
-            NeedsRestock = deduction.NeedsRestock
-        };
     }
 
     public async Task<List<HouseholdCompletionDto>> HistoryAsync(int userId, int id, CancellationToken ct = default)
@@ -398,7 +460,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         entity.AliasesJson = HouseholdAliases.Serialize(draft.Aliases);
     }
 
-    private static HouseholdItemDraft Normalize(
+    private HouseholdItemDraft Normalize(
         string? name,
         HouseholdCategory? category,
         string? location,
@@ -417,7 +479,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         IEnumerable<string>? aliases) =>
         HouseholdItemDraft.Normalize(
             name, category, location, modelSpec, itemType, cycleValue, cycleUnit, lastDoneDate, expiryDate,
-            leadDays, assigneeMemberId, consumableId, note, purchaseLink, mileageCycleKm, aliases);
+            leadDays, assigneeMemberId, consumableId, note, purchaseLink, mileageCycleKm, aliases, _rules.Today());
 
     private async Task<HouseholdItemDto> MapOneAsync(HouseholdItem entity, CancellationToken ct)
     {
@@ -502,6 +564,77 @@ public sealed class HouseholdItemService : IHouseholdItemService
         if (cost > 999999999.99m)
             throw new BusinessException("费用超出范围", 400);
         return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private async Task RejectDuplicateSubmissionAsync(int itemId, string fingerprint, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddSeconds(-DuplicateCompletionWindowSeconds);
+        var recent = await _db.HouseholdCompletionRecords.AsNoTracking()
+            .Where(r => r.HouseholdItemId == itemId && r.CreatedAt >= cutoff)
+            .OrderByDescending(r => r.Id)
+            .Select(r => r.SubmissionFingerprint)
+            .FirstOrDefaultAsync(ct);
+        if (recent == fingerprint)
+            throw new BusinessException("请勿重复提交", 409);
+    }
+
+    private async Task<HouseholdCompletionRecord?> FindByIdempotencyKeyAsync(int itemId, string key, CancellationToken ct) =>
+        await _db.HouseholdCompletionRecords.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.HouseholdItemId == itemId && r.IdempotencyKey == key, ct);
+
+    private async Task<CompleteHouseholdItemResult> ReplayAsync(
+        int householdId, HouseholdCompletionRecord record, CancellationToken ct)
+    {
+        var item = await LoadAsync(householdId, record.HouseholdItemId, tracking: false, ct);
+        int? stockAfter = null;
+        if (record.ConsumableId is int consumableId)
+        {
+            stockAfter = await _db.HouseholdConsumables.AsNoTracking()
+                .Where(c => c.Id == consumableId && c.HouseholdId == householdId)
+                .Select(c => (int?)c.CurrentStock)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return new CompleteHouseholdItemResult
+        {
+            Item = await MapOneAsync(item, ct),
+            Record = ToCompletionDto(record),
+            ConsumableQuantityDeducted = record.ConsumableQuantityDeducted,
+            ConsumableStockAfter = stockAfter,
+            NeedsRestock = record.NeedsRestock
+        };
+    }
+
+    private static string? NormalizeIdempotencyKey(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return null;
+        var trimmed = key.Trim();
+        if (trimmed.Length > 100)
+            throw new BusinessException("Idempotency-Key 最长 100 个字符", 400);
+        return trimmed;
+    }
+
+    private static string SubmissionFingerprint(
+        CompleteHouseholdItemRequest request,
+        DateOnly completedOn,
+        int memberId,
+        decimal? cost,
+        string? note,
+        string? purchaseLink,
+        IReadOnlyList<string> photos)
+    {
+        var raw = string.Join('\u001f',
+            completedOn.ToString("yyyy-MM-dd"),
+            memberId.ToString(),
+            request.SkipConsumableDeduction ? "1" : "0",
+            request.ConsumableQuantity?.ToString() ?? "",
+            request.NewExpiryDate?.ToString("yyyy-MM-dd") ?? "",
+            cost?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            note ?? "",
+            purchaseLink ?? "",
+            string.Join('\u001e', photos));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
     }
 
     private readonly record struct Deduction(int? ConsumableId, int Actual, int? StockAfter, bool NeedsRestock);

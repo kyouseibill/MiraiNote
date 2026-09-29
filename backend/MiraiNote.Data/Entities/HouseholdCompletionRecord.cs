@@ -55,6 +55,14 @@ public class HouseholdCompletionRecord : BaseEntity
     /// <summary>本次扣减把库存打到 0，或请求的数量没能扣完。</summary>
     public bool NeedsRestock { get; set; }
 
-    /// <summary>一次性到期事项续期时写入的新到期日。</summary>
+    /// <summary>一次性到期事项续期时写入的新到期日。补记更早日期时只记在这条历史上。</summary>
     public DateOnly? NewExpiryDate { get; set; }
+
+    /// <summary>可选的 Idempotency-Key。同一事项重复使用同一键时返回第一次的结果。</summary>
+    [MaxLength(100)]
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>完成请求指纹。短时间内相同指纹只接受一次，用来挡住连续点击。</summary>
+    [MaxLength(64)]
+    public string? SubmissionFingerprint { get; set; }
 }

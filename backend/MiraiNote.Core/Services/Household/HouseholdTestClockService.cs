@@ -47,7 +47,7 @@ public sealed class HouseholdTestClockService : IHouseholdTestClockService
         if (hasAbsolute)
             _clock.SetAbsolute(request.UtcNow!.Value);
         else
-            _clock.SetOffset(TimeSpan.FromSeconds(request.OffsetSeconds!.Value));
+            _clock.SetOffsetSeconds(request.OffsetSeconds!.Value);
 
         return Describe();
     }

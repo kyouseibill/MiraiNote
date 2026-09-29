@@ -14,7 +14,8 @@ public enum UpcomingGroup
 
 /// <summary>
 /// 家务周期的纯规则：上海日历日、月末截断、从实际完成日顺延、库存不为负。
-/// 今天由可注入的 <see cref="TimeProvider"/> 决定，测试可以固定 UTC 时刻。
+/// 今天由 <see cref="IHouseholdClock"/> 决定，测试可以固定 UTC 时刻。
+/// 不使用全局 <see cref="TimeProvider"/>，避免测试时钟改到认证和其他模块。
 /// </summary>
 public sealed class HouseholdCycleRules
 {
@@ -28,16 +29,16 @@ public sealed class HouseholdCycleRules
     public const int DefaultRestockThreshold = 1;
     public const int DefaultDeductionQuantity = 1;
 
-    private readonly TimeProvider _clock;
+    private readonly IHouseholdClock _clock;
     private readonly TimeZoneInfo _shanghai;
 
-    public HouseholdCycleRules(TimeProvider clock)
+    public HouseholdCycleRules(IHouseholdClock clock)
     {
         _clock = clock;
         _shanghai = ShanghaiClock.Resolve();
     }
 
-    public DateOnly Today() => ShanghaiClock.ToShanghaiDate(_clock.GetUtcNow(), _shanghai);
+    public DateOnly Today() => ShanghaiClock.ToShanghaiDate(_clock.UtcNow, _shanghai);
 
     /// <summary>缺省今天（上海）。晚于今天则 400。</summary>
     public DateOnly ResolveCompletionDate(DateOnly? requested)
@@ -47,6 +48,17 @@ public sealed class HouseholdCycleRules
         if (date > today)
             throw new BusinessException("完成日期不能晚于今天", 400);
         return date;
+    }
+
+    /// <summary>
+    /// 续期到期日必须晚于 Asia/Shanghai 的今天，并且晚于本次完成日期。
+    /// </summary>
+    public void EnsureRenewalExpiry(DateOnly newExpiry, DateOnly completedOn)
+    {
+        if (newExpiry <= Today())
+            throw new BusinessException("新的到期日必须晚于今天", 400);
+        if (newExpiry <= completedOn)
+            throw new BusinessException("新的到期日必须晚于完成日期", 400);
     }
 
     /// <summary>

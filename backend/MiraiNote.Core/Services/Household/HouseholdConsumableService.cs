@@ -20,11 +20,13 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
 {
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
+    private readonly HouseholdAccessPolicy _policy;
 
-    public HouseholdConsumableService(MiraiNoteDbContext db, IHouseholdAccessService access)
+    public HouseholdConsumableService(MiraiNoteDbContext db, IHouseholdAccessService access, HouseholdAccessPolicy policy)
     {
         _db = db;
         _access = access;
+        _policy = policy;
     }
 
     public async Task<List<HouseholdConsumableDto>> ListAsync(int userId, CancellationToken ct = default)
@@ -69,6 +71,7 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        _policy.EnsureCanDeleteConsumable(ctx.IsAdmin);
         var inUse = await _db.HouseholdItems.AnyAsync(i =>
             i.HouseholdId == ctx.Household.Id && i.ConsumableId == entity.Id, ct);
         if (inUse)

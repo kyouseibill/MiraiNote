@@ -19,16 +19,17 @@ public static class DependencyInjection
         services.AddScoped<Services.IMemoService, Services.MemoService>();
         services.AddScoped<Services.ILifeLogService, Services.LifeLogService>();
         services.AddSingleton(Services.Household.HouseholdAccessPolicy.Default);
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton(sp => new Services.Household.AdjustableHouseholdTimeProvider(TimeProvider.System));
-        services.AddSingleton<TimeProvider>(sp =>
+        services.AddSingleton<Services.Household.IHouseholdClock>(sp =>
         {
-            var adjustable = sp.GetRequiredService<Services.Household.AdjustableHouseholdTimeProvider>();
             var env = sp.GetService<IHostEnvironment>();
             var options = sp.GetService<IOptions<Services.Household.HouseholdOptions>>()?.Value;
             if (env != null && options != null && Services.Household.HouseholdTestClockPolicy.IsEnabled(options, env))
-                return adjustable;
-            return TimeProvider.System;
+                return sp.GetRequiredService<Services.Household.AdjustableHouseholdTimeProvider>();
+            return new Services.Household.SystemHouseholdClock();
         });
+        services.AddHostedService<Services.Household.HouseholdTestClockStartupLogger>();
         services.AddSingleton<Services.Household.HouseholdLinkBuilder>();
         services.AddSingleton<Services.Household.HouseholdCycleRules>();
         services.AddScoped<Services.Household.IHouseholdAccessService, Services.Household.HouseholdAccessService>();

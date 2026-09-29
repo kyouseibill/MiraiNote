@@ -22,7 +22,7 @@ public class HouseholdCycleRulesTests
     [Fact]
     public void Today_UsesShanghai_WhenUtcDateIsStillPreviousDay()
     {
-        var rules = new HouseholdCycleRules(new FixedTimeProvider(ShanghaiNewYearEve));
+        var rules = new HouseholdCycleRules(new DelegatingHouseholdClock(new FixedTimeProvider(ShanghaiNewYearEve)));
         Assert.Equal(new DateOnly(2026, 10, 1), rules.Today());
     }
 
@@ -82,7 +82,7 @@ public class HouseholdCycleRulesTests
     [Fact]
     public void ResolveCompletionDate_RejectsShanghaiTomorrow()
     {
-        var rules = new HouseholdCycleRules(new FixedTimeProvider(ShanghaiNewYearEve));
+        var rules = new HouseholdCycleRules(new DelegatingHouseholdClock(new FixedTimeProvider(ShanghaiNewYearEve)));
         var ex = Assert.Throws<BusinessException>(() => rules.ResolveCompletionDate(new DateOnly(2026, 10, 2)));
         Assert.Equal(400, ex.StatusCode);
         Assert.Equal(new DateOnly(2026, 10, 1), rules.ResolveCompletionDate(null));
@@ -143,7 +143,7 @@ public class HouseholdCycleRulesTests
             "空调滤网", null, "客厅", null,
             HouseholdItemType.Recurring, 1, HouseholdCycleUnit.Month,
             new DateOnly(2026, 1, 31), null,
-            null, null, null, null, null, null, [" 滤网 ", "滤网"]);
+            null, null, null, null, null, null, [" 滤网 ", "滤网"], new DateOnly(2026, 10, 1));
 
         Assert.Equal(new DateOnly(2026, 2, 28), draft.NextDueDate);
         Assert.Equal(HouseholdCategory.HomeMaintenance, draft.Category);
@@ -158,7 +158,7 @@ public class HouseholdCycleRulesTests
             "护照", HouseholdCategory.Document, null, null,
             HouseholdItemType.OneOffExpiry, null, null,
             null, new DateOnly(2030, 5, 1),
-            3, null, null, null, null, null, null);
+            3, null, null, null, null, null, null, new DateOnly(2026, 10, 1));
 
         Assert.Equal(new DateOnly(2030, 5, 1), draft.NextDueDate);
         Assert.Equal(new DateOnly(2030, 5, 1), draft.ExpiryDate);
@@ -173,14 +173,14 @@ public class HouseholdCycleRulesTests
             "年检", HouseholdCategory.Vehicle, null, null,
             HouseholdItemType.Recurring, 12, HouseholdCycleUnit.Month,
             new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1),
-            null, null, null, null, null, null, null));
+            null, null, null, null, null, null, null, new DateOnly(2026, 10, 1)));
         Assert.Equal(400, recurring.StatusCode);
 
         var oneOff = Assert.Throws<BusinessException>(() => HouseholdItemDraft.Normalize(
             "护照", HouseholdCategory.Document, null, null,
             HouseholdItemType.OneOffExpiry, 12, HouseholdCycleUnit.Month,
             null, new DateOnly(2030, 1, 1),
-            null, null, null, null, null, null, null));
+            null, null, null, null, null, null, null, new DateOnly(2026, 10, 1)));
         Assert.Equal(400, oneOff.StatusCode);
     }
 
