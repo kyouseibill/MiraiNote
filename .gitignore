@@ -21,3 +21,10 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# ===== Tool caches, publish artifacts, local secrets =====
+.mimosa/
+release/
+.publish-staging-*/
+appsettings.Production.json
+.env
