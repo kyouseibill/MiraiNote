@@ -194,7 +194,7 @@ function statusOf(item: HouseholdItem) {
     <HouseholdMemberPanel v-else />
 
     <HouseholdItemFormDialog :open="formOpen" :mode="formMode" :item="editing" @close="formOpen = false" @saved="reloadItems" />
-    <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="reloadItems" />
+    <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="reloadItems" @refresh="reloadItems" />
     <AppDialog :open="deleting != null" title="删除事项" :description="deleting ? `确定删除「${deleting.name}」？此操作需要管理员权限。` : ''" :busy="busy" @close="deleting = null">
       <p class="text-[13px] leading-6">删除后事项不再出现在列表和近期到期里。</p>
       <template #footer>

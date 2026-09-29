@@ -313,7 +313,7 @@ export const useHouseholdStore = defineStore('household', () => {
     if (currentItem.value?.id === id) currentItem.value = null
   }
 
-  async function completeItem(id: number, payload: CompleteHouseholdItemPayload) {
+  async function completeItem(id: number, payload: CompleteHouseholdItemPayload, idempotencyKey?: string) {
     if (previewMode.value) {
       const current = itemSource.value.find((item) => item.id === id)
       if (!current) throw new HouseholdRequestError(404, '事项不存在')
@@ -348,7 +348,7 @@ export const useHouseholdStore = defineStore('household', () => {
       if (currentItem.value?.id === id) history.value = historySource.value[id] ?? []
       return { item: next, record, consumableQuantityDeducted: 0, consumableStockAfter: null, needsRestock: false }
     }
-    const result = await householdApi.completeItem(id, payload)
+    const result = await householdApi.completeItem(id, payload, idempotencyKey || crypto.randomUUID())
     replaceItem(result.item)
     if (currentItem.value?.id === id) {
       history.value = [result.record, ...history.value.filter((record) => record.id !== result.record.id)]

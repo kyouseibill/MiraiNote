@@ -4,7 +4,9 @@ import AppDialog from '@/components/AppDialog.vue'
 import HouseholdPhotoField from '@/components/household/HouseholdPhotoField.vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import type { CompleteHouseholdItemResult, HouseholdItem } from '@/types/household'
+import { apiFailure } from '@/utils/apiError'
 import {
+  backfillRenewalMessage,
   formatCalendarDate,
   shanghaiToday,
   shiftCalendarDay,
@@ -19,6 +21,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   completed: [CompleteHouseholdItemResult]
+  refresh: []
 }>()
 
 const { toast, store, report } = useHouseholdFeedback()
@@ -39,6 +42,7 @@ const renew = ref(false)
 const newExpiryDate = ref('')
 const skipDeduction = ref(false)
 const quantity = ref('1')
+const idempotencyKey = ref('')
 
 const today = ref(shanghaiToday())
 const tomorrow = computed(() => shiftCalendarDay(today.value, 1))
@@ -62,6 +66,7 @@ function reset() {
   skipDeduction.value = false
   quantity.value = '1'
   uploading.value = false
+  idempotencyKey.value = crypto.randomUUID()
 }
 
 async function load() {
@@ -91,12 +96,20 @@ watch(() => props.open, (open) => {
   void load()
 })
 
+watch(backfill, (isBackfill) => {
+  if (!isBackfill) return
+  renew.value = false
+  newExpiryDate.value = ''
+})
+
 async function submit() {
   if (submitting.value || uploading.value || !item.value) return
   serverError.value = ''
+  const renewing = item.value.itemType === 'OneOffExpiry' && renew.value && !backfill.value
   errors.value = validateCompletionDraft({
     completedOn: completedOn.value,
     today: today.value,
+    backfill: backfill.value,
     renew: item.value.itemType === 'OneOffExpiry' && renew.value,
     newExpiryDate: newExpiryDate.value,
     cost: cost.value,
@@ -118,8 +131,8 @@ async function submit() {
       note: note.value.trim() || null,
       skipConsumableDeduction: before.consumableId != null && skipDeduction.value,
       consumableQuantity: before.consumableId != null && !skipDeduction.value ? Number(quantity.value) : null,
-      newExpiryDate: before.itemType === 'OneOffExpiry' && renew.value ? newExpiryDate.value : null,
-    })
+      newExpiryDate: renewing ? newExpiryDate.value : null,
+    }, idempotencyKey.value)
     const keptDue = Boolean(before.lastDoneDate && completedOn.value < before.lastDoneDate && result.item.nextDueDate === before.nextDueDate)
     const parts = [keptDue
       ? '已补记到历史，下次到期日保持不变'
@@ -134,9 +147,30 @@ async function submit() {
     emit('completed', result)
     emit('close')
   } catch (error) {
-    const failure = await report(error)
-    serverError.value = failure.message
-    if (failure.status === 403) emit('close')
+    const failure = apiFailure(error)
+    if (failure.status === 409) {
+      toast.info('刚刚已提交')
+      emit('refresh')
+      emit('close')
+      return
+    }
+    if (failure.status === 422) {
+      idempotencyKey.value = crypto.randomUUID()
+      serverError.value = failure.message ? `${failure.message}。请刷新后重试` : '请刷新后重试'
+      toast.error('请刷新后重试')
+      emit('refresh')
+      if (props.itemId != null && !store.previewMode) {
+        try {
+          item.value = await store.fetchItem(props.itemId)
+        } catch {
+          // 列表刷新失败时，对话框里仍保留上面的提示。
+        }
+      }
+      return
+    }
+    const reported = await report(error)
+    serverError.value = reported.message
+    if (reported.status === 403) emit('close')
   } finally {
     submitting.value = false
   }
@@ -161,7 +195,7 @@ async function submit() {
         <input id="complete-date" v-model="completedOn" data-dialog-autofocus type="date" class="form-input mt-1.5 h-10" :max="today" :disabled="submitting" />
         <p class="mt-1 text-[11px] text-[var(--mn-muted)]">默认今天，可以改成过去的日期。今天按北京时间，不能晚于今天。</p>
         <p v-if="errors.completedOn" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.completedOn }}</p>
-        <p v-if="backfill" class="mt-1 text-[12px] text-[#4c6178]">这个日期早于上次完成日期，只会补进历史，不会改下次到期日。</p>
+        <p v-if="backfill" class="mt-1 text-[12px] text-[#4c6178]">这个日期早于上次完成日期，只会补进历史，不会改下次到期日。{{ backfillRenewalMessage }}</p>
       </div>
       <div>
         <label class="text-[13px] font-medium" for="complete-member">执行人</label>
@@ -200,15 +234,18 @@ async function submit() {
       </div>
       <div v-if="item.itemType === 'OneOffExpiry'" class="rounded-md border border-[var(--mn-line)] px-3 py-3">
         <label class="flex items-center gap-2 text-[13px] font-medium">
-          <input v-model="renew" type="checkbox" :disabled="submitting" />
+          <input v-model="renew" type="checkbox" :disabled="submitting || backfill" />
           续期，并设置新的到期日
         </label>
-        <p class="mt-1 text-[11px] text-[var(--mn-muted)]">不续期则保持当前到期日。新的到期日必须晚于今天。</p>
-        <div v-if="renew" class="mt-3">
+        <p class="mt-1 text-[11px] text-[var(--mn-muted)]">
+          {{ backfill ? backfillRenewalMessage : '不续期则保持当前到期日。新的到期日必须晚于今天，也必须晚于这次的完成日期。' }}
+        </p>
+        <div v-if="renew && !backfill" class="mt-3">
           <label class="text-[13px]" for="complete-expiry">新的到期日</label>
           <input id="complete-expiry" v-model="newExpiryDate" type="date" class="form-input mt-1.5 h-10" :min="tomorrow" :disabled="submitting" />
           <p v-if="errors.newExpiryDate" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.newExpiryDate }}</p>
         </div>
+        <p v-else-if="errors.newExpiryDate" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.newExpiryDate }}</p>
       </div>
     </form>
     <template #footer>

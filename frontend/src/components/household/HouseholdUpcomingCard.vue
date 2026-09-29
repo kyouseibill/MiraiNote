@@ -88,6 +88,6 @@ watch(() => active.value, () => { void load() })
       </div>
     </div>
     <RouterLink :to="withPreview('/household')" class="mt-5 inline-flex text-[12px] text-[#4c6178] hover:text-[#384b60]">查看全部家务</RouterLink>
-    <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="load" />
+    <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="load" @refresh="load" />
   </section>
 </template>

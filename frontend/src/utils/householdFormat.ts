@@ -144,9 +144,12 @@ export function validateItemDraft(input: ItemDraftInput, today: string): Record<
   return errors
 }
 
+export const backfillRenewalMessage = '补记日期早于上次完成日期时不能同时填写新的到期日'
+
 export interface CompletionDraftInput {
   completedOn: string
   today: string
+  backfill: boolean
   renew: boolean
   newExpiryDate: string
   cost: unknown
@@ -161,8 +164,10 @@ export function validateCompletionDraft(input: CompletionDraftInput): Record<str
   else if (input.completedOn > input.today) errors.completedOn = '完成日期不能晚于今天'
 
   if (input.renew) {
-    if (!input.newExpiryDate) errors.newExpiryDate = '请填写新的到期日'
+    if (input.backfill) errors.newExpiryDate = backfillRenewalMessage
+    else if (!input.newExpiryDate) errors.newExpiryDate = '请填写新的到期日'
     else if (input.newExpiryDate <= input.today) errors.newExpiryDate = '新的到期日必须晚于今天'
+    else if (input.completedOn && input.newExpiryDate <= input.completedOn) errors.newExpiryDate = '新的到期日必须晚于完成日期'
   }
 
   const cost = draftText(input.cost)

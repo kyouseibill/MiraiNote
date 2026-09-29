@@ -94,7 +94,7 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
     {
       id: 4, householdId: 1, name: '护照', category: 'Document', location: null,
       modelSpec: null, itemType: 'OneOffExpiry', cycleValue: null, cycleUnit: null,
-      lastDoneDate: null, nextDueDate: shiftCalendarDay(today, 12), expiryDate: shiftCalendarDay(today, 12),
+      lastDoneDate: '2024-01-01', nextDueDate: shiftCalendarDay(today, 12), expiryDate: shiftCalendarDay(today, 12),
       leadDays: 30, assigneeMemberId: 1, assigneeName: 'Bill', consumableId: null, note: null,
       purchaseLink: null, isPaused: false, mileageCycleKm: null, aliases: [],
       createdAt: stamp, updatedAt: stamp,

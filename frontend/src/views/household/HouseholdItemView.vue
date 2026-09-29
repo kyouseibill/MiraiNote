@@ -168,7 +168,7 @@ async function remove() {
     </template>
 
     <HouseholdItemFormDialog :open="formOpen" mode="edit" :item="item" @close="formOpen = false" @saved="load" />
-    <HouseholdCompleteDialog :open="completeOpen" :item-id="item?.id ?? null" @close="completeOpen = false" @completed="load" />
+    <HouseholdCompleteDialog :open="completeOpen" :item-id="item?.id ?? null" @close="completeOpen = false" @completed="load" @refresh="load" />
     <AppDialog :open="confirmDelete" title="删除事项" :description="item ? `确定删除「${item.name}」？` : ''" :busy="busy" @close="confirmDelete = false">
       <template #footer>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="confirmDelete = false">取消</button>

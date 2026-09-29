@@ -46,8 +46,11 @@ export const householdApi = {
 
   deleteItem: (id: number) => unwrap<null>(http.delete(`/household/items/${id}`)),
 
-  completeItem: (id: number, payload: CompleteHouseholdItemPayload) =>
-    unwrap<CompleteHouseholdItemResult>(http.post(`/household/items/${id}/complete`, payload)),
+  completeItem: (id: number, payload: CompleteHouseholdItemPayload, idempotencyKey: string) =>
+    unwrap<CompleteHouseholdItemResult>(http.post(`/household/items/${id}/complete`, payload, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      skipErrorToastStatuses: [409, 422],
+    })),
 
   history: (id: number) => unwrap<HouseholdCompletion[]>(http.get(`/household/items/${id}/history`)),
 
