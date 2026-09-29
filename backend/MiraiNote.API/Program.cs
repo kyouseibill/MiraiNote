@@ -29,11 +29,16 @@ builder.Host.UseSerilog();
 
 // ===== Services =====
 // 注册 UTC DateTime JSON 转换器：确保 EF Core 返回的 DateTimeKind.Unspecified 序列化时带 Z 后缀
-builder.Services.AddControllers().AddJsonOptions(opts =>
-{
-    opts.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
-    opts.JsonSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
-});
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = ChineseModelStateResponses.Create;
+    })
+    .AddJsonOptions(opts =>
+    {
+        opts.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+        opts.JsonSerializerOptions.Converters.Add(new UtcNullableDateTimeJsonConverter());
+    });
 
 builder.Services.AddDataLayer(builder.Configuration);
 builder.Services.AddCoreLayer();

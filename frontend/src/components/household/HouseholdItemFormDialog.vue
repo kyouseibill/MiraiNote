@@ -54,8 +54,9 @@ const form = reactive({
 
 const today = ref(shanghaiToday())
 
-function refreshToday() {
-  today.value = shanghaiToday()
+async function refreshToday() {
+  if (!store.previewMode) await store.fetchServerToday()
+  today.value = store.calendarToday
 }
 
 const groupedTemplates = computed(() => HOUSEHOLD_CATEGORIES
@@ -123,7 +124,7 @@ async function applyTemplate(template: HouseholdItemTemplate) {
   form.itemType = template.itemType
   form.cycleValue = template.cycleValue != null ? String(template.cycleValue) : ''
   form.cycleUnit = template.cycleUnit ?? 'Month'
-  refreshToday()
+  await refreshToday()
   form.lastDoneDate = template.itemType === 'Recurring' ? today.value : ''
   form.expiryDate = ''
   errors.value = {}
@@ -137,7 +138,7 @@ function detachTemplate() {
 }
 
 async function prepareDialog() {
-  refreshToday()
+  await refreshToday()
   localMode.value = props.mode
   selectedTemplate.value = null
   showMore.value = props.mode === 'edit'
@@ -179,7 +180,7 @@ async function submit() {
     return
   }
   serverError.value = ''
-  refreshToday()
+  await refreshToday()
   const draftErrors = validateItemDraft({
     name: form.name,
     itemType: form.itemType,
@@ -313,6 +314,7 @@ async function submit() {
       <div v-else>
         <label class="text-[13px] font-medium" for="item-expiry">到期日</label>
         <input id="item-expiry" ref="dateInput" v-model="form.expiryDate" data-dialog-autofocus type="date" class="form-input mt-1.5 h-10" :disabled="submitting" />
+        <p class="mt-1 text-[11px] text-[var(--mn-muted)]">可以填写过去的日期，用来补录已经过期的证件或保修。</p>
         <p v-if="errors.expiryDate" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.expiryDate }}</p>
       </div>
 

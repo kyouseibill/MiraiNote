@@ -12,8 +12,10 @@ import type {
   HouseholdItemQuery,
   HouseholdItemTemplate,
   HouseholdMember,
+  HouseholdServerToday,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
+  UpdateHouseholdConsumablePayload,
   UpdateHouseholdItemPayload,
 } from '@/types/household'
 
@@ -21,6 +23,7 @@ function itemParams(query: HouseholdItemQuery = {}) {
   const params: Record<string, string | boolean> = {}
   if (query.category) params.category = query.category
   if (query.includePaused != null) params.includePaused = query.includePaused
+  if (query.archivedOnly) params.archivedOnly = true
   return params
 }
 
@@ -46,6 +49,13 @@ export const householdApi = {
 
   deleteItem: (id: number) => unwrap<null>(http.delete(`/household/items/${id}`)),
 
+  restoreItem: (id: number, expiryDate: string) =>
+    unwrap<HouseholdItem>(http.post(`/household/items/${id}/restore`, { expiryDate })),
+
+  serverToday: () => unwrap<HouseholdServerToday>(http.get('/household/server-today', {
+    skipErrorToastStatuses: [404],
+  })),
+
   completeItem: (id: number, payload: CompleteHouseholdItemPayload, idempotencyKey: string) =>
     unwrap<CompleteHouseholdItemResult>(http.post(`/household/items/${id}/complete`, payload, {
       headers: { 'Idempotency-Key': idempotencyKey },
@@ -68,6 +78,9 @@ export const householdApi = {
 
   createConsumable: (payload: SaveHouseholdConsumablePayload) =>
     unwrap<HouseholdConsumable>(http.post('/household/consumables', payload)),
+
+  updateConsumable: (id: number, payload: UpdateHouseholdConsumablePayload) =>
+    unwrap<HouseholdConsumable>(http.put(`/household/consumables/${id}`, payload)),
 
   deleteConsumable: (id: number) => unwrap<null>(http.delete(`/household/consumables/${id}`)),
 

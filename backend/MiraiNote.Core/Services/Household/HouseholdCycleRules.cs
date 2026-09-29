@@ -40,6 +40,9 @@ public sealed class HouseholdCycleRules
 
     public DateOnly Today() => ShanghaiClock.ToShanghaiDate(_clock.UtcNow, _shanghai);
 
+    /// <summary>家务模块的当前 UTC。完成去重窗口用它，不用 <see cref="DateTime.UtcNow"/>。</summary>
+    public DateTimeOffset UtcNow => _clock.UtcNow;
+
     /// <summary>缺省今天（上海）。晚于今天则 400。</summary>
     public DateOnly ResolveCompletionDate(DateOnly? requested)
     {
@@ -50,13 +53,19 @@ public sealed class HouseholdCycleRules
         return date;
     }
 
+    /// <summary>新的到期日必须晚于 Asia/Shanghai 的今天。恢复归档和续期都用这一条。</summary>
+    public void EnsureFutureExpiry(DateOnly expiry)
+    {
+        if (expiry <= Today())
+            throw new BusinessException("新的到期日必须晚于今天", 400);
+    }
+
     /// <summary>
     /// 续期到期日必须晚于 Asia/Shanghai 的今天，并且晚于本次完成日期。
     /// </summary>
     public void EnsureRenewalExpiry(DateOnly newExpiry, DateOnly completedOn)
     {
-        if (newExpiry <= Today())
-            throw new BusinessException("新的到期日必须晚于今天", 400);
+        EnsureFutureExpiry(newExpiry);
         if (newExpiry <= completedOn)
             throw new BusinessException("新的到期日必须晚于完成日期", 400);
     }
@@ -92,11 +101,11 @@ public sealed class HouseholdCycleRules
     /// overdue：到期日早于今天。
     /// within7Days：今天到今天+7（含）。
     /// within30Days：今天+8 到今天+30（含）。
-    /// 更远的日期和暂停事项返回 <see cref="UpcomingGroup.None"/>。
+    /// 更远的日期、暂停事项和已归档事项返回 <see cref="UpcomingGroup.None"/>。
     /// </summary>
-    public static UpcomingGroup Classify(DateOnly due, DateOnly today, bool isPaused)
+    public static UpcomingGroup Classify(DateOnly due, DateOnly today, bool isPaused, bool isArchived = false)
     {
-        if (isPaused)
+        if (isPaused || isArchived)
             return UpcomingGroup.None;
         if (due < today)
             return UpcomingGroup.Overdue;

@@ -3,15 +3,18 @@ import { ref } from 'vue'
 import AppDialog from '@/components/AppDialog.vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import { draftText, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
+import type { HouseholdConsumable } from '@/types/household'
 
 const { toast, store, report } = useHouseholdFeedback()
 const open = ref(false)
+const editingId = ref<number | null>(null)
 const name = ref('')
 const specModel = ref('')
 const stock = ref('0')
 const threshold = ref('1')
 const unit = ref('')
 const purchaseLink = ref('')
+const note = ref('')
 const quantities = ref<Record<number, string | number>>({})
 const busy = ref(false)
 const formError = ref('')
@@ -25,8 +28,29 @@ function resetForm() {
   threshold.value = '1'
   unit.value = ''
   purchaseLink.value = ''
+  note.value = ''
   formError.value = ''
   linkError.value = ''
+  editingId.value = null
+}
+
+function openCreate() {
+  resetForm()
+  open.value = true
+}
+
+function openEdit(item: HouseholdConsumable) {
+  editingId.value = item.id
+  name.value = item.name
+  specModel.value = item.specModel ?? ''
+  stock.value = String(item.currentStock)
+  threshold.value = String(item.restockThreshold)
+  unit.value = item.unit ?? ''
+  purchaseLink.value = item.purchaseLink ?? ''
+  note.value = item.note ?? ''
+  formError.value = ''
+  linkError.value = ''
+  open.value = true
 }
 
 async function createConsumable() {
@@ -37,22 +61,29 @@ async function createConsumable() {
     formError.value = '请填写耗材名称'
     return
   }
-  if (!/^\d+$/.test(draftText(stock.value)) || !/^\d+$/.test(draftText(threshold.value))) {
-    formError.value = '库存和补货阈值需为 0 或正整数'
+  const editing = editingId.value != null
+  if (!editing && !/^\d+$/.test(draftText(stock.value))) {
+    formError.value = '库存需为 0 或正整数'
+    return
+  }
+  if (!/^\d+$/.test(draftText(threshold.value))) {
+    formError.value = '补货阈值需为 0 或正整数'
     return
   }
   if (linkError.value) return
   busy.value = true
   try {
-    await store.createConsumable({
+    const fields = {
       name: trimmed,
       specModel: specModel.value.trim() || null,
-      currentStock: Number(stock.value),
       restockThreshold: Number(threshold.value),
       unit: unit.value.trim() || null,
       purchaseLink: purchaseLink.value.trim() || null,
-    })
-    toast.success('已添加耗材')
+      note: note.value.trim() || null,
+    }
+    if (!editing) await store.createConsumable({ ...fields, currentStock: Number(stock.value) })
+    else await store.updateConsumable(editingId.value!, fields)
+    toast.success(editingId.value == null ? '已添加耗材' : '已更新耗材')
     open.value = false
     resetForm()
   } catch (error) {
@@ -101,7 +132,7 @@ async function remove() {
   <div>
     <div class="mb-4 flex items-center justify-between gap-3">
       <p class="text-[12px] text-[var(--mn-muted)]">库存小于或等于补货阈值时标为需补货。补货数量会加到当前库存上。</p>
-      <button type="button" class="h-9 shrink-0 rounded-md bg-[var(--mn-indigo)] px-3 text-[13px] text-white" @click="open = true">添加耗材</button>
+      <button type="button" class="h-9 shrink-0 rounded-md bg-[var(--mn-indigo)] px-3 text-[13px] text-white" @click="openCreate">添加耗材</button>
     </div>
     <p v-if="!store.consumables.length" class="rounded-md border border-dashed border-[var(--mn-line)] px-4 py-10 text-center text-[13px] text-[var(--mn-muted)]">还没有耗材。</p>
     <ul v-else class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
@@ -113,7 +144,7 @@ async function remove() {
             库存 {{ item.currentStock }}{{ item.unit || '' }} · 阈值 {{ item.restockThreshold }}
             <span v-if="item.isLowStock" class="ml-2 text-[#b4493f]">需补货</span>
           </p>
-          <a v-if="safeHttpUrl(item.purchaseLink)" :href="safeHttpUrl(item.purchaseLink) || undefined" class="mt-1 inline-block text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">购买链接</a>
+          <a v-if="safeHttpUrl(item.purchaseLink)" :href="safeHttpUrl(item.purchaseLink) || undefined" class="mt-1 inline-block break-all text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">{{ safeHttpUrl(item.purchaseLink) }}</a>
           <span v-else-if="item.purchaseLink" class="mt-1 inline-block break-all text-[12px] text-[var(--mn-muted)]">{{ item.purchaseLink }}</span>
         </div>
         <form class="flex items-center gap-2" @submit.prevent="restock(item.id)">
@@ -121,11 +152,12 @@ async function remove() {
           <input :id="`restock-${item.id}`" v-model="quantities[item.id]" type="number" min="1" step="1" class="form-input h-9 w-20" placeholder="1" :disabled="busy" />
           <button type="submit" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px]" :disabled="busy">补货</button>
         </form>
+        <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="openEdit(item)">编辑</button>
         <button v-if="store.isAdmin" type="button" class="h-9 px-2 text-[12px] text-[#b4493f] hover:underline" :disabled="busy" @click="deletingId = item.id">删除</button>
       </li>
     </ul>
 
-    <AppDialog :open="open" title="添加耗材" description="名称和当前库存就够用，阈值默认 1。" :busy="busy" @close="open = false">
+    <AppDialog :open="open" :title="editingId == null ? '添加耗材' : '编辑耗材'" :description="editingId == null ? '名称和当前库存就够用，阈值默认 1。' : '可以改名称、规格、阈值、单位、购买链接和备注。库存不能在这里改。'" :busy="busy" @close="open = false">
       <p v-if="formError" role="alert" class="mb-3 text-[12px] text-[#9d3b34]">{{ formError }}</p>
       <form class="space-y-3" @submit.prevent="createConsumable">
         <div>
@@ -133,9 +165,13 @@ async function remove() {
           <input id="consumable-name" v-model="name" data-dialog-autofocus class="form-input mt-1.5 h-10" :disabled="busy" />
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div>
+          <div v-if="editingId == null">
             <label class="text-[13px] font-medium" for="consumable-stock">当前库存</label>
             <input id="consumable-stock" v-model="stock" type="number" min="0" step="1" class="form-input mt-1.5 h-10" :disabled="busy" />
+          </div>
+          <div v-else>
+            <p class="text-[13px] font-medium">当前库存</p>
+            <p id="consumable-stock" class="mt-1.5 flex h-10 items-center text-[14px] tabular-nums text-[var(--mn-ink)]">{{ stock }}<span class="ml-2 text-[12px] font-normal text-[var(--mn-muted)]">只读</span></p>
           </div>
           <div>
             <label class="text-[13px] font-medium" for="consumable-threshold">补货阈值</label>
@@ -157,10 +193,14 @@ async function remove() {
           <input id="consumable-link" v-model="purchaseLink" class="form-input mt-1.5 h-10" maxlength="500" :disabled="busy" />
           <p v-if="linkError" class="mt-1 text-[12px] text-[#9d3b34]">{{ linkError }}</p>
         </div>
+        <div>
+          <label class="text-[13px] font-medium" for="consumable-note">备注</label>
+          <textarea id="consumable-note" v-model="note" rows="2" class="form-input mt-1.5 resize-none py-2" :disabled="busy" />
+        </div>
       </form>
       <template #footer>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="open = false">取消</button>
-        <button type="button" class="h-9 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] text-white disabled:opacity-50" :disabled="busy" @click="createConsumable">保存</button>
+        <button type="button" class="h-9 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] text-white disabled:opacity-50" :disabled="busy" @click="createConsumable">{{ editingId == null ? '保存' : '更新' }}</button>
       </template>
     </AppDialog>
 

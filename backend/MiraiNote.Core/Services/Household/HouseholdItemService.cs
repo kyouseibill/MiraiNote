@@ -17,6 +17,7 @@ public interface IHouseholdItemService
     Task<HouseholdItemDto> UpdateAsync(int userId, int id, UpdateHouseholdItemRequest request, CancellationToken ct = default);
     Task<HouseholdItemDto> SetPausedAsync(int userId, int id, bool paused, CancellationToken ct = default);
     Task DeleteAsync(int userId, int id, CancellationToken ct = default);
+    Task<HouseholdItemDto> RestoreAsync(int userId, int id, RestoreHouseholdItemRequest request, CancellationToken ct = default);
     Task<CompleteHouseholdItemResult> CompleteAsync(
         int userId, int id, CompleteHouseholdItemRequest request, string? idempotencyKey = null, CancellationToken ct = default);
     Task<List<HouseholdCompletionDto>> HistoryAsync(int userId, int id, CancellationToken ct = default);
@@ -33,6 +34,20 @@ public sealed class HouseholdItemService : IHouseholdItemService
     public const string IdempotencyBodyMismatchMessage = "同一 Idempotency-Key 不能用于不同的完成请求";
 
     public const string BackfillRenewalMessage = "补记日期早于上次完成日期时不能同时填写新的到期日";
+
+    public const string MemberCannotCreatePausedMessage = "只有管理员可以创建已暂停的事项";
+
+    public const string AssigneeMustBelongMessage = "负责人必须是本家庭成员";
+
+    public const string ActorMustBelongMessage = "执行人必须是本家庭成员";
+
+    public const string ConsumableMustBelongMessage = "耗材必须属于本家庭";
+
+    public const string RestoreArchivedOnlyMessage = "只有已归档的一次性事项可以恢复";
+
+    public const string RestoreExpiryRequiredMessage = "请填写新的到期日";
+
+    public const string ArchivedReadOnlyMessage = "已归档事项请先由管理员恢复";
 
     /// <summary>
     /// 只在当前进程内串行化同一事项的完成。多实例部署时这把锁不跨进程，
@@ -66,6 +81,9 @@ public sealed class HouseholdItemService : IHouseholdItemService
         query ??= new HouseholdItemListQuery();
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var items = _db.HouseholdItems.AsNoTracking().Where(i => i.HouseholdId == ctx.Household.Id);
+        items = query.ArchivedOnly
+            ? items.Where(i => i.IsArchived)
+            : items.Where(i => !i.IsArchived);
         if (!query.IncludePaused)
             items = items.Where(i => !i.IsPaused);
         if (query.Category is HouseholdCategory category)
@@ -96,12 +114,13 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        EnsureNotArchived(entity);
         _policy.EnsureCanUpdateItem(ctx.IsAdmin);
         var draft = Normalize(request.Name, request.Category, request.Location, request.ModelSpec, request.ItemType,
             request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
             request.AssigneeMemberId, request.ConsumableId, request.Note, request.PurchaseLink,
             request.MileageCycleKm, request.Aliases);
-        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, "负责人必须是本家庭成员", ct);
+        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, AssigneeMustBelongMessage, ct);
         await EnsureConsumableOfHouseholdAsync(ctx.Household.Id, draft.ConsumableId, ct);
         Apply(entity, draft);
         await _db.SaveChangesAsync(ct);
@@ -112,6 +131,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        EnsureNotArchived(entity);
         _policy.EnsureCanPauseItem(ctx.IsAdmin);
         entity.IsPaused = paused;
         await _db.SaveChangesAsync(ct);
@@ -125,6 +145,26 @@ public sealed class HouseholdItemService : IHouseholdItemService
         _policy.EnsureCanDeleteItem(ctx.IsAdmin);
         entity.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<HouseholdItemDto> RestoreAsync(
+        int userId, int id, RestoreHouseholdItemRequest request, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        _policy.EnsureCanRestoreArchivedItem(ctx.IsAdmin);
+        var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        if (entity.ItemType != HouseholdItemType.OneOffExpiry || !entity.IsArchived)
+            throw new BusinessException(RestoreArchivedOnlyMessage, 400);
+
+        if (request.ExpiryDate is not DateOnly expiry)
+            throw new BusinessException(RestoreExpiryRequiredMessage, 400);
+
+        _rules.EnsureFutureExpiry(expiry);
+        entity.ExpiryDate = expiry;
+        entity.NextDueDate = expiry;
+        entity.IsArchived = false;
+        await _db.SaveChangesAsync(ct);
+        return await MapOneAsync(entity, ct);
     }
 
     public async Task<CompleteHouseholdItemResult> CompleteAsync(
@@ -167,6 +207,10 @@ public sealed class HouseholdItemService : IHouseholdItemService
         string? key,
         CancellationToken ct)
     {
+        // 指纹用原始请求体，并带上当前登录用户。完成日期、执行人等默认值要等幂等比较之后再补，
+        // 否则同一 key 跨过北京 0 点重发时，服务器补出来的日期变了，会被当成另一个请求。
+        // 两个成员在去重窗口内各自完成时，登录用户不同，指纹不同，不会互相 409。
+        var bodyHash = SubmissionFingerprint(request, userId);
         var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
         var cost = NormalizeCost(request.Cost);
         var note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
@@ -177,9 +221,8 @@ public sealed class HouseholdItemService : IHouseholdItemService
         var member = await RequireMemberAsync(
             householdId,
             request.CompletedByMemberId ?? callerMemberId,
-            "执行人必须是本家庭成员",
+            ActorMustBelongMessage,
             ct);
-        var bodyHash = SubmissionFingerprint(request, completedOn, member.Id, cost, note, purchaseLink, photos);
 
         if (key != null)
         {
@@ -187,6 +230,9 @@ public sealed class HouseholdItemService : IHouseholdItemService
             if (existing != null)
                 return await ReplayOrRejectAsync(householdId, existing, bodyHash, ct);
         }
+
+        // 归档只拦新的完成。同一 Idempotency-Key 的重放要先返回原结果，换内容仍是 422。
+        EnsureNotArchived(item);
 
         if (item.ItemType == HouseholdItemType.Recurring && request.NewExpiryDate != null)
             throw new BusinessException("周期型事项不能填写新的到期日", 400);
@@ -208,31 +254,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         {
             // 耗材必须在本次委托里重新加载。重试时不能沿用上一次跟踪到的库存。
             var deduction = await DeductAsync(householdId, item, request, ct);
-            var advancesSchedule = item.LastDoneDate is not DateOnly last || completedOn >= last;
-            DateOnly? renewal = null;
-            if (advancesSchedule)
-            {
-                if (item.ItemType == HouseholdItemType.Recurring)
-                {
-                    if (item.CycleValue is not int cycle || item.CycleUnit is not HouseholdCycleUnit unit)
-                        throw new BusinessException("周期型事项缺少周期", 400);
-                    item.LastDoneDate = completedOn;
-                    item.NextDueDate = HouseholdCycleRules.AddCycle(completedOn, cycle, unit);
-                }
-                else
-                {
-                    if (item.ExpiryDate == null && request.NewExpiryDate == null)
-                        throw new BusinessException("一次性到期事项缺少到期日", 400);
-                    if (request.NewExpiryDate is DateOnly nextExpiry)
-                    {
-                        item.ExpiryDate = nextExpiry;
-                        item.NextDueDate = nextExpiry;
-                        renewal = nextExpiry;
-                    }
-
-                    item.LastDoneDate = completedOn;
-                }
-            }
+            var renewal = ApplyCompletionSchedule(item, completedOn, request.NewExpiryDate);
 
             var record = new HouseholdCompletionRecord
             {
@@ -252,7 +274,8 @@ public sealed class HouseholdItemService : IHouseholdItemService
                 IdempotencyUserId = key == null ? null : userId,
                 IdempotencyKey = key,
                 RequestBodyHash = bodyHash,
-                SubmissionFingerprint = bodyHash
+                SubmissionFingerprint = bodyHash,
+                CreatedAt = _rules.UtcNow.UtcDateTime
             };
             _db.HouseholdCompletionRecords.Add(record);
             await _db.SaveChangesAsync(ct);
@@ -308,6 +331,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         var items = _db.HouseholdItems.AsNoTracking()
             .Where(i => i.HouseholdId == ctx.Household.Id
                 && !i.IsPaused
+                && !i.IsArchived
                 && i.NextDueDate != null
                 && i.NextDueDate <= horizon);
         if (query.Category is HouseholdCategory category)
@@ -319,7 +343,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         foreach (var item in list)
         {
             var due = item.NextDueDate!.Value;
-            var group = HouseholdCycleRules.Classify(due, today, item.IsPaused);
+            var group = HouseholdCycleRules.Classify(due, today, item.IsPaused, item.IsArchived);
             if (group == UpcomingGroup.None)
                 continue;
 
@@ -410,7 +434,10 @@ public sealed class HouseholdItemService : IHouseholdItemService
             request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
             request.AssigneeMemberId, request.ConsumableId, request.Note, request.PurchaseLink,
             request.MileageCycleKm, request.Aliases);
-        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, "负责人必须是本家庭成员", ct);
+        if (request.IsPaused && !ctx.IsAdmin)
+            throw new BusinessException(MemberCannotCreatePausedMessage, 403);
+
+        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, AssigneeMustBelongMessage, ct);
         await EnsureConsumableOfHouseholdAsync(ctx.Household.Id, draft.ConsumableId, ct);
 
         var entity = new HouseholdItem
@@ -466,11 +493,9 @@ public sealed class HouseholdItemService : IHouseholdItemService
 
     private async Task<HouseholdMember> RequireMemberAsync(int householdId, int memberId, string message, CancellationToken ct)
     {
-        var member = await _db.HouseholdMembers.FirstOrDefaultAsync(m => m.Id == memberId, ct)
+        return await _db.HouseholdMembers
+            .FirstOrDefaultAsync(m => m.Id == memberId && m.HouseholdId == householdId, ct)
             ?? throw new BusinessException(message, 400);
-        if (member.HouseholdId != householdId)
-            throw new BusinessException(message, 403);
-        return member;
     }
 
     private async Task EnsureConsumableOfHouseholdAsync(int householdId, int? consumableId, CancellationToken ct)
@@ -478,11 +503,50 @@ public sealed class HouseholdItemService : IHouseholdItemService
         if (consumableId is not int id)
             return;
 
-        var consumable = await _db.HouseholdConsumables.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == id, ct)
-            ?? throw new BusinessException("耗材不存在", 400);
-        if (consumable.HouseholdId != householdId)
-            throw new BusinessException("不能关联其他家庭的耗材", 403);
+        var exists = await _db.HouseholdConsumables.AsNoTracking()
+            .AnyAsync(c => c.Id == id && c.HouseholdId == householdId, ct);
+        if (!exists)
+            throw new BusinessException(ConsumableMustBelongMessage, 400);
+    }
+
+    /// <summary>
+    /// 补记更早日期只写历史。完成日期与上次相同也只写历史，到期日不动。
+    /// 更晚的完成从实际完成日顺延。一次性事项不续期则归档。已归档事项在进入这里之前会被拒绝。暂停状态保持不变。
+    /// </summary>
+    private static DateOnly? ApplyCompletionSchedule(HouseholdItem item, DateOnly completedOn, DateOnly? newExpiry)
+    {
+        var earlier = item.LastDoneDate is DateOnly last && completedOn < last;
+        if (earlier)
+            return null;
+
+        var sameDay = item.LastDoneDate is DateOnly previous && completedOn == previous;
+        if (item.ItemType == HouseholdItemType.Recurring)
+        {
+            if (sameDay)
+                return null;
+            if (item.CycleValue is not int cycle || item.CycleUnit is not HouseholdCycleUnit unit)
+                throw new BusinessException("周期型事项缺少周期", 400);
+            item.LastDoneDate = completedOn;
+            item.NextDueDate = HouseholdCycleRules.AddCycle(completedOn, cycle, unit);
+            return null;
+        }
+
+        if (item.ExpiryDate == null && newExpiry == null)
+            throw new BusinessException("一次性到期事项缺少到期日", 400);
+
+        if (newExpiry is DateOnly nextExpiry)
+        {
+            item.ExpiryDate = nextExpiry;
+            item.NextDueDate = nextExpiry;
+            item.IsArchived = false;
+            item.LastDoneDate = completedOn;
+            return nextExpiry;
+        }
+
+        item.IsArchived = true;
+        if (!sameDay)
+            item.LastDoneDate = completedOn;
+        return null;
     }
 
     private static void Apply(HouseholdItem entity, HouseholdItemDraft draft)
@@ -576,6 +640,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         Note = item.Note,
         PurchaseLink = item.PurchaseLink,
         IsPaused = item.IsPaused,
+        IsArchived = item.IsArchived,
         MileageCycleKm = item.MileageCycleKm,
         Aliases = HouseholdAliases.Deserialize(item.AliasesJson),
         CreatedAt = item.CreatedAt,
@@ -612,15 +677,22 @@ public sealed class HouseholdItemService : IHouseholdItemService
         return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
     }
 
+    private static void EnsureNotArchived(HouseholdItem item)
+    {
+        if (item.IsArchived)
+            throw new BusinessException(ArchivedReadOnlyMessage, 400);
+    }
+
     private async Task RejectDuplicateSubmissionAsync(int itemId, string fingerprint, CancellationToken ct)
     {
-        var cutoff = DateTime.UtcNow.AddSeconds(-DuplicateCompletionWindowSeconds);
-        var recent = await _db.HouseholdCompletionRecords.AsNoTracking()
-            .Where(r => r.HouseholdItemId == itemId && r.CreatedAt >= cutoff)
-            .OrderByDescending(r => r.Id)
-            .Select(r => r.SubmissionFingerprint)
-            .FirstOrDefaultAsync(ct);
-        if (recent == fingerprint)
+        var now = _rules.UtcNow.UtcDateTime;
+        var cutoff = now.AddSeconds(-DuplicateCompletionWindowSeconds);
+        var duplicate = await _db.HouseholdCompletionRecords.AsNoTracking()
+            .AnyAsync(r => r.HouseholdItemId == itemId
+                && r.SubmissionFingerprint == fingerprint
+                && r.CreatedAt >= cutoff
+                && r.CreatedAt <= now, ct);
+        if (duplicate)
             throw new BusinessException("请勿重复提交", 409);
     }
 
@@ -671,24 +743,19 @@ public sealed class HouseholdItemService : IHouseholdItemService
         return trimmed;
     }
 
-    private static string SubmissionFingerprint(
-        CompleteHouseholdItemRequest request,
-        DateOnly completedOn,
-        int memberId,
-        decimal? cost,
-        string? note,
-        string? purchaseLink,
-        IReadOnlyList<string> photos)
+    private static string SubmissionFingerprint(CompleteHouseholdItemRequest request, int userId)
     {
+        var photos = request.PhotoRefs ?? [];
         var raw = string.Join('\u001f',
-            completedOn.ToString("yyyy-MM-dd"),
-            memberId.ToString(),
+            userId.ToString(),
+            request.CompletedOn?.ToString("yyyy-MM-dd") ?? "",
+            request.CompletedByMemberId?.ToString() ?? "",
             request.SkipConsumableDeduction ? "1" : "0",
             request.ConsumableQuantity?.ToString() ?? "",
             request.NewExpiryDate?.ToString("yyyy-MM-dd") ?? "",
-            cost?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
-            note ?? "",
-            purchaseLink ?? "",
+            request.Cost?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            request.Note ?? "",
+            request.PurchaseLink ?? "",
             string.Join('\u001e', photos));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
     }

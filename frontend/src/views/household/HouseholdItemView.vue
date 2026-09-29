@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { IconArrowLeft, IconLoader2 } from '@tabler/icons-vue'
 import AppDialog from '@/components/AppDialog.vue'
 import HouseholdCompleteDialog from '@/components/household/HouseholdCompleteDialog.vue'
 import HouseholdItemFormDialog from '@/components/household/HouseholdItemFormDialog.vue'
+import HouseholdRestoreDialog from '@/components/household/HouseholdRestoreDialog.vue'
 import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
@@ -18,7 +19,6 @@ import {
   itemStatus,
   itemTypeLabel,
   safeHttpUrl,
-  shanghaiToday,
 } from '@/utils/householdFormat'
 
 const route = useRoute()
@@ -30,11 +30,32 @@ const error = ref('')
 const formOpen = ref(false)
 const completeOpen = ref(false)
 const confirmDelete = ref(false)
+const restoreOpen = ref(false)
+const menuOpen = ref(false)
 const busy = ref(false)
+
+function closeMenu() {
+  menuOpen.value = false
+}
+
+function toggleMenu() {
+  menuOpen.value = !menuOpen.value
+}
+
+function onDocumentClick() {
+  menuOpen.value = false
+}
+
+watch(menuOpen, (open) => {
+  document.removeEventListener('click', onDocumentClick)
+  if (open) document.addEventListener('click', onDocumentClick)
+})
+
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 const itemId = computed(() => Number(route.params.id))
 const item = computed(() => store.currentItem)
-const status = computed(() => item.value ? itemStatus(item.value, shanghaiToday()) : null)
+const status = computed(() => item.value ? itemStatus(item.value, store.calendarToday) : null)
 
 async function load() {
   loading.value = true
@@ -47,8 +68,8 @@ async function load() {
   try {
     if (active.value) await store.loadWorkspace(true, asMember.value)
     else await store.loadWorkspace(false)
+    await store.fetchItem(itemId.value)
     await Promise.all([
-      store.fetchItem(itemId.value),
       store.fetchHistory(itemId.value),
       store.members.length ? Promise.resolve() : store.fetchMembers(),
       store.consumables.length ? Promise.resolve() : store.fetchConsumables(),
@@ -63,7 +84,7 @@ async function load() {
 watch(() => route.params.id, () => { void load() }, { immediate: true })
 
 async function togglePause() {
-  if (!item.value || !store.isAdmin || busy.value) return
+  if (!item.value || !store.isAdmin || item.value.isArchived || busy.value) return
   const pausing = !item.value.isPaused
   busy.value = true
   try {
@@ -115,11 +136,31 @@ async function remove() {
         </div>
         <p class="mt-3 text-[14px] text-[var(--mn-ink)]">下次到期日 {{ formatCalendarDate(item.nextDueDate) }}</p>
         <p class="mt-1 text-[12px] text-[var(--mn-muted)]">由服务器计算，页面不推算周期。</p>
-        <div class="mt-5 flex flex-wrap gap-2">
-          <button type="button" class="h-9 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] text-white" @click="completeOpen = true">已完成</button>
-          <button v-if="store.isAdmin" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="formOpen = true">编辑</button>
-          <button v-if="store.isAdmin" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="togglePause">{{ item.isPaused ? '恢复' : '暂停' }}</button>
-          <button v-if="store.isAdmin" type="button" class="h-9 px-3 text-[13px] text-[#b4493f]" :disabled="busy" @click="confirmDelete = true">删除</button>
+        <div class="mt-5 flex flex-wrap items-center gap-2">
+          <button v-if="!item.isArchived" type="button" class="h-9 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] text-white" @click="completeOpen = true">已完成</button>
+          <div v-if="store.isAdmin" class="hidden items-center gap-2 sm:flex">
+            <button v-if="item.isArchived" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="restoreOpen = true">恢复</button>
+            <button v-if="!item.isArchived" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="formOpen = true">编辑</button>
+            <button v-if="!item.isArchived" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="togglePause">{{ item.isPaused ? '恢复' : '暂停' }}</button>
+            <button type="button" class="h-9 px-3 text-[13px] text-[#b4493f]" :disabled="busy" @click="confirmDelete = true">删除</button>
+          </div>
+          <div v-if="store.isAdmin" class="relative sm:hidden">
+            <button
+              type="button"
+              class="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--mn-line)] text-[16px] leading-none"
+              :aria-label="`更多操作：${item.name}`"
+              aria-haspopup="menu"
+              :aria-expanded="menuOpen"
+              :disabled="busy"
+              @click.stop="toggleMenu"
+            >…</button>
+            <div v-if="menuOpen" role="menu" class="absolute right-0 top-10 z-20 min-w-[8.5rem] rounded-md border border-[var(--mn-line)] bg-white py-1 shadow-md" @click.stop>
+              <button v-if="item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="restoreOpen = true; closeMenu()">恢复</button>
+              <button v-if="!item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="formOpen = true; closeMenu()">编辑</button>
+              <button v-if="!item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="togglePause(); closeMenu()">{{ item.isPaused ? '恢复' : '暂停' }}</button>
+              <button type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] text-[#b4493f] hover:bg-[#fff5f3]" @click="confirmDelete = true; closeMenu()">删除</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -151,7 +192,7 @@ async function remove() {
           <li v-for="record in store.history" :key="record.id" class="py-4">
             <p class="text-[14px] text-[var(--mn-ink)]">
               <span class="tabular-nums">{{ formatCalendarDate(record.completedOn) }}</span>
-              <span class="ml-2 text-[13px] text-[var(--mn-muted)]">{{ record.completedByUsername }} 完成</span>
+              <span class="text-[13px] text-[var(--mn-muted)]"> · {{ record.completedByUsername }} 完成</span>
             </p>
             <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
               <template v-if="record.cost != null">费用 {{ formatCost(record.cost) }} · </template>
@@ -174,6 +215,7 @@ async function remove() {
 
     <HouseholdItemFormDialog :open="formOpen" mode="edit" :item="item" @close="formOpen = false" @saved="load" />
     <HouseholdCompleteDialog :open="completeOpen" :item-id="item?.id ?? null" @close="completeOpen = false" @completed="load" @refresh="load" />
+    <HouseholdRestoreDialog :open="restoreOpen" :item="item" @close="restoreOpen = false" @restored="load" />
     <AppDialog :open="confirmDelete" title="删除事项" :description="item ? `确定删除「${item.name}」？` : ''" :busy="busy" @close="confirmDelete = false">
       <template #footer>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="confirmDelete = false">取消</button>
