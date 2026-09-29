@@ -32,6 +32,12 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<WelcomeGreeting> WelcomeGreetings => Set<WelcomeGreeting>();
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
+    public DbSet<Household> Households => Set<Household>();
+    public DbSet<HouseholdMember> HouseholdMembers => Set<HouseholdMember>();
+    public DbSet<HouseholdItem> HouseholdItems => Set<HouseholdItem>();
+    public DbSet<HouseholdCompletionRecord> HouseholdCompletionRecords => Set<HouseholdCompletionRecord>();
+    public DbSet<HouseholdConsumable> HouseholdConsumables => Set<HouseholdConsumable>();
+    public DbSet<HouseholdItemTemplate> HouseholdItemTemplates => Set<HouseholdItemTemplate>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
@@ -298,6 +304,8 @@ public class MiraiNoteDbContext : DbContext
 
         modelBuilder.Entity<WelcomeGreeting>()
             .HasIndex(g => new { g.IsActive, g.SortOrder });
+
+        HouseholdModelConfiguration.Configure(modelBuilder);
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())

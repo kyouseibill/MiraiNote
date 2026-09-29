@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MiraiNote.Data.Context;
 
@@ -11,9 +12,11 @@ using MiraiNote.Data.Context;
 namespace MiraiNote.Data.Migrations
 {
     [DbContext(typeof(MiraiNoteDbContext))]
-    partial class MiraiNoteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260929185258_AddHouseholdCompletionIdempotency")]
+    partial class AddHouseholdCompletionIdempotency
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -632,9 +635,6 @@ namespace MiraiNote.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<int?>("IdempotencyUserId")
-                        .HasColumnType("int");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
@@ -655,10 +655,6 @@ namespace MiraiNote.Data.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<string>("RequestBodyHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
                     b.Property<string>("SubmissionFingerprint")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
@@ -675,7 +671,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("HouseholdItemId", "CompletedOn");
 
-                    b.HasIndex("HouseholdItemId", "IdempotencyUserId", "IdempotencyKey")
+                    b.HasIndex("HouseholdItemId", "IdempotencyKey")
                         .IsUnique()
                         .HasFilter("[IdempotencyKey] IS NOT NULL AND [IsDeleted] = 0");
 

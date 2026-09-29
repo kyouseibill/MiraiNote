@@ -5,6 +5,7 @@ using Microsoft.OpenApi.Models;
 using MiraiNote.API.Services;
 using MiraiNote.Core.Services;
 using MiraiNote.Core.Services.ChatModels;
+using MiraiNote.Core.Services.Household;
 using MiraiNote.Shared.Common;
 
 namespace MiraiNote.API;
@@ -41,6 +42,7 @@ public static class ApiDependencyInjection
         services.Configure<TavilyOptions>(configuration.GetSection(TavilyOptions.SectionName));
         services.Configure<WeatherOptions>(configuration.GetSection(WeatherOptions.SectionName));
         services.Configure<FileSystemOptions>(configuration.GetSection(FileSystemOptions.SectionName));
+        services.Configure<HouseholdOptions>(configuration.GetSection(HouseholdOptions.SectionName));
 
         // 当前用户上下文
         services.AddHttpContextAccessor();
