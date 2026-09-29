@@ -22,10 +22,14 @@ const busy = ref(false)
 const today = ref(store.calendarToday)
 const tomorrow = ref(shiftCalendarDay(store.calendarToday, 1))
 
-async function reset() {
+async function refreshClock() {
   if (!store.previewMode) await store.fetchServerToday()
   today.value = store.calendarToday
   tomorrow.value = shiftCalendarDay(today.value, 1)
+}
+
+async function reset() {
+  await refreshClock()
   expiryDate.value = ''
   error.value = ''
 }
@@ -36,7 +40,7 @@ watch(() => props.open, (open) => {
 
 async function submit() {
   if (!props.item || busy.value) return
-  await reset()
+  await refreshClock()
   if (!expiryDate.value) {
     error.value = '请填写新的到期日'
     return

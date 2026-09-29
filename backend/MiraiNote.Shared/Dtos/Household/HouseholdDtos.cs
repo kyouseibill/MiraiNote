@@ -262,10 +262,10 @@ public class CompleteHouseholdItemRequest
     public DateOnly? NewExpiryDate { get; set; }
 }
 
-/// <summary>恢复已归档的一次性事项。新的到期日必须晚于今天（Asia/Shanghai）。</summary>
+/// <summary>恢复已归档的一次性事项。新的到期日必须晚于今天（Asia/Shanghai）。不传则 400。</summary>
 public class RestoreHouseholdItemRequest
 {
-    public DateOnly ExpiryDate { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
 }
 
 public class HouseholdCompletionDto
@@ -320,7 +320,10 @@ public class SaveHouseholdConsumableRequest
 {
     public string Name { get; set; } = string.Empty;
     public string? SpecModel { get; set; }
+
+    /// <summary>只在创建时写入。更新接口忽略此字段，库存只通过补货和完成扣减变更。</summary>
     public int CurrentStock { get; set; }
+
     public int? RestockThreshold { get; set; }
     public string? Unit { get; set; }
     public string? PurchaseLink { get; set; }

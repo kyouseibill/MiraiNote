@@ -40,6 +40,9 @@ public sealed class HouseholdCycleRules
 
     public DateOnly Today() => ShanghaiClock.ToShanghaiDate(_clock.UtcNow, _shanghai);
 
+    /// <summary>家务模块的当前 UTC。完成去重窗口用它，不用 <see cref="DateTime.UtcNow"/>。</summary>
+    public DateTimeOffset UtcNow => _clock.UtcNow;
+
     /// <summary>缺省今天（上海）。晚于今天则 400。</summary>
     public DateOnly ResolveCompletionDate(DateOnly? requested)
     {

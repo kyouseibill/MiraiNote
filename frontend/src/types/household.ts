@@ -210,3 +210,12 @@ export interface SaveHouseholdConsumablePayload {
   purchaseLink?: string | null
   note?: string | null
 }
+
+export interface UpdateHouseholdConsumablePayload {
+  name: string
+  specModel?: string | null
+  restockThreshold?: number | null
+  unit?: string | null
+  purchaseLink?: string | null
+  note?: string | null
+}

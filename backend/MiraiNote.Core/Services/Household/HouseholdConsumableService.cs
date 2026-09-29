@@ -63,8 +63,7 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
-        var previous = entity.CurrentStock;
-        Apply(entity, request, previous);
+        ApplyFields(entity, request);
         await _db.SaveChangesAsync(ct);
         return ToDto(entity);
     }
@@ -116,20 +115,25 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         if (request.CurrentStock < 0)
             throw new BusinessException("库存不能为负", 400);
 
+        ApplyFields(entity, request);
+        entity.CurrentStock = request.CurrentStock;
+        if (entity.CurrentStock > previousStock)
+            entity.LowStockReminderSent = false;
+    }
+
+    /// <summary>更新不写库存。库存只通过补货和完成扣减变更。</summary>
+    private static void ApplyFields(HouseholdConsumable entity, SaveHouseholdConsumableRequest request)
+    {
         var threshold = request.RestockThreshold ?? HouseholdCycleRules.DefaultRestockThreshold;
         if (threshold < 0)
             throw new BusinessException("补货阈值不能为负", 400);
 
         entity.Name = HouseholdText.Require(request.Name, HouseholdFieldLimits.Name, "名称");
         entity.SpecModel = HouseholdText.Clean(request.SpecModel, HouseholdFieldLimits.ModelSpec, "规格型号");
-        entity.CurrentStock = request.CurrentStock;
         entity.RestockThreshold = threshold;
         entity.Unit = HouseholdText.Clean(request.Unit, HouseholdFieldLimits.Unit, "单位");
         entity.PurchaseLink = HouseholdText.CleanPurchaseLink(request.PurchaseLink);
         entity.Note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
-
-        if (entity.CurrentStock > previousStock)
-            entity.LowStockReminderSent = false;
     }
 
     private static HouseholdConsumableDto ToDto(HouseholdConsumable entity) => new()

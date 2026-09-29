@@ -15,6 +15,7 @@ import type {
   HouseholdServerToday,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
+  UpdateHouseholdConsumablePayload,
   UpdateHouseholdItemPayload,
 } from '@/types/household'
 
@@ -78,7 +79,7 @@ export const householdApi = {
   createConsumable: (payload: SaveHouseholdConsumablePayload) =>
     unwrap<HouseholdConsumable>(http.post('/household/consumables', payload)),
 
-  updateConsumable: (id: number, payload: SaveHouseholdConsumablePayload) =>
+  updateConsumable: (id: number, payload: UpdateHouseholdConsumablePayload) =>
     unwrap<HouseholdConsumable>(http.put(`/household/consumables/${id}`, payload)),
 
   deleteConsumable: (id: number) => unwrap<null>(http.delete(`/household/consumables/${id}`)),

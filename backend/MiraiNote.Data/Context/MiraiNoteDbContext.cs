@@ -323,7 +323,7 @@ public class MiraiNoteDbContext : DbContext
 
     /// <summary>
     /// 自动填充 BaseEntity 的审计字段：
-    /// - Added：CreatedAt/By 与 UpdatedAt/By 全部赋值
+    /// - Added：CreatedAt/By 与 UpdatedAt/By 全部赋值。若调用方已写入非默认 CreatedAt（家务完成记录用家务时钟），则保留该值。
     /// - Modified：仅更新 UpdatedAt/By
     /// 未登录场景 UserId=0，统一回退为 1（超级管理员）。
     /// </summary>
@@ -337,7 +337,8 @@ public class MiraiNoteDbContext : DbContext
         {
             if (entry.State == EntityState.Added)
             {
-                entry.Entity.CreatedAt = now;
+                if (entry.Entity.CreatedAt == default)
+                    entry.Entity.CreatedAt = now;
                 entry.Entity.CreatedBy = effectiveUserId;
                 entry.Entity.UpdatedAt = now;
                 entry.Entity.UpdatedBy = effectiveUserId;

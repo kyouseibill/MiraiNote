@@ -45,6 +45,10 @@ public sealed class HouseholdItemService : IHouseholdItemService
 
     public const string RestoreArchivedOnlyMessage = "只有已归档的一次性事项可以恢复";
 
+    public const string RestoreExpiryRequiredMessage = "请填写新的到期日";
+
+    public const string ArchivedReadOnlyMessage = "已归档事项请先由管理员恢复";
+
     /// <summary>
     /// 只在当前进程内串行化同一事项的完成。多实例部署时这把锁不跨进程，
     /// 跨实例由（用户、事项、Idempotency-Key）唯一索引兜住。空闲后从字典移除，避免事项 Id 无限堆积。
@@ -110,6 +114,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        EnsureNotArchived(entity);
         _policy.EnsureCanUpdateItem(ctx.IsAdmin);
         var draft = Normalize(request.Name, request.Category, request.Location, request.ModelSpec, request.ItemType,
             request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
@@ -126,6 +131,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        EnsureNotArchived(entity);
         _policy.EnsureCanPauseItem(ctx.IsAdmin);
         entity.IsPaused = paused;
         await _db.SaveChangesAsync(ct);
@@ -150,9 +156,12 @@ public sealed class HouseholdItemService : IHouseholdItemService
         if (entity.ItemType != HouseholdItemType.OneOffExpiry || !entity.IsArchived)
             throw new BusinessException(RestoreArchivedOnlyMessage, 400);
 
-        _rules.EnsureFutureExpiry(request.ExpiryDate);
-        entity.ExpiryDate = request.ExpiryDate;
-        entity.NextDueDate = request.ExpiryDate;
+        if (request.ExpiryDate is not DateOnly expiry)
+            throw new BusinessException(RestoreExpiryRequiredMessage, 400);
+
+        _rules.EnsureFutureExpiry(expiry);
+        entity.ExpiryDate = expiry;
+        entity.NextDueDate = expiry;
         entity.IsArchived = false;
         await _db.SaveChangesAsync(ct);
         return await MapOneAsync(entity, ct);
@@ -198,9 +207,10 @@ public sealed class HouseholdItemService : IHouseholdItemService
         string? key,
         CancellationToken ct)
     {
-        // 指纹用原始请求体。完成日期、执行人等默认值要等幂等比较之后再补，
+        // 指纹用原始请求体，并带上当前登录用户。完成日期、执行人等默认值要等幂等比较之后再补，
         // 否则同一 key 跨过北京 0 点重发时，服务器补出来的日期变了，会被当成另一个请求。
-        var bodyHash = SubmissionFingerprint(request);
+        // 两个成员在去重窗口内各自完成时，登录用户不同，指纹不同，不会互相 409。
+        var bodyHash = SubmissionFingerprint(request, userId);
         var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
         var cost = NormalizeCost(request.Cost);
         var note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
@@ -208,6 +218,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
 
         var item = await LoadAsync(householdId, id, tracking: true, ct);
+        EnsureNotArchived(item);
         var member = await RequireMemberAsync(
             householdId,
             request.CompletedByMemberId ?? callerMemberId,
@@ -261,7 +272,8 @@ public sealed class HouseholdItemService : IHouseholdItemService
                 IdempotencyUserId = key == null ? null : userId,
                 IdempotencyKey = key,
                 RequestBodyHash = bodyHash,
-                SubmissionFingerprint = bodyHash
+                SubmissionFingerprint = bodyHash,
+                CreatedAt = _rules.UtcNow.UtcDateTime
             };
             _db.HouseholdCompletionRecords.Add(record);
             await _db.SaveChangesAsync(ct);
@@ -497,7 +509,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
 
     /// <summary>
     /// 补记更早日期只写历史。完成日期与上次相同也只写历史，到期日不动。
-    /// 更晚的完成从实际完成日顺延。一次性事项不续期则归档，续期则取消归档。暂停状态保持不变。
+    /// 更晚的完成从实际完成日顺延。一次性事项不续期则归档。已归档事项在进入这里之前会被拒绝。暂停状态保持不变。
     /// </summary>
     private static DateOnly? ApplyCompletionSchedule(HouseholdItem item, DateOnly completedOn, DateOnly? newExpiry)
     {
@@ -663,9 +675,15 @@ public sealed class HouseholdItemService : IHouseholdItemService
         return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
     }
 
+    private static void EnsureNotArchived(HouseholdItem item)
+    {
+        if (item.IsArchived)
+            throw new BusinessException(ArchivedReadOnlyMessage, 400);
+    }
+
     private async Task RejectDuplicateSubmissionAsync(int itemId, string fingerprint, CancellationToken ct)
     {
-        var cutoff = DateTime.UtcNow.AddSeconds(-DuplicateCompletionWindowSeconds);
+        var cutoff = _rules.UtcNow.UtcDateTime.AddSeconds(-DuplicateCompletionWindowSeconds);
         var recent = await _db.HouseholdCompletionRecords.AsNoTracking()
             .Where(r => r.HouseholdItemId == itemId && r.CreatedAt >= cutoff)
             .OrderByDescending(r => r.Id)
@@ -722,10 +740,11 @@ public sealed class HouseholdItemService : IHouseholdItemService
         return trimmed;
     }
 
-    private static string SubmissionFingerprint(CompleteHouseholdItemRequest request)
+    private static string SubmissionFingerprint(CompleteHouseholdItemRequest request, int userId)
     {
         var photos = request.PhotoRefs ?? [];
         var raw = string.Join('\u001f',
+            userId.ToString(),
             request.CompletedOn?.ToString("yyyy-MM-dd") ?? "",
             request.CompletedByMemberId?.ToString() ?? "",
             request.SkipConsumableDeduction ? "1" : "0",

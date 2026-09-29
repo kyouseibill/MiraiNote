@@ -61,24 +61,28 @@ async function createConsumable() {
     formError.value = '请填写耗材名称'
     return
   }
-  if (!/^\d+$/.test(draftText(stock.value)) || !/^\d+$/.test(draftText(threshold.value))) {
-    formError.value = '库存和补货阈值需为 0 或正整数'
+  const editing = editingId.value != null
+  if (!editing && !/^\d+$/.test(draftText(stock.value))) {
+    formError.value = '库存需为 0 或正整数'
+    return
+  }
+  if (!/^\d+$/.test(draftText(threshold.value))) {
+    formError.value = '补货阈值需为 0 或正整数'
     return
   }
   if (linkError.value) return
   busy.value = true
   try {
-    const payload = {
+    const fields = {
       name: trimmed,
       specModel: specModel.value.trim() || null,
-      currentStock: Number(stock.value),
       restockThreshold: Number(threshold.value),
       unit: unit.value.trim() || null,
       purchaseLink: purchaseLink.value.trim() || null,
       note: note.value.trim() || null,
     }
-    if (editingId.value == null) await store.createConsumable(payload)
-    else await store.updateConsumable(editingId.value, payload)
+    if (!editing) await store.createConsumable({ ...fields, currentStock: Number(stock.value) })
+    else await store.updateConsumable(editingId.value!, fields)
     toast.success(editingId.value == null ? '已添加耗材' : '已更新耗材')
     open.value = false
     resetForm()
@@ -153,7 +157,7 @@ async function remove() {
       </li>
     </ul>
 
-    <AppDialog :open="open" :title="editingId == null ? '添加耗材' : '编辑耗材'" :description="editingId == null ? '名称和当前库存就够用，阈值默认 1。' : '可以改名称、规格、阈值、单位、购买链接和备注。'" :busy="busy" @close="open = false">
+    <AppDialog :open="open" :title="editingId == null ? '添加耗材' : '编辑耗材'" :description="editingId == null ? '名称和当前库存就够用，阈值默认 1。' : '可以改名称、规格、阈值、单位、购买链接和备注。库存不能在这里改。'" :busy="busy" @close="open = false">
       <p v-if="formError" role="alert" class="mb-3 text-[12px] text-[#9d3b34]">{{ formError }}</p>
       <form class="space-y-3" @submit.prevent="createConsumable">
         <div>
@@ -161,9 +165,13 @@ async function remove() {
           <input id="consumable-name" v-model="name" data-dialog-autofocus class="form-input mt-1.5 h-10" :disabled="busy" />
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div>
+          <div v-if="editingId == null">
             <label class="text-[13px] font-medium" for="consumable-stock">当前库存</label>
             <input id="consumable-stock" v-model="stock" type="number" min="0" step="1" class="form-input mt-1.5 h-10" :disabled="busy" />
+          </div>
+          <div v-else>
+            <p class="text-[13px] font-medium">当前库存</p>
+            <p id="consumable-stock" class="mt-1.5 flex h-10 items-center text-[14px] tabular-nums text-[var(--mn-ink)]">{{ stock }}<span class="ml-2 text-[12px] font-normal text-[var(--mn-muted)]">只读</span></p>
           </div>
           <div>
             <label class="text-[13px] font-medium" for="consumable-threshold">补货阈值</label>

@@ -100,14 +100,14 @@ function openCreate(mode: 'create' | 'template') {
 }
 
 function openEdit(item: HouseholdItem) {
-  if (!store.isAdmin) return
+  if (!store.isAdmin || item.isArchived) return
   editing.value = item
   formMode.value = 'edit'
   formOpen.value = true
 }
 
 async function togglePause(item: HouseholdItem) {
-  if (!store.isAdmin || busy.value) return
+  if (!store.isAdmin || item.isArchived || busy.value) return
   busy.value = true
   try {
     await store.setPaused(item.id, !item.isPaused)
@@ -210,10 +210,10 @@ function statusOf(item: HouseholdItem) {
             </p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
-            <button type="button" class="h-8 rounded-md bg-[var(--mn-indigo)] px-3 text-[12px] text-white" :disabled="busy" @click="completeId = item.id">已完成</button>
+            <button v-if="!item.isArchived" type="button" class="h-8 rounded-md bg-[var(--mn-indigo)] px-3 text-[12px] text-white" :disabled="busy" @click="completeId = item.id">已完成</button>
             <div v-if="store.isAdmin" class="hidden items-center gap-2 sm:flex">
               <button v-if="item.isArchived" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="restoring = item">恢复</button>
-              <button type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="openEdit(item)">编辑</button>
+              <button v-if="!item.isArchived" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="openEdit(item)">编辑</button>
               <button v-if="!item.isArchived" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="togglePause(item)">{{ item.isPaused ? '恢复' : '暂停' }}</button>
               <button type="button" class="h-8 px-2 text-[12px] text-[#b4493f]" :disabled="busy" @click="deleting = item">删除</button>
             </div>
@@ -229,7 +229,7 @@ function statusOf(item: HouseholdItem) {
               >…</button>
               <div v-if="menuId === item.id" role="menu" class="absolute right-0 top-9 z-20 min-w-[8.5rem] rounded-md border border-[var(--mn-line)] bg-white py-1 shadow-md" @click.stop>
                 <button v-if="item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="restoring = item; closeMenu()">恢复</button>
-                <button type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="openEdit(item); closeMenu()">编辑</button>
+                <button v-if="!item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="openEdit(item); closeMenu()">编辑</button>
                 <button v-if="!item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="togglePause(item); closeMenu()">{{ item.isPaused ? '恢复' : '暂停' }}</button>
                 <button type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] text-[#b4493f] hover:bg-[#fff5f3]" @click="deleting = item; closeMenu()">删除</button>
               </div>

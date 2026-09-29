@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import axios from 'axios'
 import { lifeLogApi } from '@/api/lifeLog'
 import { householdApi } from '@/api/household'
 import { buildHouseholdPreview } from '@/household/previewData'
@@ -19,8 +20,11 @@ import type {
   HouseholdMember,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
+  UpdateHouseholdConsumablePayload,
   UpdateHouseholdItemPayload,
 } from '@/types/household'
+
+const archivedReadOnlyMessage = '已归档事项请先由管理员恢复'
 
 export class HouseholdRequestError extends Error {
   status: number
@@ -60,12 +64,19 @@ export const useHouseholdStore = defineStore('household', () => {
   const historySource = ref<Record<number, HouseholdCompletion[]>>({})
   const lastQuery = ref<HouseholdItemQuery>({ includePaused: true })
   const serverToday = ref<string | null>(null)
+  const serverTodayUnavailable = ref(false)
 
   const isAdmin = computed(() => household.value?.myRole === 'Admin')
   const calendarToday = computed(() => serverToday.value ?? shanghaiToday())
 
   function assertAdmin(message: string) {
     if (!isAdmin.value) throw new HouseholdRequestError(403, message)
+  }
+
+  function assertNotArchived(id: number) {
+    const known = itemSource.value.find((item) => item.id === id)
+      ?? (currentItem.value?.id === id ? currentItem.value : null)
+    if (known?.isArchived) throw new HouseholdRequestError(400, archivedReadOnlyMessage)
   }
 
   function applyItemQuery() {
@@ -118,11 +129,15 @@ export const useHouseholdStore = defineStore('household', () => {
       serverToday.value = null
       return null
     }
+    if (serverTodayUnavailable.value) return null
     try {
       const result = await householdApi.serverToday()
       serverToday.value = result.today.slice(0, 10)
-    } catch {
+    } catch (error) {
       serverToday.value = null
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        serverTodayUnavailable.value = true
+      }
     }
     return serverToday.value
   }
@@ -281,6 +296,7 @@ export const useHouseholdStore = defineStore('household', () => {
   }
 
   async function updateItem(id: number, payload: UpdateHouseholdItemPayload) {
+    assertNotArchived(id)
     assertAdmin('只有管理员可以编辑事项')
     if (previewMode.value) {
       const current = itemSource.value.find((item) => item.id === id)
@@ -315,6 +331,7 @@ export const useHouseholdStore = defineStore('household', () => {
   }
 
   async function setPaused(id: number, paused: boolean) {
+    assertNotArchived(id)
     assertAdmin(paused ? '只有管理员可以暂停事项' : '只有管理员可以恢复事项')
     if (previewMode.value) {
       const current = itemSource.value.find((item) => item.id === id)
@@ -342,6 +359,7 @@ export const useHouseholdStore = defineStore('household', () => {
   }
 
   async function completeItem(id: number, payload: CompleteHouseholdItemPayload, idempotencyKey?: string) {
+    assertNotArchived(id)
     if (previewMode.value) {
       const current = itemSource.value.find((item) => item.id === id)
       if (!current) throw new HouseholdRequestError(404, '事项不存在')
@@ -437,13 +455,12 @@ export const useHouseholdStore = defineStore('household', () => {
     return created
   }
 
-  async function updateConsumable(id: number, payload: SaveHouseholdConsumablePayload) {
+  async function updateConsumable(id: number, payload: UpdateHouseholdConsumablePayload) {
     if (previewMode.value) {
       const found = consumables.value.find((item) => item.id === id)
       if (!found) throw new HouseholdRequestError(404, '耗材不存在')
       found.name = payload.name
       found.specModel = payload.specModel ?? null
-      found.currentStock = payload.currentStock
       found.restockThreshold = payload.restockThreshold ?? found.restockThreshold
       found.unit = payload.unit ?? null
       found.purchaseLink = payload.purchaseLink ?? null
