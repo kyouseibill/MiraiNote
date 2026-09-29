@@ -1,0 +1,508 @@
+using Microsoft.EntityFrameworkCore;
+using MiraiNote.Data.Context;
+using MiraiNote.Data.Entities;
+using MiraiNote.Shared.Common;
+using MiraiNote.Shared.Dtos.Household;
+
+namespace MiraiNote.Core.Services.Household;
+
+public interface IHouseholdItemService
+{
+    Task<List<HouseholdItemDto>> ListAsync(int userId, HouseholdItemListQuery? query, CancellationToken ct = default);
+    Task<HouseholdItemDto> GetAsync(int userId, int id, CancellationToken ct = default);
+    Task<HouseholdItemDto> CreateAsync(int userId, CreateHouseholdItemRequest request, CancellationToken ct = default);
+    Task<HouseholdItemDto> UpdateAsync(int userId, int id, UpdateHouseholdItemRequest request, CancellationToken ct = default);
+    Task<HouseholdItemDto> SetPausedAsync(int userId, int id, bool paused, CancellationToken ct = default);
+    Task DeleteAsync(int userId, int id, CancellationToken ct = default);
+    Task<CompleteHouseholdItemResult> CompleteAsync(int userId, int id, CompleteHouseholdItemRequest request, CancellationToken ct = default);
+    Task<List<HouseholdCompletionDto>> HistoryAsync(int userId, int id, CancellationToken ct = default);
+    Task<HouseholdUpcomingDto> UpcomingAsync(int userId, HouseholdUpcomingQuery? query, CancellationToken ct = default);
+    Task<List<HouseholdItemTemplateDto>> ListTemplatesAsync(int userId, CancellationToken ct = default);
+    Task<HouseholdItemDto> CreateFromTemplateAsync(int userId, CreateHouseholdItemFromTemplateRequest request, CancellationToken ct = default);
+}
+
+public sealed class HouseholdItemService : IHouseholdItemService
+{
+    private readonly MiraiNoteDbContext _db;
+    private readonly IHouseholdAccessService _access;
+    private readonly HouseholdCycleRules _rules;
+    private readonly HouseholdAccessPolicy _policy;
+
+    public HouseholdItemService(
+        MiraiNoteDbContext db,
+        IHouseholdAccessService access,
+        HouseholdCycleRules rules,
+        HouseholdAccessPolicy policy)
+    {
+        _db = db;
+        _access = access;
+        _rules = rules;
+        _policy = policy;
+    }
+
+    public async Task<List<HouseholdItemDto>> ListAsync(int userId, HouseholdItemListQuery? query, CancellationToken ct = default)
+    {
+        query ??= new HouseholdItemListQuery();
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var items = _db.HouseholdItems.AsNoTracking().Where(i => i.HouseholdId == ctx.Household.Id);
+        if (!query.IncludePaused)
+            items = items.Where(i => !i.IsPaused);
+        if (query.Category is HouseholdCategory category)
+            items = items.Where(i => i.Category == category);
+
+        var list = await items
+            .OrderBy(i => i.IsPaused)
+            .ThenBy(i => i.NextDueDate)
+            .ThenBy(i => i.Id)
+            .ToListAsync(ct);
+        return await MapItemsAsync(list, ct);
+    }
+
+    public async Task<HouseholdItemDto> GetAsync(int userId, int id, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var entity = await LoadAsync(ctx.Household.Id, id, tracking: false, ct);
+        return await MapOneAsync(entity, ct);
+    }
+
+    public async Task<HouseholdItemDto> CreateAsync(int userId, CreateHouseholdItemRequest request, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        return await CreateCoreAsync(ctx, request, ct);
+    }
+
+    public async Task<HouseholdItemDto> UpdateAsync(int userId, int id, UpdateHouseholdItemRequest request, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        var draft = Normalize(request.Name, request.Category, request.Location, request.ModelSpec, request.ItemType,
+            request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
+            request.AssigneeMemberId, request.ConsumableId, request.Note, request.PurchaseLink,
+            request.MileageCycleKm, request.Aliases);
+        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, "负责人必须是本家庭成员", ct);
+        await EnsureConsumableOfHouseholdAsync(ctx.Household.Id, draft.ConsumableId, ct);
+        Apply(entity, draft);
+        await _db.SaveChangesAsync(ct);
+        return await MapOneAsync(entity, ct);
+    }
+
+    public async Task<HouseholdItemDto> SetPausedAsync(int userId, int id, bool paused, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        entity.IsPaused = paused;
+        await _db.SaveChangesAsync(ct);
+        return await MapOneAsync(entity, ct);
+    }
+
+    public async Task DeleteAsync(int userId, int id, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        if (_policy.OnlyAdminCanDeleteItems && !ctx.IsAdmin)
+            throw new BusinessException("只有管理员可以删除事项", 403);
+
+        var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        entity.IsDeleted = true;
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<CompleteHouseholdItemResult> CompleteAsync(
+        int userId, int id, CompleteHouseholdItemRequest request, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var item = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
+        var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
+
+        if (item.ItemType == HouseholdItemType.Recurring && request.NewExpiryDate != null)
+            throw new BusinessException("周期型事项不能填写新的到期日", 400);
+
+        var member = await RequireMemberAsync(
+            ctx.Household.Id,
+            request.CompletedByMemberId ?? ctx.Member.Id,
+            "执行人必须是本家庭成员",
+            ct);
+        var username = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == member.UserId)
+            .Select(u => u.Username)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new BusinessException("用户不存在", 400);
+
+        var deduction = await DeductAsync(ctx.Household.Id, item, request, ct);
+        DateOnly? renewal = null;
+        if (item.ItemType == HouseholdItemType.Recurring)
+        {
+            if (item.CycleValue is not int cycle || item.CycleUnit is not HouseholdCycleUnit unit)
+                throw new BusinessException("周期型事项缺少周期", 400);
+            item.LastDoneDate = completedOn;
+            item.NextDueDate = HouseholdCycleRules.AddCycle(completedOn, cycle, unit);
+        }
+        else
+        {
+            var expiry = request.NewExpiryDate ?? item.ExpiryDate
+                ?? throw new BusinessException("一次性到期事项缺少到期日", 400);
+            renewal = request.NewExpiryDate;
+            item.ExpiryDate = expiry;
+            item.NextDueDate = expiry;
+            item.LastDoneDate = completedOn;
+        }
+
+        var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
+        var record = new HouseholdCompletionRecord
+        {
+            HouseholdItemId = item.Id,
+            CompletedOn = completedOn,
+            CompletedByMemberId = member.Id,
+            CompletedByUserId = member.UserId,
+            CompletedByUsername = username,
+            PhotoRefs = photos.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(photos),
+            Cost = NormalizeCost(request.Cost),
+            PurchaseLink = HouseholdText.Clean(request.PurchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接"),
+            Note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注"),
+            ConsumableId = deduction.ConsumableId,
+            ConsumableQuantityDeducted = deduction.Actual,
+            NeedsRestock = deduction.NeedsRestock,
+            NewExpiryDate = renewal
+        };
+        _db.HouseholdCompletionRecords.Add(record);
+        await _db.SaveChangesAsync(ct);
+
+        return new CompleteHouseholdItemResult
+        {
+            Item = await MapOneAsync(item, ct),
+            Record = ToCompletionDto(record),
+            ConsumableQuantityDeducted = deduction.Actual,
+            ConsumableStockAfter = deduction.StockAfter,
+            NeedsRestock = deduction.NeedsRestock
+        };
+    }
+
+    public async Task<List<HouseholdCompletionDto>> HistoryAsync(int userId, int id, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var exists = await _db.HouseholdItems.AnyAsync(i => i.Id == id && i.HouseholdId == ctx.Household.Id, ct);
+        if (!exists)
+            throw new BusinessException("事项不存在", 404);
+
+        var records = await _db.HouseholdCompletionRecords.AsNoTracking()
+            .Where(r => r.HouseholdItemId == id)
+            .OrderByDescending(r => r.CompletedOn)
+            .ThenByDescending(r => r.Id)
+            .ToListAsync(ct);
+        return records.Select(ToCompletionDto).ToList();
+    }
+
+    public async Task<HouseholdUpcomingDto> UpcomingAsync(int userId, HouseholdUpcomingQuery? query, CancellationToken ct = default)
+    {
+        query ??= new HouseholdUpcomingQuery();
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var today = _rules.Today();
+        var horizon = today.AddDays(HouseholdCycleRules.Within30DayWindow);
+        var items = _db.HouseholdItems.AsNoTracking()
+            .Where(i => i.HouseholdId == ctx.Household.Id
+                && !i.IsPaused
+                && i.NextDueDate != null
+                && i.NextDueDate <= horizon);
+        if (query.Category is HouseholdCategory category)
+            items = items.Where(i => i.Category == category);
+
+        var list = await items.OrderBy(i => i.NextDueDate).ThenBy(i => i.Id).ToListAsync(ct);
+        var names = await LoadMemberNamesAsync(list.Select(i => i.AssigneeMemberId), ct);
+        var result = new HouseholdUpcomingDto { Today = today };
+        foreach (var item in list)
+        {
+            var due = item.NextDueDate!.Value;
+            var group = HouseholdCycleRules.Classify(due, today, item.IsPaused);
+            if (group == UpcomingGroup.None)
+                continue;
+
+            var (overdue, remaining) = HouseholdCycleRules.DayOffsets(due, today);
+            var dto = new HouseholdUpcomingItemDto
+            {
+                Id = item.Id,
+                Name = item.Name,
+                Category = item.Category,
+                ItemType = item.ItemType,
+                Location = item.Location,
+                DueDate = due,
+                DaysOverdue = overdue,
+                DaysRemaining = remaining,
+                AssigneeMemberId = item.AssigneeMemberId,
+                AssigneeName = item.AssigneeMemberId is int memberId && names.TryGetValue(memberId, out var name) ? name : null
+            };
+            switch (group)
+            {
+                case UpcomingGroup.Overdue:
+                    result.Overdue.Add(dto);
+                    break;
+                case UpcomingGroup.Within7Days:
+                    result.Within7Days.Add(dto);
+                    break;
+                case UpcomingGroup.Within30Days:
+                    result.Within30Days.Add(dto);
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<List<HouseholdItemTemplateDto>> ListTemplatesAsync(int userId, CancellationToken ct = default)
+    {
+        await _access.GetOrCreateAsync(userId, ct);
+        return await _db.HouseholdItemTemplates.AsNoTracking()
+            .OrderBy(t => t.SortOrder)
+            .ThenBy(t => t.Id)
+            .Select(t => new HouseholdItemTemplateDto
+            {
+                Id = t.Id,
+                Name = t.Name,
+                Category = t.Category,
+                ItemType = t.ItemType,
+                CycleValue = t.CycleValue,
+                CycleUnit = t.CycleUnit,
+                SortOrder = t.SortOrder
+            })
+            .ToListAsync(ct);
+    }
+
+    public async Task<HouseholdItemDto> CreateFromTemplateAsync(
+        int userId, CreateHouseholdItemFromTemplateRequest request, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var template = await _db.HouseholdItemTemplates.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == request.TemplateId, ct)
+            ?? throw new BusinessException("模板不存在", 404);
+
+        var create = new CreateHouseholdItemRequest
+        {
+            Name = string.IsNullOrWhiteSpace(request.Name) ? template.Name : request.Name,
+            Category = request.Category ?? template.Category,
+            ItemType = template.ItemType,
+            CycleValue = request.CycleValue ?? template.CycleValue,
+            CycleUnit = request.CycleUnit ?? template.CycleUnit,
+            LastDoneDate = request.LastDoneDate,
+            ExpiryDate = request.ExpiryDate,
+            Location = request.Location,
+            ModelSpec = request.ModelSpec,
+            LeadDays = request.LeadDays,
+            AssigneeMemberId = request.AssigneeMemberId,
+            ConsumableId = request.ConsumableId,
+            Note = request.Note,
+            PurchaseLink = request.PurchaseLink,
+            MileageCycleKm = request.MileageCycleKm,
+            Aliases = request.Aliases
+        };
+        return await CreateCoreAsync(ctx, create, ct);
+    }
+
+    private async Task<HouseholdItemDto> CreateCoreAsync(
+        HouseholdContext ctx, CreateHouseholdItemRequest request, CancellationToken ct)
+    {
+        var draft = Normalize(request.Name, request.Category, request.Location, request.ModelSpec, request.ItemType,
+            request.CycleValue, request.CycleUnit, request.LastDoneDate, request.ExpiryDate, request.LeadDays,
+            request.AssigneeMemberId, request.ConsumableId, request.Note, request.PurchaseLink,
+            request.MileageCycleKm, request.Aliases);
+        await EnsureMemberOfHouseholdAsync(ctx.Household.Id, draft.AssigneeMemberId, "负责人必须是本家庭成员", ct);
+        await EnsureConsumableOfHouseholdAsync(ctx.Household.Id, draft.ConsumableId, ct);
+
+        var entity = new HouseholdItem
+        {
+            HouseholdId = ctx.Household.Id,
+            IsPaused = request.IsPaused
+        };
+        Apply(entity, draft);
+        _db.HouseholdItems.Add(entity);
+        await _db.SaveChangesAsync(ct);
+        return await MapOneAsync(entity, ct);
+    }
+
+    private async Task<Deduction> DeductAsync(
+        int householdId, HouseholdItem item, CompleteHouseholdItemRequest request, CancellationToken ct)
+    {
+        var requested = 0;
+        if (!request.SkipConsumableDeduction)
+        {
+            requested = request.ConsumableQuantity
+                ?? (item.ConsumableId != null ? HouseholdCycleRules.DefaultDeductionQuantity : 0);
+        }
+
+        if (requested < 0)
+            throw new BusinessException("扣减数量不能为负", 400);
+        if (requested == 0)
+            return new Deduction(null, 0, null, false);
+        if (item.ConsumableId is not int consumableId)
+            throw new BusinessException("事项未关联耗材，无法扣减库存", 400);
+
+        var consumable = await _db.HouseholdConsumables
+            .FirstOrDefaultAsync(c => c.Id == consumableId && c.HouseholdId == householdId, ct)
+            ?? throw new BusinessException("关联耗材不存在", 400);
+
+        var result = HouseholdCycleRules.DeductStock(consumable.CurrentStock, requested);
+        consumable.CurrentStock = result.NewStock;
+        return new Deduction(consumable.Id, result.ActualDeducted, result.NewStock, result.NeedsRestock);
+    }
+
+    private async Task<HouseholdItem> LoadAsync(int householdId, int id, bool tracking, CancellationToken ct)
+    {
+        var query = tracking ? _db.HouseholdItems : _db.HouseholdItems.AsNoTracking();
+        return await query.FirstOrDefaultAsync(i => i.Id == id && i.HouseholdId == householdId, ct)
+            ?? throw new BusinessException("事项不存在", 404);
+    }
+
+    private async Task EnsureMemberOfHouseholdAsync(int householdId, int? memberId, string message, CancellationToken ct)
+    {
+        if (memberId is not int id)
+            return;
+        await RequireMemberAsync(householdId, id, message, ct);
+    }
+
+    private async Task<HouseholdMember> RequireMemberAsync(int householdId, int memberId, string message, CancellationToken ct)
+    {
+        var member = await _db.HouseholdMembers.FirstOrDefaultAsync(m => m.Id == memberId, ct)
+            ?? throw new BusinessException(message, 400);
+        if (member.HouseholdId != householdId)
+            throw new BusinessException(message, 403);
+        return member;
+    }
+
+    private async Task EnsureConsumableOfHouseholdAsync(int householdId, int? consumableId, CancellationToken ct)
+    {
+        if (consumableId is not int id)
+            return;
+
+        var consumable = await _db.HouseholdConsumables.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id, ct)
+            ?? throw new BusinessException("耗材不存在", 400);
+        if (consumable.HouseholdId != householdId)
+            throw new BusinessException("不能关联其他家庭的耗材", 403);
+    }
+
+    private static void Apply(HouseholdItem entity, HouseholdItemDraft draft)
+    {
+        entity.Name = draft.Name;
+        entity.Category = draft.Category;
+        entity.Location = draft.Location;
+        entity.ModelSpec = draft.ModelSpec;
+        entity.ItemType = draft.ItemType;
+        entity.CycleValue = draft.CycleValue;
+        entity.CycleUnit = draft.CycleUnit;
+        entity.LastDoneDate = draft.LastDoneDate;
+        entity.ExpiryDate = draft.ExpiryDate;
+        entity.NextDueDate = draft.NextDueDate;
+        entity.LeadDays = draft.LeadDays;
+        entity.AssigneeMemberId = draft.AssigneeMemberId;
+        entity.ConsumableId = draft.ConsumableId;
+        entity.Note = draft.Note;
+        entity.PurchaseLink = draft.PurchaseLink;
+        entity.MileageCycleKm = draft.MileageCycleKm;
+        entity.AliasesJson = HouseholdAliases.Serialize(draft.Aliases);
+    }
+
+    private static HouseholdItemDraft Normalize(
+        string? name,
+        HouseholdCategory? category,
+        string? location,
+        string? modelSpec,
+        HouseholdItemType itemType,
+        int? cycleValue,
+        HouseholdCycleUnit? cycleUnit,
+        DateOnly? lastDoneDate,
+        DateOnly? expiryDate,
+        int? leadDays,
+        int? assigneeMemberId,
+        int? consumableId,
+        string? note,
+        string? purchaseLink,
+        int? mileageCycleKm,
+        IEnumerable<string>? aliases) =>
+        HouseholdItemDraft.Normalize(
+            name, category, location, modelSpec, itemType, cycleValue, cycleUnit, lastDoneDate, expiryDate,
+            leadDays, assigneeMemberId, consumableId, note, purchaseLink, mileageCycleKm, aliases);
+
+    private async Task<HouseholdItemDto> MapOneAsync(HouseholdItem entity, CancellationToken ct)
+    {
+        var mapped = await MapItemsAsync([entity], ct);
+        return mapped[0];
+    }
+
+    private async Task<List<HouseholdItemDto>> MapItemsAsync(List<HouseholdItem> items, CancellationToken ct)
+    {
+        var names = await LoadMemberNamesAsync(items.Select(i => i.AssigneeMemberId), ct);
+        return items.Select(item => ToDto(item, names)).ToList();
+    }
+
+    private async Task<Dictionary<int, string>> LoadMemberNamesAsync(IEnumerable<int?> memberIds, CancellationToken ct)
+    {
+        var ids = memberIds.Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
+        if (ids.Count == 0)
+            return [];
+
+        return await _db.HouseholdMembers.AsNoTracking()
+            .Where(m => ids.Contains(m.Id))
+            .Join(
+                _db.Users.AsNoTracking(),
+                m => m.UserId,
+                u => u.Id,
+                (m, u) => new { m.Id, u.Username })
+            .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+    }
+
+    private static HouseholdItemDto ToDto(HouseholdItem item, IReadOnlyDictionary<int, string> names) => new()
+    {
+        Id = item.Id,
+        HouseholdId = item.HouseholdId,
+        Name = item.Name,
+        Category = item.Category,
+        Location = item.Location,
+        ModelSpec = item.ModelSpec,
+        ItemType = item.ItemType,
+        CycleValue = item.CycleValue,
+        CycleUnit = item.CycleUnit,
+        LastDoneDate = item.LastDoneDate,
+        NextDueDate = item.NextDueDate,
+        ExpiryDate = item.ExpiryDate,
+        LeadDays = item.LeadDays,
+        AssigneeMemberId = item.AssigneeMemberId,
+        AssigneeName = item.AssigneeMemberId is int memberId && names.TryGetValue(memberId, out var name) ? name : null,
+        ConsumableId = item.ConsumableId,
+        Note = item.Note,
+        PurchaseLink = item.PurchaseLink,
+        IsPaused = item.IsPaused,
+        MileageCycleKm = item.MileageCycleKm,
+        Aliases = HouseholdAliases.Deserialize(item.AliasesJson),
+        CreatedAt = item.CreatedAt,
+        UpdatedAt = item.UpdatedAt
+    };
+
+    private static HouseholdCompletionDto ToCompletionDto(HouseholdCompletionRecord record) => new()
+    {
+        Id = record.Id,
+        ItemId = record.HouseholdItemId,
+        CompletedOn = record.CompletedOn,
+        CompletedByMemberId = record.CompletedByMemberId ?? 0,
+        CompletedByUserId = record.CompletedByUserId,
+        CompletedByUsername = record.CompletedByUsername,
+        PhotoRefs = HouseholdPhotoRefs.Deserialize(record.PhotoRefs),
+        Cost = record.Cost,
+        PurchaseLink = record.PurchaseLink,
+        Note = record.Note,
+        ConsumableId = record.ConsumableId,
+        ConsumableQuantityDeducted = record.ConsumableQuantityDeducted,
+        NeedsRestock = record.NeedsRestock,
+        NewExpiryDate = record.NewExpiryDate,
+        CreatedAt = record.CreatedAt
+    };
+
+    private static decimal? NormalizeCost(decimal? cost)
+    {
+        if (cost is null)
+            return null;
+        if (cost < 0)
+            throw new BusinessException("费用不能为负", 400);
+        if (cost > 999999999.99m)
+            throw new BusinessException("费用超出范围", 400);
+        return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private readonly record struct Deduction(int? ConsumableId, int Actual, int? StockAfter, bool NeedsRestock);
+}

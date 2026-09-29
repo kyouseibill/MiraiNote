@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace MiraiNote.Core;
 
@@ -16,6 +18,24 @@ public static class DependencyInjection
         services.AddScoped<Services.IWorkLogService, Services.WorkLogService>();
         services.AddScoped<Services.IMemoService, Services.MemoService>();
         services.AddScoped<Services.ILifeLogService, Services.LifeLogService>();
+        services.AddSingleton(Services.Household.HouseholdAccessPolicy.Default);
+        services.AddSingleton(sp => new Services.Household.AdjustableHouseholdTimeProvider(TimeProvider.System));
+        services.AddSingleton<TimeProvider>(sp =>
+        {
+            var adjustable = sp.GetRequiredService<Services.Household.AdjustableHouseholdTimeProvider>();
+            var env = sp.GetService<IHostEnvironment>();
+            var options = sp.GetService<IOptions<Services.Household.HouseholdOptions>>()?.Value;
+            if (env != null && options != null && Services.Household.HouseholdTestClockPolicy.IsEnabled(options, env))
+                return adjustable;
+            return TimeProvider.System;
+        });
+        services.AddSingleton<Services.Household.HouseholdLinkBuilder>();
+        services.AddSingleton<Services.Household.HouseholdCycleRules>();
+        services.AddScoped<Services.Household.IHouseholdAccessService, Services.Household.HouseholdAccessService>();
+        services.AddScoped<Services.Household.IHouseholdService, Services.Household.HouseholdService>();
+        services.AddScoped<Services.Household.IHouseholdItemService, Services.Household.HouseholdItemService>();
+        services.AddScoped<Services.Household.IHouseholdConsumableService, Services.Household.HouseholdConsumableService>();
+        services.AddScoped<Services.Household.IHouseholdTestClockService, Services.Household.HouseholdTestClockService>();
         services.AddScoped<Services.IWeeklyReportService, Services.WeeklyReportService>();
         services.AddSingleton<Services.ChatSessionRunGate>();
         services.AddSingleton<Services.AgentRuns.AgentRunDispatcher>();

@@ -1,0 +1,106 @@
+using Microsoft.EntityFrameworkCore;
+using MiraiNote.Data.Entities;
+
+namespace MiraiNote.Data.Context;
+
+internal static class HouseholdModelConfiguration
+{
+    public static void Configure(ModelBuilder modelBuilder)
+    {
+        ConfigureMember(modelBuilder);
+        ConfigureItem(modelBuilder);
+        ConfigureCompletion(modelBuilder);
+        ConfigureConsumable(modelBuilder);
+        ConfigureTemplate(modelBuilder);
+    }
+
+    private static void ConfigureMember(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdMember>();
+        entity.Property(m => m.Role).HasConversion<string>().HasMaxLength(32);
+
+        entity.HasIndex(m => m.UserId)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        entity.HasIndex(m => m.HouseholdId);
+
+        entity.HasOne(m => m.Household)
+            .WithMany(h => h.Members)
+            .HasForeignKey(m => m.HouseholdId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(m => m.User)
+            .WithMany()
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureItem(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdItem>();
+        entity.Property(i => i.Category).HasConversion<string>().HasMaxLength(32);
+        entity.Property(i => i.ItemType).HasConversion<string>().HasMaxLength(32);
+        entity.Property(i => i.CycleUnit).HasConversion<string>().HasMaxLength(32);
+        // 哨兵设为 -1，这样提前提醒天数 0（到期当天才提醒）不会被当成“未赋值”而落回默认 7。
+        entity.Property(i => i.LeadDays).HasDefaultValue(7).HasSentinel(-1);
+
+        entity.HasIndex(i => new { i.HouseholdId, i.IsPaused, i.NextDueDate });
+        entity.HasIndex(i => new { i.HouseholdId, i.Category });
+
+        entity.HasOne(i => i.Household)
+            .WithMany(h => h.Items)
+            .HasForeignKey(i => i.HouseholdId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(i => i.Assignee)
+            .WithMany()
+            .HasForeignKey(i => i.AssigneeMemberId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(i => i.Consumable)
+            .WithMany(c => c.Items)
+            .HasForeignKey(i => i.ConsumableId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureCompletion(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdCompletionRecord>();
+        entity.Property(r => r.Cost).HasPrecision(18, 2);
+        entity.HasIndex(r => new { r.HouseholdItemId, r.CompletedOn });
+
+        entity.HasOne(r => r.Item)
+            .WithMany(i => i.Completions)
+            .HasForeignKey(r => r.HouseholdItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(r => r.CompletedBy)
+            .WithMany()
+            .HasForeignKey(r => r.CompletedByMemberId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureConsumable(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdConsumable>();
+        entity.Property(c => c.RestockThreshold).HasDefaultValue(1).HasSentinel(-1);
+        entity.HasIndex(c => c.HouseholdId);
+
+        entity.HasOne(c => c.Household)
+            .WithMany(h => h.Consumables)
+            .HasForeignKey(c => c.HouseholdId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureTemplate(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdItemTemplate>();
+        entity.Property(t => t.Category).HasConversion<string>().HasMaxLength(32);
+        entity.Property(t => t.ItemType).HasConversion<string>().HasMaxLength(32);
+        entity.Property(t => t.CycleUnit).HasConversion<string>().HasMaxLength(32);
+        entity.HasIndex(t => t.SortOrder);
+        entity.HasData(HouseholdItemTemplateSeed.All);
+    }
+}
