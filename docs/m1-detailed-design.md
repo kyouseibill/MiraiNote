@@ -47,7 +47,7 @@
                 │ EF Core 9（LINQ，默认参数化）
        ┌────────▼─────────┐          ┌──────────────────┐
        │ SQL Server       │          │ DeepSeek API      │
-       │ 211.136.180.123  │          │ (chat/completions │
+       │ <SERVER_IP>  │          │ (chat/completions │
        │ MiraiNote 库      │          │  FC + SSE)        │
        │ +3 新表 +3 新列    │          └──────────────────┘
        └──────────────────┘

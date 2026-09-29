@@ -1,4 +1,4 @@
-# M1 后端上线清单（服务器 211.136.180.123，站点 http://211.136.180.123:10090）
+# M1 后端上线清单（服务器 <SERVER_IP>，站点 http://<SERVER_IP>:10090）
 
 > 状态（2026-08-22）：数据库迁移已提前应用（有备份 `D:\webroot\MiraiNote\MiraiNote_pre_M1.bak`），本清单只需替换站点文件。发布包：`release/MiraiNote.API-M1/`。
 
@@ -11,7 +11,7 @@
    - `Cors:AllowedOrigins` 增加 `"http://tauri.localhost"`（桌面端 Tauri WebView2 的 origin，缺它桌面端登录报 Network Error——联调实测）
    - （可选，按设计 §3.5）`Upload:PhysicalPath=D:\webroot\MiraiNote\fileservice\uploads`、`WorkspaceRoot=D:\webroot\MiraiNote\fileservice\workspace`、新增 `ExportsRoot`/`TempRoot` 同级目录
 5. **启动应用池**，验证：
-   - `GET http://211.136.180.123:10090/api/v1/mirai/inbox` 未带 token → 应为 **401**（出现 M1 端点；404 说明还是旧版）
+   - `GET http://<SERVER_IP>:10090/api/v1/mirai/inbox` 未带 token → 应为 **401**（出现 M1 端点；404 说明还是旧版）
    - Web 端登录 + 记录增删冒烟（应与之前完全一致）
    - 生产库连接串不变，`temp 清理` 等新后台服务会随启动注册（日志可见"temp 目录清理服务已启动"）
 
@@ -20,7 +20,7 @@
 `desktop/.env.local`（或正式打包时的构建环境变量）：
 
 ```
-MIRAI_API_BASE=http://211.136.180.123:10090/api/v1
+MIRAI_API_BASE=http://<SERVER_IP>:10090/api/v1
 MIRAI_USE_MOCK=0
 ```
 

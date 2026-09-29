@@ -55,7 +55,7 @@ GO
 -- 创建应用账户登录名（若不存在）
 IF NOT EXISTS (SELECT name FROM sys.server_principals WHERE name = 'MiraiNote')
 BEGIN
-    CREATE LOGIN MiraiNote WITH PASSWORD = 'm^n#i|z!N_o@te';
+    CREATE LOGIN MiraiNote WITH PASSWORD = '<SQL_PASSWORD>';
 END
 GO
 
