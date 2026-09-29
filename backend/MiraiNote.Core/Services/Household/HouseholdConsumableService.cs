@@ -119,7 +119,7 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         entity.CurrentStock = request.CurrentStock;
         entity.RestockThreshold = threshold;
         entity.Unit = HouseholdText.Clean(request.Unit, HouseholdFieldLimits.Unit, "单位");
-        entity.PurchaseLink = HouseholdText.Clean(request.PurchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接");
+        entity.PurchaseLink = HouseholdText.CleanPurchaseLink(request.PurchaseLink);
         entity.Note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
 
         if (entity.CurrentStock > previousStock)

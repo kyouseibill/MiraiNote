@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
   IconBooks,
+  IconCalendarTime,
   IconChecklist,
   IconFileText,
   IconHome,
@@ -24,6 +25,7 @@ interface NavItem {
   to: string
   label: string
   icon: Component
+  matchPrefix?: boolean
 }
 
 interface NavGroup {
@@ -46,6 +48,7 @@ const groups: NavGroup[] = [
     items: [
       { to: '/life/memos', label: '生活备忘', icon: IconNotebook },
       { to: '/life/logs', label: '生活记录', icon: IconBooks },
+      { to: '/household', label: '家务周期', icon: IconCalendarTime, matchPrefix: true },
     ],
   },
   {
@@ -65,6 +68,23 @@ const mobileMenuOpen = ref(false)
 watch(() => route.fullPath, () => {
   mobileMenuOpen.value = false
 })
+
+function isNavCurrent(item: NavItem) {
+  if (item.matchPrefix) return route.path === item.to || route.path.startsWith(`${item.to}/`)
+  return route.path === item.to
+}
+
+function navTarget(item: NavItem) {
+  const keepPreview = isDesignPreview.value && (item.to === '/dashboard' || item.to === '/life/logs' || item.to === '/household')
+  if (!keepPreview) return item.to
+  return {
+    path: item.to,
+    query: {
+      designPreview: '1',
+      ...(route.query.as === 'member' ? { as: 'member' } : {}),
+    },
+  }
+}
 
 onMounted(() => {
   if (!isDesignPreview.value) reminder.start()
@@ -111,13 +131,17 @@ onBeforeUnmount(() => {
           </div>
           <ul class="space-y-1">
             <li v-for="item in group.items" :key="item.to">
-              <RouterLink
-                :to="item.to"
-                class="group relative flex h-12 items-center gap-3 rounded-[5px] px-5 text-[13px] text-[#625f59] transition hover:bg-[#f3f0eb] hover:text-[#384b60] aria-[current=page]:bg-[#f1eee9] aria-[current=page]:text-[#384b60]"
-              >
-                <span class="absolute right-3 h-[9px] w-[9px] rounded-full bg-[#b4493f] opacity-0 transition group-aria-[current=page]:opacity-100" />
-                <component :is="item.icon" :size="20" :stroke-width="1.45" class="shrink-0 text-[#737982] group-aria-[current=page]:text-[#4c6178]" />
-                <span>{{ item.label }}</span>
+              <RouterLink :to="navTarget(item)" custom v-slot="{ href, navigate }">
+                <a
+                  :href="href"
+                  class="group relative flex h-12 items-center gap-3 rounded-[5px] px-5 text-[13px] text-[#625f59] transition hover:bg-[#f3f0eb] hover:text-[#384b60] aria-[current=page]:bg-[#f1eee9] aria-[current=page]:text-[#384b60]"
+                  :aria-current="isNavCurrent(item) ? 'page' : undefined"
+                  @click="navigate"
+                >
+                  <span class="absolute right-3 h-[9px] w-[9px] rounded-full bg-[#b4493f] opacity-0 transition group-aria-[current=page]:opacity-100" />
+                  <component :is="item.icon" :size="20" :stroke-width="1.45" class="shrink-0 text-[#737982] group-aria-[current=page]:text-[#4c6178]" />
+                  <span>{{ item.label }}</span>
+                </a>
               </RouterLink>
             </li>
           </ul>

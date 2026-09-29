@@ -1,4 +1,11 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** 这些状态码不走全局 toast，由调用方自己提示。 */
+    skipErrorToastStatuses?: number[]
+  }
+}
 import type {
   ApiResponse,
   AuthResponse,
@@ -110,10 +117,11 @@ http.interceptors.response.use(
       }
     }
 
-    // 统一错误 toast
+    // 统一错误 toast。个别请求会自己处理 409/422 文案，避免和这里各弹一次。
     const toast = useToast()
     const msg = error.response?.data?.message || error.message || '网络错误'
-    if (status !== 401) toast.error(msg)
+    const skipStatuses = original?.skipErrorToastStatuses
+    if (status !== 401 && !(status != null && skipStatuses?.includes(status))) toast.error(msg)
     return Promise.reject(error)
   },
 )
