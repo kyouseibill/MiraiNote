@@ -11,6 +11,7 @@ import {
   itemTypeLabel,
   draftText,
   parseAliases,
+  purchaseLinkError,
   shanghaiToday,
   validateItemDraft,
 } from '@/utils/householdFormat'
@@ -51,7 +52,12 @@ const form = reactive({
   aliases: '',
 })
 
-const today = computed(() => shanghaiToday())
+const today = ref(shanghaiToday())
+
+function refreshToday() {
+  today.value = shanghaiToday()
+}
+
 const groupedTemplates = computed(() => HOUSEHOLD_CATEGORIES
   .map((category) => ({
     ...category,
@@ -117,6 +123,7 @@ async function applyTemplate(template: HouseholdItemTemplate) {
   form.itemType = template.itemType
   form.cycleValue = template.cycleValue != null ? String(template.cycleValue) : ''
   form.cycleUnit = template.cycleUnit ?? 'Month'
+  refreshToday()
   form.lastDoneDate = template.itemType === 'Recurring' ? today.value : ''
   form.expiryDate = ''
   errors.value = {}
@@ -130,6 +137,7 @@ function detachTemplate() {
 }
 
 async function prepareDialog() {
+  refreshToday()
   localMode.value = props.mode
   selectedTemplate.value = null
   showMore.value = props.mode === 'edit'
@@ -155,7 +163,8 @@ function extraErrors() {
   const next: Record<string, string> = {}
   if (form.location.trim().length > 200) next.location = '位置不能超过 200 个字符'
   if (form.note.trim().length > 2000) next.note = '备注不能超过 2000 个字符'
-  if (form.purchaseLink.trim().length > 500) next.purchaseLink = '购买链接不能超过 500 个字符'
+  const linkError = purchaseLinkError(form.purchaseLink)
+  if (linkError) next.purchaseLink = linkError
   const aliases = parseAliases(form.aliases)
   if (aliases.length > 20) next.aliases = '别名最多 20 个'
   if (aliases.some((alias) => alias.length > 50)) next.aliases = '单个别名不能超过 50 个字符'
@@ -170,6 +179,7 @@ async function submit() {
     return
   }
   serverError.value = ''
+  refreshToday()
   const draftErrors = validateItemDraft({
     name: form.name,
     itemType: form.itemType,

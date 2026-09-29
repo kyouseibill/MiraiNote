@@ -105,7 +105,7 @@ public sealed record HouseholdItemDraft(
             assigneeMemberId,
             consumableId,
             HouseholdText.Clean(note, HouseholdFieldLimits.Note, "备注"),
-            HouseholdText.Clean(purchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接"),
+            HouseholdText.CleanPurchaseLink(purchaseLink),
             mileageCycleKm,
             HouseholdAliases.Normalize(aliases),
             nextDue);

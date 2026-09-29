@@ -8,6 +8,7 @@ import { apiFailure } from '@/utils/apiError'
 import {
   backfillRenewalMessage,
   formatCalendarDate,
+  purchaseLinkError,
   shanghaiToday,
   shiftCalendarDay,
   validateCompletionDraft,
@@ -105,7 +106,9 @@ watch(backfill, (isBackfill) => {
 async function submit() {
   if (submitting.value || uploading.value || !item.value) return
   serverError.value = ''
+  today.value = shanghaiToday()
   const renewing = item.value.itemType === 'OneOffExpiry' && renew.value && !backfill.value
+  const linkError = purchaseLinkError(purchaseLink.value)
   errors.value = validateCompletionDraft({
     completedOn: completedOn.value,
     today: today.value,
@@ -117,6 +120,7 @@ async function submit() {
     skipDeduction: skipDeduction.value,
     quantity: quantity.value,
   })
+  if (linkError) errors.value = { ...errors.value, purchaseLink: linkError }
   if (Object.keys(errors.value).length) return
 
   const before = item.value
@@ -212,7 +216,8 @@ async function submit() {
         </div>
         <div>
           <label class="text-[13px] font-medium" for="complete-link">购买链接</label>
-          <input id="complete-link" v-model="purchaseLink" class="form-input mt-1.5 h-10" placeholder="可不填" :disabled="submitting" />
+          <input id="complete-link" v-model="purchaseLink" class="form-input mt-1.5 h-10" maxlength="500" placeholder="可不填" :disabled="submitting" />
+          <p v-if="errors.purchaseLink" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.purchaseLink }}</p>
         </div>
       </div>
       <div>

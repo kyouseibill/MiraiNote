@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Xunit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services.Household;
@@ -682,6 +683,145 @@ public class HouseholdCycleServiceTests
     }
 
     [Fact]
+    public async Task Complete_RetriesOnceAfterTransientSaveFailure_WritesOneRecordAndDeductsOnce()
+    {
+        HouseholdTransientRetryStrategy.RetryCount = 0;
+        var interceptor = new OnceTransientSaveFailureInterceptor();
+        await using var fx = new HouseholdFixture(
+            Utc(2026, 10, 1, 2, 0),
+            executionStrategy: dependencies => new HouseholdTransientRetryStrategy(dependencies),
+            interceptor: interceptor);
+
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 4
+        });
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "净水器 PP 棉", new DateOnly(2026, 4, 1), 6, consumable.Id);
+        interceptor.Arm();
+
+        var done = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 1),
+            ConsumableQuantity = 1
+        });
+
+        Assert.Equal(1, interceptor.Thrown);
+        Assert.Equal(1, HouseholdTransientRetryStrategy.RetryCount);
+        Assert.Equal(new DateOnly(2026, 9, 1), done.Item.LastDoneDate);
+        Assert.Equal(3, done.ConsumableStockAfter);
+        Assert.Equal(3, (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).CurrentStock);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+        Assert.Equal(0, HouseholdItemService.CompletionGateCount);
+    }
+
+    [Fact]
+    public async Task PurchaseLink_IsValidatedOnItemAndConsumableWrites()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+
+        var rejectedCreate = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, Recurring("滤网", "JAVASCRIPT:alert(1)")));
+        Assert.Equal(400, rejectedCreate.StatusCode);
+
+        var item = await fx.Items.CreateAsync(fx.OwnerId, Recurring("滤网", " https://example.com/filter "));
+        Assert.Equal("https://example.com/filter", item.PurchaseLink);
+
+        var rejectedUpdate = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.UpdateAsync(
+            fx.OwnerId, item.Id, UpdateOf(item, " javascript:alert(1)")));
+        Assert.Equal(400, rejectedUpdate.StatusCode);
+        Assert.Equal("https://example.com/filter", (await fx.Items.GetAsync(fx.OwnerId, item.Id)).PurchaseLink);
+
+        var rejectedComplete = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(
+            fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+            {
+                CompletedOn = new DateOnly(2026, 9, 2),
+                PurchaseLink = "\tjavascript:alert(1)"
+            }));
+        Assert.Equal(400, rejectedComplete.StatusCode);
+        Assert.Equal(0, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+
+        var done = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 2),
+            PurchaseLink = "http://example.com/order"
+        });
+        Assert.Equal("http://example.com/order", done.Record.PurchaseLink);
+
+        var rejectedConsumable = await Assert.ThrowsAsync<BusinessException>(() => fx.Consumables.CreateAsync(
+            fx.OwnerId, new SaveHouseholdConsumableRequest
+            {
+                Name = "棉芯",
+                CurrentStock = 2,
+                PurchaseLink = "data:text/html,<script>alert(1)</script>"
+            }));
+        Assert.Equal(400, rejectedConsumable.StatusCode);
+
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "棉芯",
+            CurrentStock = 2,
+            PurchaseLink = "https://example.com/cotton"
+        });
+        var rejectedRestockLink = await Assert.ThrowsAsync<BusinessException>(() => fx.Consumables.UpdateAsync(
+            fx.OwnerId, consumable.Id, new SaveHouseholdConsumableRequest
+            {
+                Name = "棉芯",
+                CurrentStock = 2,
+                PurchaseLink = "vbscript:msgbox(1)"
+            }));
+        Assert.Equal(400, rejectedRestockLink.StatusCode);
+        Assert.Equal("https://example.com/cotton", (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).PurchaseLink);
+
+        var template = new HouseholdItemTemplate
+        {
+            Name = "滤网模板",
+            Category = HouseholdCategory.HomeMaintenance,
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 3,
+            CycleUnit = HouseholdCycleUnit.Month
+        };
+        fx.Db.HouseholdItemTemplates.Add(template);
+        await fx.Db.SaveChangesAsync();
+        var rejectedTemplate = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateFromTemplateAsync(
+            fx.OwnerId, new CreateHouseholdItemFromTemplateRequest
+            {
+                TemplateId = template.Id,
+                LastDoneDate = new DateOnly(2026, 9, 1),
+                PurchaseLink = "/foo"
+            }));
+        Assert.Equal(400, rejectedTemplate.StatusCode);
+
+        var fromTemplate = await fx.Items.CreateFromTemplateAsync(fx.OwnerId, new CreateHouseholdItemFromTemplateRequest
+        {
+            TemplateId = template.Id,
+            LastDoneDate = new DateOnly(2026, 9, 1),
+            PurchaseLink = "http://example.com/template"
+        });
+        Assert.Equal("http://example.com/template", fromTemplate.PurchaseLink);
+    }
+
+    private static CreateHouseholdItemRequest Recurring(string name, string? purchaseLink) => new()
+    {
+        Name = name,
+        ItemType = HouseholdItemType.Recurring,
+        CycleValue = 1,
+        CycleUnit = HouseholdCycleUnit.Month,
+        LastDoneDate = new DateOnly(2026, 9, 1),
+        PurchaseLink = purchaseLink
+    };
+
+    private static UpdateHouseholdItemRequest UpdateOf(HouseholdItemDto item, string? purchaseLink) => new()
+    {
+        Name = item.Name,
+        Category = item.Category,
+        ItemType = item.ItemType,
+        CycleValue = item.CycleValue,
+        CycleUnit = item.CycleUnit,
+        LastDoneDate = item.LastDoneDate,
+        PurchaseLink = purchaseLink
+    };
+
+    [Fact]
     public async Task EarlierCompletion_WithRenewalExpiry_IsRejected()
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
@@ -759,15 +899,32 @@ public class HouseholdCycleServiceTests
         public HouseholdConsumableService Consumables { get; }
         public int OwnerId { get; }
 
-        public HouseholdFixture(DateTimeOffset utcNow, bool useRetryingExecutionStrategy = false)
+        public HouseholdFixture(
+            DateTimeOffset utcNow,
+            bool useRetryingExecutionStrategy = false,
+            IInterceptor? interceptor = null,
+            Func<ExecutionStrategyDependencies, IExecutionStrategy>? executionStrategy = null)
         {
             _fx = new MiraiTestFixture();
-            Db = useRetryingExecutionStrategy
-                ? new MiraiNoteDbContext(new DbContextOptionsBuilder<MiraiNoteDbContext>()
-                    .UseSqlite(_fx.ConnectionString, sqlite =>
-                        sqlite.ExecutionStrategy(dependencies => new HouseholdRetryingExecutionStrategy(dependencies)))
-                    .Options)
-                : _fx.CreateContext();
+            var builder = new DbContextOptionsBuilder<MiraiNoteDbContext>();
+            if (executionStrategy != null)
+            {
+                builder.UseSqlite(_fx.ConnectionString, sqlite => sqlite.ExecutionStrategy(executionStrategy));
+            }
+            else if (useRetryingExecutionStrategy)
+            {
+                builder.UseSqlite(_fx.ConnectionString, sqlite =>
+                    sqlite.ExecutionStrategy(dependencies => new HouseholdRetryingExecutionStrategy(dependencies)));
+            }
+            else
+            {
+                builder.UseSqlite(_fx.ConnectionString);
+            }
+
+            if (interceptor != null)
+                builder.AddInterceptors(interceptor);
+
+            Db = new MiraiNoteDbContext(builder.Options);
             OwnerId = Db.Users.Single().Id;
             _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(new FixedTimeProvider(utcNow)));
             var access = new HouseholdAccessService(Db);
@@ -835,5 +992,65 @@ public class HouseholdCycleServiceTests
         }
 
         protected override bool ShouldRetryOn(Exception exception) => false;
+    }
+
+    /// <summary>第一次 SaveChanges 抛一次可重试异常，供执行策略重试后成功。</summary>
+    private sealed class OnceTransientSaveFailureInterceptor : SaveChangesInterceptor
+    {
+        private int _remaining;
+        public int Thrown { get; private set; }
+
+        public void Arm() => _remaining = 1;
+
+        public override InterceptionResult<int> SavingChanges(
+            DbContextEventData eventData, InterceptionResult<int> result)
+        {
+            ThrowIfArmed();
+            return base.SavingChanges(eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfArmed();
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+
+        private void ThrowIfArmed()
+        {
+            if (_remaining <= 0)
+                return;
+            _remaining--;
+            Thrown++;
+            throw new HouseholdTransientFailureException("injected transient failure");
+        }
+    }
+
+    private sealed class HouseholdTransientFailureException : Exception
+    {
+        public HouseholdTransientFailureException(string message) : base(message)
+        {
+        }
+    }
+
+    /// <summary>只重试测试注入的瞬时失败，业务异常仍然立刻抛出。</summary>
+    private sealed class HouseholdTransientRetryStrategy : ExecutionStrategy
+    {
+        public static int RetryCount;
+
+        public HouseholdTransientRetryStrategy(ExecutionStrategyDependencies dependencies)
+            : base(dependencies, maxRetryCount: 3, maxRetryDelay: TimeSpan.Zero)
+        {
+        }
+
+        protected override bool ShouldRetryOn(Exception exception)
+        {
+            if (exception is not HouseholdTransientFailureException)
+                return false;
+            RetryCount++;
+            return true;
+        }
     }
 }

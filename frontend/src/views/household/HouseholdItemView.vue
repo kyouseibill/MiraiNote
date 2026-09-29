@@ -17,6 +17,7 @@ import {
   formatCost,
   itemStatus,
   itemTypeLabel,
+  safeHttpUrl,
   shanghaiToday,
 } from '@/utils/householdFormat'
 
@@ -136,7 +137,10 @@ async function remove() {
         <div v-if="item.note" class="sm:col-span-2"><dt class="text-[var(--mn-muted)]">备注</dt><dd class="mt-1 whitespace-pre-wrap">{{ item.note }}</dd></div>
         <div v-if="item.purchaseLink" class="sm:col-span-2">
           <dt class="text-[var(--mn-muted)]">购买链接</dt>
-          <dd class="mt-1"><a :href="item.purchaseLink" class="text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">{{ item.purchaseLink }}</a></dd>
+          <dd class="mt-1">
+            <a v-if="safeHttpUrl(item.purchaseLink)" :href="safeHttpUrl(item.purchaseLink) || undefined" class="break-all text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">{{ item.purchaseLink }}</a>
+            <span v-else class="break-all">{{ item.purchaseLink }}</span>
+          </dd>
         </div>
       </dl>
 
@@ -156,7 +160,8 @@ async function remove() {
               记录于 {{ formatAccountDateTime(record.createdAt) }}
             </p>
             <p v-if="record.note" class="mt-2 whitespace-pre-wrap text-[13px]">{{ record.note }}</p>
-            <a v-if="record.purchaseLink" :href="record.purchaseLink" class="mt-1 inline-block text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">购买链接</a>
+            <a v-if="safeHttpUrl(record.purchaseLink)" :href="safeHttpUrl(record.purchaseLink) || undefined" class="mt-1 inline-block text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">购买链接</a>
+            <span v-else-if="record.purchaseLink" class="mt-1 inline-block break-all text-[12px] text-[var(--mn-muted)]">{{ record.purchaseLink }}</span>
             <div v-if="record.photoRefs.length" class="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6">
               <a v-for="(path, index) in record.photoRefs" :key="`${record.id}-${index}`" :href="staticUrl(path)" target="_blank" rel="noopener noreferrer">
                 <img :src="staticUrl(path)" class="aspect-square w-full rounded-md border border-[var(--mn-line)] object-cover" :alt="`${item.name} 的完成照片 ${index + 1}`" />

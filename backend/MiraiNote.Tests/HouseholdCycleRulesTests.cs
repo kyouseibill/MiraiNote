@@ -198,4 +198,42 @@ public class HouseholdCycleRulesTests
         var ex = Assert.Throws<BusinessException>(() => HouseholdPhotoRefs.Normalize(["https://example.com/a.jpg"]));
         Assert.Equal(400, ex.StatusCode);
     }
+
+    [Theory]
+    [InlineData("JAVASCRIPT:alert(1)")]
+    [InlineData(" javascript:alert(1)")]
+    [InlineData("\tjavascript:alert(1)")]
+    [InlineData("java\nscript:alert(1)")]
+    [InlineData("java\tscript:alert(1)")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("vbscript:msgbox(1)")]
+    [InlineData("/foo")]
+    public void PurchaseLink_RejectsUnsafeValues(string value)
+    {
+        var ex = Assert.Throws<BusinessException>(() => HouseholdText.CleanPurchaseLink(value));
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("http://")]
+    [InlineData("https://")]
+    [InlineData("http://example.com")]
+    [InlineData("https://example.com")]
+    [InlineData("https://example.com/item")]
+    [InlineData(" HTTP://shop.example/a ")]
+    [InlineData(" HTTPS:// ")]
+    public void PurchaseLink_AllowsHttpAndHttps(string value)
+    {
+        Assert.Equal(value.Trim(), HouseholdText.CleanPurchaseLink(value));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void PurchaseLink_AllowsEmpty(string? value)
+    {
+        Assert.Null(HouseholdText.CleanPurchaseLink(value));
+    }
 }

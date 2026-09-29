@@ -170,7 +170,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
         var completedOn = _rules.ResolveCompletionDate(request.CompletedOn);
         var cost = NormalizeCost(request.Cost);
         var note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
-        var purchaseLink = HouseholdText.Clean(request.PurchaseLink, HouseholdFieldLimits.PurchaseLink, "购买链接");
+        var purchaseLink = HouseholdText.CleanPurchaseLink(request.PurchaseLink);
         var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
 
         var item = await LoadAsync(householdId, id, tracking: true, ct);

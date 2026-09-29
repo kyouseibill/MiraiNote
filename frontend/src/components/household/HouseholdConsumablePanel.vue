@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import AppDialog from '@/components/AppDialog.vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
-import { draftText } from '@/utils/householdFormat'
+import { draftText, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
 
 const { toast, store, report } = useHouseholdFeedback()
 const open = ref(false)
@@ -15,6 +15,7 @@ const purchaseLink = ref('')
 const quantities = ref<Record<number, string | number>>({})
 const busy = ref(false)
 const formError = ref('')
+const linkError = ref('')
 const deletingId = ref<number | null>(null)
 
 function resetForm() {
@@ -25,10 +26,12 @@ function resetForm() {
   unit.value = ''
   purchaseLink.value = ''
   formError.value = ''
+  linkError.value = ''
 }
 
 async function createConsumable() {
   formError.value = ''
+  linkError.value = purchaseLinkError(purchaseLink.value)
   const trimmed = name.value.trim()
   if (!trimmed) {
     formError.value = '请填写耗材名称'
@@ -38,6 +41,7 @@ async function createConsumable() {
     formError.value = '库存和补货阈值需为 0 或正整数'
     return
   }
+  if (linkError.value) return
   busy.value = true
   try {
     await store.createConsumable({
@@ -109,7 +113,8 @@ async function remove() {
             库存 {{ item.currentStock }}{{ item.unit || '' }} · 阈值 {{ item.restockThreshold }}
             <span v-if="item.isLowStock" class="ml-2 text-[#b4493f]">需补货</span>
           </p>
-          <a v-if="item.purchaseLink" :href="item.purchaseLink" class="mt-1 inline-block text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">购买链接</a>
+          <a v-if="safeHttpUrl(item.purchaseLink)" :href="safeHttpUrl(item.purchaseLink) || undefined" class="mt-1 inline-block text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">购买链接</a>
+          <span v-else-if="item.purchaseLink" class="mt-1 inline-block break-all text-[12px] text-[var(--mn-muted)]">{{ item.purchaseLink }}</span>
         </div>
         <form class="flex items-center gap-2" @submit.prevent="restock(item.id)">
           <label class="sr-only" :for="`restock-${item.id}`">补货数量</label>
@@ -149,7 +154,8 @@ async function remove() {
         </div>
         <div>
           <label class="text-[13px] font-medium" for="consumable-link">购买链接</label>
-          <input id="consumable-link" v-model="purchaseLink" class="form-input mt-1.5 h-10" :disabled="busy" />
+          <input id="consumable-link" v-model="purchaseLink" class="form-input mt-1.5 h-10" maxlength="500" :disabled="busy" />
+          <p v-if="linkError" class="mt-1 text-[12px] text-[#9d3b34]">{{ linkError }}</p>
         </div>
       </form>
       <template #footer>

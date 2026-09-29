@@ -183,6 +183,38 @@ export function validateCompletionDraft(input: CompletionDraftInput): Record<str
   return errors
 }
 
+const PURCHASE_LINK_MAX = 500
+
+/** 空链接合法。非空时必须能被 URL 解析，且协议只能是 http: 或 https:。 */
+export function purchaseLinkError(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  if (trimmed.length > PURCHASE_LINK_MAX) return '购买链接不能超过 500 个字符'
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol === 'http:' || url.protocol === 'https:') return ''
+  } catch {
+    // 解析失败与 javascript/data 等协议共用同一句提示。
+  }
+  return '购买链接只接受 http 或 https'
+}
+
+/**
+ * 绑定 href 前再解析一次。只有 http/https 才返回可导航地址，其它情况返回 null。
+ * 返回的是解析后的 href，不把原始字符串直接放进链接。
+ */
+export function safeHttpUrl(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim() ?? ''
+  if (!trimmed) return null
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.href
+  } catch {
+    return null
+  }
+}
+
 export function parseAliases(raw: string): string[] {
   return raw
     .split(/[,，\n]/)
