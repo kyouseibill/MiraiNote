@@ -200,6 +200,7 @@ public class HouseholdCycleRulesTests
     }
 
     [Theory]
+    [InlineData("javascript:alert(1)")]
     [InlineData("JAVASCRIPT:alert(1)")]
     [InlineData(" javascript:alert(1)")]
     [InlineData("\tjavascript:alert(1)")]
@@ -208,6 +209,10 @@ public class HouseholdCycleRulesTests
     [InlineData("data:text/html,<script>alert(1)</script>")]
     [InlineData("vbscript:msgbox(1)")]
     [InlineData("/foo")]
+    [InlineData("example.com/filter")]
+    [InlineData("http://")]
+    [InlineData("https://")]
+    [InlineData(" HTTPS:// ")]
     public void PurchaseLink_RejectsUnsafeValues(string value)
     {
         var ex = Assert.Throws<BusinessException>(() => HouseholdText.CleanPurchaseLink(value));
@@ -215,13 +220,10 @@ public class HouseholdCycleRulesTests
     }
 
     [Theory]
-    [InlineData("http://")]
-    [InlineData("https://")]
     [InlineData("http://example.com")]
     [InlineData("https://example.com")]
     [InlineData("https://example.com/item")]
     [InlineData(" HTTP://shop.example/a ")]
-    [InlineData(" HTTPS:// ")]
     public void PurchaseLink_AllowsHttpAndHttps(string value)
     {
         Assert.Equal(value.Trim(), HouseholdText.CleanPurchaseLink(value));

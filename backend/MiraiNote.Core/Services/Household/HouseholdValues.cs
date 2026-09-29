@@ -37,7 +37,8 @@ internal static class HouseholdText
 
     /// <summary>
     /// 购买链接只接受 http/https 绝对地址。空值保持为空。
-    /// 相对路径、javascript/data/vbscript 以及夹杂空白的伪协议都返回 400。
+    /// 必须 Uri.TryCreate 成功且 Scheme 为 http 或 https。没有主机的 http://、相对路径、
+    /// javascript/data/vbscript 以及夹杂空白的伪协议都返回 400。
     /// </summary>
     public static string? CleanPurchaseLink(string? value)
     {
@@ -50,14 +51,6 @@ internal static class HouseholdText
 
         if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
             && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            return trimmed;
-        }
-
-        // .NET 9 的 Uri.TryCreate 拒绝没有主机的 http:// / https://。
-        // 这两个值不是脚本协议，按允许的协议放行。
-        if (trimmed.Equals("http://", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("https://", StringComparison.OrdinalIgnoreCase))
         {
             return trimmed;
         }
