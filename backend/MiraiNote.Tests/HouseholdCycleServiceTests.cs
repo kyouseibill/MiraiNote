@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Xunit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services.Household;
 using MiraiNote.Data.Context;
@@ -643,6 +644,106 @@ public class HouseholdCycleServiceTests
         Assert.Equal(3, (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).CurrentStock);
     }
 
+    [Fact]
+    public async Task Complete_UnderRetryingExecutionStrategy_CommitsInsteadOfRejectingUserTransaction()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0), useRetryingExecutionStrategy: true);
+        var strategy = fx.Db.Database.CreateExecutionStrategy();
+        Assert.True(strategy.RetriesOnFailure);
+
+        // EF 9 的 BeginTransaction 自己走执行策略，不会当场抛。旧写法是先开事务再 SaveChanges，
+        // 这时策略发现已有用户事务，抛出与生产 SqlServerRetryingExecutionStrategy 相同的异常。
+        InvalidOperationException raw;
+        await using (var tx = await fx.Db.Database.BeginTransactionAsync())
+        {
+            raw = await Assert.ThrowsAsync<InvalidOperationException>(() => fx.Db.SaveChangesAsync());
+            await tx.RollbackAsync();
+        }
+
+        Assert.Contains("user-initiated transactions", raw.Message, StringComparison.OrdinalIgnoreCase);
+        fx.Db.ChangeTracker.Clear();
+
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 4
+        });
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "净水器 PP 棉", new DateOnly(2026, 4, 1), 6, consumable.Id);
+        var done = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 1),
+            ConsumableQuantity = 1
+        });
+
+        Assert.Equal(new DateOnly(2026, 9, 1), done.Item.LastDoneDate);
+        Assert.Equal(3, done.ConsumableStockAfter);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+        Assert.Equal(0, HouseholdItemService.CompletionGateCount);
+    }
+
+    [Fact]
+    public async Task EarlierCompletion_WithRenewalExpiry_IsRejected()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var item = await fx.CreateOneOffAsync("护照", new DateOnly(2026, 9, 1));
+        await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 20)
+        });
+
+        var rejected = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 1),
+            NewExpiryDate = new DateOnly(2027, 6, 1)
+        }));
+        Assert.Equal(400, rejected.StatusCode);
+        Assert.Equal(HouseholdItemService.BackfillRenewalMessage, rejected.Message);
+
+        var reloaded = await fx.Items.GetAsync(fx.OwnerId, item.Id);
+        Assert.Equal(new DateOnly(2026, 9, 1), reloaded.ExpiryDate);
+        Assert.Equal(new DateOnly(2026, 9, 20), reloaded.LastDoneDate);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+    }
+
+    [Fact]
+    public async Task IdempotencyKey_IsScopedToUser_AndRejectsADifferentBody()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var memberId = await fx.AddUserAsync("member");
+        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "滤芯",
+            CurrentStock = 5
+        });
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "净水器", new DateOnly(2026, 4, 1), 6, consumable.Id);
+        var request = new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 1),
+            ConsumableQuantity = 1
+        };
+
+        var first = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request, "same-key");
+        var mismatch = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 2),
+            ConsumableQuantity = 1
+        }, "same-key"));
+        Assert.Equal(422, mismatch.StatusCode);
+        Assert.Equal(HouseholdItemService.IdempotencyBodyMismatchMessage, mismatch.Message);
+        Assert.Equal(4, (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).CurrentStock);
+        Assert.Equal(first.Record.Id, (await fx.Items.HistoryAsync(fx.OwnerId, item.Id)).Single(r => r.CompletedOn == new DateOnly(2026, 9, 1)).Id);
+
+        var otherUser = await fx.Items.CompleteAsync(memberId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 3),
+            SkipConsumableDeduction = true
+        }, "same-key");
+        Assert.NotEqual(first.Record.Id, otherUser.Record.Id);
+        Assert.Equal(new DateOnly(2027, 3, 3), otherUser.Item.NextDueDate);
+        Assert.Equal(0, HouseholdItemService.CompletionGateCount);
+    }
+
     private static DateTimeOffset Utc(int year, int month, int day, int hour, int minute) =>
         new(year, month, day, hour, minute, 0, TimeSpan.Zero);
 
@@ -658,10 +759,15 @@ public class HouseholdCycleServiceTests
         public HouseholdConsumableService Consumables { get; }
         public int OwnerId { get; }
 
-        public HouseholdFixture(DateTimeOffset utcNow)
+        public HouseholdFixture(DateTimeOffset utcNow, bool useRetryingExecutionStrategy = false)
         {
             _fx = new MiraiTestFixture();
-            Db = _fx.CreateContext();
+            Db = useRetryingExecutionStrategy
+                ? new MiraiNoteDbContext(new DbContextOptionsBuilder<MiraiNoteDbContext>()
+                    .UseSqlite(_fx.ConnectionString, sqlite =>
+                        sqlite.ExecutionStrategy(dependencies => new HouseholdRetryingExecutionStrategy(dependencies)))
+                    .Options)
+                : _fx.CreateContext();
             OwnerId = Db.Users.Single().Id;
             _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(new FixedTimeProvider(utcNow)));
             var access = new HouseholdAccessService(Db);
@@ -715,5 +821,19 @@ public class HouseholdCycleServiceTests
             await Db.DisposeAsync();
             _fx.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 测试替身：<see cref="RetriesOnFailure"/> 为 true，因此直接 <c>BeginTransaction</c> 会抛出
+    /// 与生产环境 SqlServerRetryingExecutionStrategy 相同的 InvalidOperationException。
+    /// </summary>
+    private sealed class HouseholdRetryingExecutionStrategy : ExecutionStrategy
+    {
+        public HouseholdRetryingExecutionStrategy(ExecutionStrategyDependencies dependencies)
+            : base(dependencies, maxRetryCount: 3, maxRetryDelay: TimeSpan.FromMilliseconds(10))
+        {
+        }
+
+        protected override bool ShouldRetryOn(Exception exception) => false;
     }
 }

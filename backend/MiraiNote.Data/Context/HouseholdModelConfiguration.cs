@@ -69,9 +69,10 @@ internal static class HouseholdModelConfiguration
         var entity = modelBuilder.Entity<HouseholdCompletionRecord>();
         entity.Property(r => r.Cost).HasPrecision(18, 2);
         entity.Property(r => r.IdempotencyKey).HasMaxLength(100);
+        entity.Property(r => r.RequestBodyHash).HasMaxLength(64);
         entity.Property(r => r.SubmissionFingerprint).HasMaxLength(64);
         entity.HasIndex(r => new { r.HouseholdItemId, r.CompletedOn });
-        entity.HasIndex(r => new { r.HouseholdItemId, r.IdempotencyKey })
+        entity.HasIndex(r => new { r.HouseholdItemId, r.IdempotencyUserId, r.IdempotencyKey })
             .IsUnique()
             .HasFilter("[IdempotencyKey] IS NOT NULL AND [IsDeleted] = 0");
 

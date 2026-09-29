@@ -58,9 +58,16 @@ public class HouseholdCompletionRecord : BaseEntity
     /// <summary>一次性到期事项续期时写入的新到期日。补记更早日期时只记在这条历史上。</summary>
     public DateOnly? NewExpiryDate { get; set; }
 
-    /// <summary>可选的 Idempotency-Key。同一事项重复使用同一键时返回第一次的结果。</summary>
+    /// <summary>发起完成的用户。幂等键按（用户、事项、键）区分，不是全家庭共用。</summary>
+    public int? IdempotencyUserId { get; set; }
+
+    /// <summary>可选的 Idempotency-Key。同一用户对同一事项重复使用同一键且请求体一致时返回第一次的结果。</summary>
     [MaxLength(100)]
     public string? IdempotencyKey { get; set; }
+
+    /// <summary>请求体哈希。同一键配上不同内容时拒绝，而不是再执行一次。</summary>
+    [MaxLength(64)]
+    public string? RequestBodyHash { get; set; }
 
     /// <summary>完成请求指纹。短时间内相同指纹只接受一次，用来挡住连续点击。</summary>
     [MaxLength(64)]
