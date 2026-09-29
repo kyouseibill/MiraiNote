@@ -39,6 +39,18 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, title: '生活记录' },
       },
       {
+        path: 'household',
+        name: 'household',
+        component: () => import('@/views/household/HouseholdView.vue'),
+        meta: { requiresAuth: true, title: '家务周期' },
+      },
+      {
+        path: 'household/items/:id',
+        name: 'household-item',
+        component: () => import('@/views/household/HouseholdItemView.vue'),
+        meta: { requiresAuth: true, title: '家务事项' },
+      },
+      {
         path: 'work/reports',
         name: 'work-reports',
         component: () => import('@/views/work/WeeklyReportView.vue'),
@@ -114,7 +126,7 @@ router.beforeEach(async (to) => {
   // 本地设计预览：仅在 Vite 开发环境生效，便于在无后端时进行视觉回归检查。
   if (
     import.meta.env.DEV
-    && ['dashboard', 'life-logs'].includes(String(to.name))
+    && ['dashboard', 'life-logs', 'household', 'household-item'].includes(String(to.name))
     && to.query.designPreview === '1'
     && !auth.isAuthenticated
   ) {
