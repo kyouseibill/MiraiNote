@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { IconLoader2 } from '@tabler/icons-vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import type { HouseholdNotificationChannel, HouseholdNotificationSettings } from '@/types/household'
-import { barkAddressError, canonicalHttpsUrl } from '@/utils/householdFormat'
+import { barkAddressError, barkReentryMessage, canonicalHttpsUrl, deliveryFailureText } from '@/utils/householdFormat'
 
 const { toast, store, report } = useHouseholdFeedback()
 const loading = ref(true)
@@ -23,10 +23,13 @@ const clearBark = ref(false)
 const settings = computed(() => store.notificationSettings)
 const barkHint = computed(() => {
   if (clearBark.value) return '保存后会清除已保存的 Bark 地址'
+  if (settings.value?.barkAddressUnreadable) return '留空则不修改。重新粘贴地址后保存即可。'
   if (!settings.value?.barkConfigured) return 'Bark 地址等同密钥，保存后只显示末 4 位'
   const suffix = settings.value.barkAddressSuffix
   return suffix ? `已配置 ····${suffix}。留空则不修改` : '已配置。留空则不修改'
 })
+const barkFailureText = computed(() => deliveryFailureText(settings.value?.barkFailure))
+const emailFailureText = computed(() => deliveryFailureText(settings.value?.emailFailure))
 
 function apply(next: HouseholdNotificationSettings) {
   barkEnabled.value = next.barkEnabled
@@ -145,20 +148,26 @@ async function sendTest(kind: 'bark' | 'email') {
     <form v-else class="max-w-xl space-y-5" @submit.prevent="save">
       <fieldset class="space-y-3 rounded-md border border-[var(--mn-line)] px-4 py-4">
         <legend class="px-1 text-[13px] font-medium">Bark</legend>
+        <p v-if="settings?.barkAddressUnreadable" role="alert" data-testid="bark-reentry" class="rounded-md border border-[#e4bbb7] bg-[#fff5f3] px-3 py-2 text-[13px] leading-6 text-[#9d3b34]">
+          {{ barkReentryMessage }}
+        </p>
+        <p v-if="barkFailureText" role="status" data-testid="bark-delivery-failure" class="rounded-md border border-[#e4d3a8] bg-[#fffaf0] px-3 py-2 text-[13px] leading-6 text-[#6d5a2d]">
+          {{ barkFailureText }}
+        </p>
         <label class="flex items-center gap-2 text-[13px]">
           <input v-model="barkEnabled" type="checkbox" :disabled="saving" />
           开启 Bark
         </label>
         <div>
           <label class="text-[13px] font-medium" for="notify-bark">Bark 地址</label>
-          <input id="notify-bark" v-model="barkAddress" type="password" autocomplete="off" class="form-input mt-1.5 h-10" :placeholder="settings?.barkConfigured ? '留空则不修改' : 'https://'" :disabled="saving || clearBark" />
+          <input id="notify-bark" v-model="barkAddress" type="password" autocomplete="off" class="form-input mt-1.5 h-10" :placeholder="settings?.barkConfigured && !settings?.barkAddressUnreadable ? '留空则不修改' : 'https://'" :disabled="saving || clearBark" />
           <p class="mt-1 text-[12px] text-[var(--mn-muted)]">{{ barkHint }}</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px]" :disabled="saving || testingBark" @click="sendTest('bark')">
             {{ testingBark ? '发送中…' : '发送测试' }}
           </button>
-          <button v-if="settings?.barkConfigured" type="button" class="h-9 px-3 text-[13px] text-[#b4493f]" :disabled="saving" @click="clearBark = !clearBark">
+          <button v-if="settings?.barkConfigured || settings?.barkAddressUnreadable" type="button" class="h-9 px-3 text-[13px] text-[#b4493f]" :disabled="saving" @click="clearBark = !clearBark">
             {{ clearBark ? '取消清除' : '清除地址' }}
           </button>
         </div>
@@ -166,6 +175,9 @@ async function sendTest(kind: 'bark' | 'email') {
 
       <fieldset class="space-y-3 rounded-md border border-[var(--mn-line)] px-4 py-4">
         <legend class="px-1 text-[13px] font-medium">邮件</legend>
+        <p v-if="emailFailureText" role="status" data-testid="email-delivery-failure" class="rounded-md border border-[#e4d3a8] bg-[#fffaf0] px-3 py-2 text-[13px] leading-6 text-[#6d5a2d]">
+          {{ emailFailureText }}
+        </p>
         <label class="flex items-center gap-2 text-[13px]">
           <input v-model="emailEnabled" type="checkbox" :disabled="saving" />
           开启邮件

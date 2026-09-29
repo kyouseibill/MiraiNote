@@ -165,6 +165,10 @@ internal static class HouseholdModelConfiguration
     {
         var entity = modelBuilder.Entity<HouseholdConsumableReminder>();
         entity.Property(r => r.Channel).HasConversion<string>().HasMaxLength(16);
+        entity.Property(r => r.Status).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdReminderDeliveryStatus.Sent)
+            .HasSentinel((HouseholdReminderDeliveryStatus)0);
+        entity.Property(r => r.LastError).HasMaxLength(200);
         entity.HasIndex(r => new { r.ConsumableId, r.MemberId, r.Channel })
             .IsUnique()
             .HasFilter("[IsDeleted] = 0");

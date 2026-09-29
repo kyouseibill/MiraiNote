@@ -396,6 +396,25 @@ public class HouseholdNotificationSettingsDto
 
     /// <summary>服务器总开关。关闭时到点不推送，设置和发送测试仍可用。</summary>
     public bool NotificationsEnabled { get; set; }
+
+    /// <summary>密文无法用当前密钥解开。为 true 时不要再显示「已配置」。</summary>
+    public bool BarkAddressUnreadable { get; set; }
+
+    /// <summary>该通道最近一次投递是失败，且之后没有成功。成功之后为 null。</summary>
+    public HouseholdNotificationDeliveryFailureDto? BarkFailure { get; set; }
+
+    /// <summary>该通道最近一次投递是失败，且之后没有成功。成功之后为 null。</summary>
+    public HouseholdNotificationDeliveryFailureDto? EmailFailure { get; set; }
+}
+
+/// <summary>设置页上的投递失败提示。原因是固定分类，不含地址、密钥或异常细节。</summary>
+public class HouseholdNotificationDeliveryFailureDto
+{
+    /// <summary>失败时间，Asia/Shanghai。</summary>
+    public DateTimeOffset FailedAt { get; set; }
+
+    /// <summary>超时、连接失败或发送失败。</summary>
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class UpdateHouseholdNotificationSettingsRequest

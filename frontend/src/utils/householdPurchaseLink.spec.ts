@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { barkAddressError, canonicalHttpsUrl, canonicalHttpUrl, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
+import { barkAddressError, barkReentryMessage, canonicalHttpsUrl, canonicalHttpUrl, deliveryFailureText, purchaseLinkError, safeHttpUrl } from '@/utils/householdFormat'
 
 /**
  * 与后端 HouseholdCycleRulesTests 的购买链接用例同一组（PRD 6-8b）。
@@ -76,5 +76,16 @@ describe('Bark 地址', () => {
 
   it('提示文案只提 https', () => {
     expect(barkAddressError).toBe('Bark 地址只接受 https')
+  })
+
+  it('投递失败按上海时间显示分类，成功后不再显示', () => {
+    expect(deliveryFailureText({ failedAt: '2026-10-08T01:05:00.000Z', reason: '发送失败' }))
+      .toBe('最近一次投递失败：2026-10-08 09:05（北京时间）。原因：发送失败。请点发送测试检查。')
+    expect(deliveryFailureText({ failedAt: '2026-10-08T01:07:00.000Z', reason: '连接失败' }))
+      .toContain('2026-10-08 09:07')
+    expect(deliveryFailureText(null)).toBe('')
+    expect(deliveryFailureText(undefined)).toBe('')
+    expect(barkReentryMessage).toBe('保存的 Bark 地址无法读取，请重新填写。')
+    expect(barkReentryMessage).not.toContain('已配置')
   })
 })

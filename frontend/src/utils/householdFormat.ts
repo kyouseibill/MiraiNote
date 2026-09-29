@@ -193,6 +193,36 @@ export const duplicateCompletionMessage = '刚刚已提交过，请稍后再试'
 /** Bark 推送地址只接受 https。主机白名单由服务器判断。 */
 export const barkAddressError = 'Bark 地址只接受 https'
 
+/** 密钥对不上时，设置页不再显示「已配置」。 */
+export const barkReentryMessage = '保存的 Bark 地址无法读取，请重新填写。'
+
+export const deliveryFailureCheckMessage = '请点发送测试检查。'
+
+/** 把失败时间格式化成用户时区。没有单独的用户时区时用 Asia/Shanghai。 */
+export function formatDeliveryFailureTime(iso: string, timeZone = 'Asia/Shanghai'): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+/** 失败之后又成功时传空，调用方就不显示警告。 */
+export function deliveryFailureText(failure: { failedAt: string; reason: string } | null | undefined, timeZone = 'Asia/Shanghai'): string {
+  if (!failure?.failedAt || !failure.reason) return ''
+  const when = formatDeliveryFailureTime(failure.failedAt, timeZone)
+  if (!when) return ''
+  return `最近一次投递失败：${when}（北京时间）。原因：${failure.reason}。${deliveryFailureCheckMessage}`
+}
+
 /**
  * 只接受带主机名的 http/https，并返回解析后的绝对地址。
  * `http:evil.com`、`http:///evil`、javascript、data，以及控制字符、零宽字符都拒绝。

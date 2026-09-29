@@ -530,8 +530,9 @@ export const useHouseholdStore = defineStore('household', () => {
   function defaultNotificationSettings(): HouseholdNotificationSettings {
     return {
       barkEnabled: true,
-      barkConfigured: false,
-      barkAddressSuffix: null,
+      barkConfigured: true,
+      barkAddressSuffix: '9f3a',
+      barkAddressUnreadable: false,
       emailEnabled: true,
       email: 'preview@mirainote.local',
       pushHour: 9,
@@ -540,6 +541,8 @@ export const useHouseholdStore = defineStore('household', () => {
       dueChannel: 'Bark',
       overdueIntervalDays: 3,
       notificationsEnabled: false,
+      barkFailure: { failedAt: '2026-10-08T01:05:00.000Z', reason: '发送失败' },
+      emailFailure: { failedAt: '2026-10-08T01:07:00.000Z', reason: '连接失败' },
     }
   }
 
@@ -569,9 +572,11 @@ export const useHouseholdStore = defineStore('household', () => {
       if (payload.clearBarkAddress) {
         next.barkConfigured = false
         next.barkAddressSuffix = null
+        next.barkAddressUnreadable = false
       } else if (payload.barkAddress?.trim()) {
         next.barkConfigured = true
         next.barkAddressSuffix = payload.barkAddress.trim().slice(-4)
+        next.barkAddressUnreadable = false
       }
       notificationSettings.value = next
       return next

@@ -213,10 +213,16 @@ export interface SaveHouseholdConsumablePayload {
 
 export type HouseholdNotificationChannel = 'Email' | 'Bark'
 
+export interface HouseholdNotificationDeliveryFailure {
+  failedAt: string
+  reason: string
+}
+
 export interface HouseholdNotificationSettings {
   barkEnabled: boolean
   barkConfigured: boolean
   barkAddressSuffix: string | null
+  barkAddressUnreadable: boolean
   emailEnabled: boolean
   email: string | null
   pushHour: number
@@ -225,6 +231,8 @@ export interface HouseholdNotificationSettings {
   dueChannel: HouseholdNotificationChannel
   overdueIntervalDays: number
   notificationsEnabled: boolean
+  barkFailure: HouseholdNotificationDeliveryFailure | null
+  emailFailure: HouseholdNotificationDeliveryFailure | null
 }
 
 export interface UpdateHouseholdNotificationSettingsPayload {

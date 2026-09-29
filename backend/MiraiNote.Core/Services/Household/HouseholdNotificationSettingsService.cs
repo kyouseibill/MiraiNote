@@ -54,7 +54,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var setting = await _db.HouseholdNotificationSettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.MemberId == ctx.Member.Id, ct);
-        return ToDto(setting, await AccountEmailAsync(userId, ct));
+        return await WithDeliveriesAsync(ToDto(setting, await AccountEmailAsync(userId, ct)), ctx.Member.Id, ct);
     }
 
     public async Task<HouseholdNotificationSettingsDto> UpdateAsync(
@@ -86,7 +86,7 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
             throw;
         }
 
-        return ToDto(setting, accountEmail);
+        return await WithDeliveriesAsync(ToDto(setting, accountEmail), ctx.Member.Id, ct);
     }
 
     public async Task SendBarkTestAsync(int userId, string? barkAddress, CancellationToken ct = default)
@@ -155,11 +155,13 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
     private HouseholdNotificationSettingsDto ToDto(HouseholdNotificationSetting? setting, string accountEmail)
     {
         setting ??= new HouseholdNotificationSetting();
+        var readable = TryReadBark(setting.BarkAddressProtected);
         return new HouseholdNotificationSettingsDto
         {
             BarkEnabled = setting.BarkEnabled,
-            BarkConfigured = !string.IsNullOrEmpty(setting.BarkAddressProtected),
-            BarkAddressSuffix = setting.BarkAddressSuffix,
+            BarkConfigured = readable,
+            BarkAddressUnreadable = !readable && !string.IsNullOrEmpty(setting.BarkAddressProtected),
+            BarkAddressSuffix = readable ? setting.BarkAddressSuffix : null,
             EmailEnabled = setting.EmailEnabled,
             Email = accountEmail,
             PushHour = setting.PushHour,
@@ -170,6 +172,80 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
             NotificationsEnabled = _options.Notifications.Enabled
         };
     }
+
+    private bool TryReadBark(string? protectedPayload)
+    {
+        if (string.IsNullOrEmpty(protectedPayload))
+            return false;
+        try
+        {
+            _protector.Unprotect(protectedPayload);
+            return true;
+        }
+        catch (BusinessException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<HouseholdNotificationSettingsDto> WithDeliveriesAsync(
+        HouseholdNotificationSettingsDto dto, int memberId, CancellationToken ct)
+    {
+        var attempts = await LoadDeliveryAttemptsAsync(memberId, ct);
+        dto.BarkFailure = LatestFailure(attempts, HouseholdNotificationChannel.Bark);
+        dto.EmailFailure = LatestFailure(attempts, HouseholdNotificationChannel.Email);
+        return dto;
+    }
+
+    private async Task<List<DeliveryAttempt>> LoadDeliveryAttemptsAsync(int memberId, CancellationToken ct)
+    {
+        var reminders = await _db.HouseholdReminderLogs.AsNoTracking()
+            .Where(r => r.MemberId == memberId
+                && (r.Status == HouseholdReminderDeliveryStatus.Sent || r.Status == HouseholdReminderDeliveryStatus.Failed))
+            .Select(r => new DeliveryAttempt(r.Channel, r.Status, r.LastAttemptAt ?? r.UpdatedAt, r.LastError, r.Id))
+            .ToListAsync(ct);
+        var restocks = await _db.HouseholdConsumableReminders.AsNoTracking()
+            .Where(r => r.MemberId == memberId
+                && (r.Status == HouseholdReminderDeliveryStatus.Sent || r.Status == HouseholdReminderDeliveryStatus.Failed))
+            .Select(r => new DeliveryAttempt(r.Channel, r.Status, r.LastAttemptAt ?? r.UpdatedAt, r.LastError, r.Id))
+            .ToListAsync(ct);
+        reminders.AddRange(restocks);
+        return reminders;
+    }
+
+    private static HouseholdNotificationDeliveryFailureDto? LatestFailure(
+        List<DeliveryAttempt> attempts, HouseholdNotificationChannel channel)
+    {
+        var latest = attempts
+            .Where(attempt => attempt.Channel == channel)
+            .OrderByDescending(attempt => attempt.At)
+            .ThenByDescending(attempt => attempt.Status == HouseholdReminderDeliveryStatus.Sent)
+            .ThenByDescending(attempt => attempt.Id)
+            .FirstOrDefault();
+        if (latest == null || latest.Status != HouseholdReminderDeliveryStatus.Failed)
+            return null;
+
+        return new HouseholdNotificationDeliveryFailureDto
+        {
+            FailedAt = ToShanghai(latest.At),
+            Reason = HouseholdDeliveryFailure.Classify(latest.Error)
+        };
+    }
+
+    private static DateTimeOffset ToShanghai(DateTime utc)
+    {
+        var specified = utc.Kind == DateTimeKind.Local
+            ? utc.ToUniversalTime()
+            : DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return TimeZoneInfo.ConvertTime(new DateTimeOffset(specified), ShanghaiClock.Resolve());
+    }
+
+    private sealed record DeliveryAttempt(
+        HouseholdNotificationChannel Channel,
+        HouseholdReminderDeliveryStatus Status,
+        DateTime At,
+        string? Error,
+        int Id);
 
     private async Task<string> AccountEmailAsync(int userId, CancellationToken ct)
     {

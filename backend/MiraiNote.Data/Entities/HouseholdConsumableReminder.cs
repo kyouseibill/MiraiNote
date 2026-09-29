@@ -24,4 +24,14 @@ public class HouseholdConsumableReminder : BaseEntity
     public HouseholdMember? Member { get; set; }
 
     public HouseholdNotificationChannel Channel { get; set; }
+
+    /// <summary>投递结果。已有行在迁移里默认记为 Sent，避免把历史补货提醒显示成失败。</summary>
+    public HouseholdReminderDeliveryStatus Status { get; set; } = HouseholdReminderDeliveryStatus.Pending;
+
+    /// <summary>最近一次尝试的 UTC 时间。</summary>
+    public DateTime? LastAttemptAt { get; set; }
+
+    /// <summary>失败摘要。只记异常类型，不记 Bark 地址、密钥或 SMTP 凭据。</summary>
+    [MaxLength(200)]
+    public string? LastError { get; set; }
 }

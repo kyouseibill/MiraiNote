@@ -618,6 +618,159 @@ public class HouseholdNotificationTests
         Assert.DoesNotContain("device-key", log.LastError);
     }
 
+    [Fact]
+    public async Task RestockEmail_DoesNotSpendQuotaOnRemindedMembers_AndRetriesAfterRateLimit()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var otherId = await lab.AddUserAsync("linxia");
+        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(hour: 9, due: HouseholdNotificationChannel.Email));
+        await lab.Settings.UpdateAsync(otherId, SettingsWith(hour: 10, due: HouseholdNotificationChannel.Email));
+        await lab.Consumables.CreateAsync(lab.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 0,
+            RestockThreshold = 1
+        });
+        for (var i = 0; i < 3; i++)
+            await lab.CreateDueTodayAsync("已到期" + i);
+
+        await lab.DispatchAsync();
+        Assert.Equal(3, lab.Email.Sent.Count);
+        Assert.All(lab.Email.Sent, mail => Assert.Equal("tester@example.com", mail.To));
+        Assert.DoesNotContain(lab.Email.Sent, mail => mail.Subject.Contains("补货", StringComparison.Ordinal));
+        Assert.Equal(0, await lab.Db.HouseholdConsumableReminders.CountAsync());
+        Assert.False(await LowStockFlagAsync(lab));
+
+        lab.Email.Sent.Clear();
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Contains("补货", lab.Email.Sent[0].Subject, StringComparison.Ordinal);
+        Assert.Equal("tester@example.com", lab.Email.Sent[0].To);
+        Assert.Equal(1, await lab.Db.HouseholdConsumableReminders.CountAsync());
+        Assert.False(await LowStockFlagAsync(lab));
+
+        lab.Email.Sent.Clear();
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Equal(1, await lab.Db.HouseholdConsumableReminders.CountAsync());
+
+        for (var i = 0; i < 3; i++)
+            await lab.CreateDueTodayAsync("仍要发" + i);
+        await lab.DispatchAsync();
+        Assert.Equal(3, lab.Email.Sent.Count);
+        Assert.All(lab.Email.Sent, mail => Assert.Equal("tester@example.com", mail.To));
+        Assert.DoesNotContain(lab.Email.Sent, mail => mail.To == "linxia@example.com");
+    }
+
+    [Fact]
+    public async Task Settings_ShowsLatestDeliveryFailure_UntilALaterSuccess()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var item = await lab.CreateDueTodayAsync("滤网");
+        var memberId = await lab.Db.HouseholdMembers.Where(m => m.UserId == lab.OwnerId).Select(m => m.Id).SingleAsync();
+        var failedAt = new DateTime(2026, 10, 8, 1, 5, 0, DateTimeKind.Utc);
+        lab.Db.HouseholdReminderLogs.Add(new HouseholdReminderLog
+        {
+            HouseholdItemId = item.Id,
+            MemberId = memberId,
+            ReminderDate = new DateOnly(2026, 10, 8),
+            Channel = HouseholdNotificationChannel.Email,
+            Kind = "Due",
+            Status = HouseholdReminderDeliveryStatus.Failed,
+            AttemptCount = 1,
+            LastAttemptAt = failedAt,
+            LastError = "发送失败（InvalidOperationException） " + SmtpPassword + " " + BarkAddress
+        });
+        lab.Db.HouseholdReminderLogs.Add(new HouseholdReminderLog
+        {
+            HouseholdItemId = item.Id,
+            MemberId = memberId,
+            ReminderDate = new DateOnly(2026, 10, 7),
+            Channel = HouseholdNotificationChannel.Bark,
+            Kind = "Due",
+            Status = HouseholdReminderDeliveryStatus.Failed,
+            AttemptCount = 1,
+            LastAttemptAt = failedAt.AddMinutes(2),
+            LastError = "发送失败（HttpRequestException）"
+        });
+        await lab.Db.SaveChangesAsync();
+
+        var failed = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.NotNull(failed.EmailFailure);
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, failed.EmailFailure!.Reason);
+        Assert.Equal(new DateTimeOffset(2026, 10, 8, 9, 5, 0, TimeSpan.FromHours(8)), failed.EmailFailure.FailedAt);
+        Assert.NotNull(failed.BarkFailure);
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, failed.BarkFailure!.Reason);
+        Assert.Equal(new DateTimeOffset(2026, 10, 8, 9, 7, 0, TimeSpan.FromHours(8)), failed.BarkFailure.FailedAt);
+        var json = JsonSerializer.Serialize(failed);
+        Assert.DoesNotContain(SmtpPassword, json);
+        Assert.DoesNotContain(BarkAddress, json);
+        Assert.DoesNotContain("Exception", json);
+        Assert.DoesNotContain("InvalidOperation", json);
+
+        var emailLog = await lab.Db.HouseholdReminderLogs.SingleAsync(r => r.Channel == HouseholdNotificationChannel.Email);
+        emailLog.Status = HouseholdReminderDeliveryStatus.Sent;
+        emailLog.LastAttemptAt = failedAt.AddMinutes(10);
+        emailLog.LastError = null;
+        await lab.Db.SaveChangesAsync();
+
+        var recovered = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.Null(recovered.EmailFailure);
+        Assert.NotNull(recovered.BarkFailure);
+
+        var consumable = await lab.Consumables.CreateAsync(lab.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 0
+        });
+        lab.Db.HouseholdConsumableReminders.Add(new HouseholdConsumableReminder
+        {
+            ConsumableId = consumable.Id,
+            MemberId = memberId,
+            Channel = HouseholdNotificationChannel.Email,
+            Status = HouseholdReminderDeliveryStatus.Failed,
+            LastAttemptAt = failedAt.AddHours(2),
+            LastError = "发送失败（TaskCanceledException）"
+        });
+        await lab.Db.SaveChangesAsync();
+
+        var restockFailed = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.NotNull(restockFailed.EmailFailure);
+        Assert.Equal(HouseholdDeliveryFailure.TimedOut, restockFailed.EmailFailure!.Reason);
+        Assert.Equal(new DateTimeOffset(2026, 10, 8, 11, 5, 0, TimeSpan.FromHours(8)), restockFailed.EmailFailure.FailedAt);
+        Assert.DoesNotContain("TaskCanceled", JsonSerializer.Serialize(restockFailed));
+    }
+
+    [Fact]
+    public async Task Settings_UnreadableBarkAddress_IsNotShownAsConfigured()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress));
+        var rotated = new HouseholdSecretProtector(Options.Create(new HouseholdOptions
+        {
+            Notifications = new HouseholdNotificationOptions { ProtectionKey = "rotated-protection-key" }
+        }));
+        var setting = await lab.Db.HouseholdNotificationSettings.SingleAsync();
+        setting.BarkAddressProtected = rotated.Protect(BarkAddress);
+        setting.BarkAddressSuffix = "9f3a";
+        await lab.Db.SaveChangesAsync();
+
+        var dto = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.False(dto.BarkConfigured);
+        Assert.True(dto.BarkAddressUnreadable);
+        Assert.Null(dto.BarkAddressSuffix);
+        var json = JsonSerializer.Serialize(dto);
+        Assert.DoesNotContain(BarkAddress, json);
+        Assert.DoesNotContain("9f3a", json);
+        Assert.DoesNotContain("rotated-protection-key", json);
+    }
+
+    private static Task<bool> LowStockFlagAsync(NotificationLab lab) =>
+        lab.Db.HouseholdConsumables.AsNoTracking().Select(c => c.LowStockReminderSent).SingleAsync();
+
     private static int RateLimitCount(NotificationLab lab) =>
         lab.Logs.Messages.Count(message => message.Contains("达到频率上限", StringComparison.Ordinal));
 
