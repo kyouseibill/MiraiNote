@@ -17,9 +17,15 @@ public sealed class HouseholdLinkBuilder
 
     public string? ItemPage(int itemId)
     {
-        var baseUrl = _options.PublicBaseUrl?.Trim().TrimEnd('/');
-        if (string.IsNullOrEmpty(baseUrl))
+        var baseUrl = _options.PublicBaseUrl?.Trim();
+        if (string.IsNullOrEmpty(baseUrl) || HouseholdUrls.ContainsControlOrFormat(baseUrl))
             return null;
-        return $"{baseUrl}/household/items/{itemId}";
+
+        baseUrl = baseUrl.TrimEnd('/');
+        if (!HouseholdUrls.TryNormalize(baseUrl, out _))
+            return null;
+
+        var joined = $"{baseUrl}/household/items/{itemId}";
+        return HouseholdUrls.TryNormalize(joined, out var absolute) ? absolute : null;
     }
 }

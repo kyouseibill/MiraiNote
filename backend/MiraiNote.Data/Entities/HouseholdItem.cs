@@ -7,7 +7,7 @@ namespace MiraiNote.Data.Entities;
 /// <summary>
 /// 家务 / 车辆 / 证件 / 保修事项。
 /// 下次到期日持久化，便于近期到期查询；接口只读。
-/// 提前提醒天数是单事项覆盖。PR3 的提醒日志（事项 + 成员 + 日期 + 通道唯一）使用独立表，不改本表。
+/// 提前提醒天数是单事项覆盖。提醒日志在独立表，按事项、成员、日期、通道唯一。
 /// </summary>
 [Table("HouseholdItem")]
 public class HouseholdItem : BaseEntity

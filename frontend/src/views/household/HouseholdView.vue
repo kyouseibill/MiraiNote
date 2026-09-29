@@ -7,6 +7,7 @@ import HouseholdCompleteDialog from '@/components/household/HouseholdCompleteDia
 import HouseholdConsumablePanel from '@/components/household/HouseholdConsumablePanel.vue'
 import HouseholdItemFormDialog from '@/components/household/HouseholdItemFormDialog.vue'
 import HouseholdMemberPanel from '@/components/household/HouseholdMemberPanel.vue'
+import HouseholdNotificationPanel from '@/components/household/HouseholdNotificationPanel.vue'
 import HouseholdRestoreDialog from '@/components/household/HouseholdRestoreDialog.vue'
 import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
@@ -23,7 +24,7 @@ import {
 
 const { active, asMember, withPreview } = useDesignPreview()
 const { toast, store, report } = useHouseholdFeedback()
-const section = ref<'items' | 'stock' | 'members'>('items')
+const section = ref<'items' | 'stock' | 'members' | 'notifications'>('items')
 const category = ref<HouseholdCategory | ''>('')
 const includePaused = ref(true)
 const listScope = ref<'active' | 'archived'>('active')
@@ -158,6 +159,7 @@ function statusOf(item: HouseholdItem) {
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'items' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'items'" @click="section = 'items'">事项</button>
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'stock' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'stock'" @click="section = 'stock'">耗材</button>
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'members' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'members'" @click="section = 'members'">成员</button>
+      <button type="button" class="h-9 rounded-md px-3" :class="section === 'notifications' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'notifications'" @click="section = 'notifications'">通知</button>
     </div>
 
     <p v-if="pageError" role="alert" class="mb-4 rounded-md border border-[#e4bbb7] bg-[#fff5f3] px-4 py-3 text-[13px] text-[#9d3b34]">
@@ -240,7 +242,8 @@ function statusOf(item: HouseholdItem) {
     </section>
 
     <HouseholdConsumablePanel v-else-if="section === 'stock'" />
-    <HouseholdMemberPanel v-else />
+    <HouseholdMemberPanel v-else-if="section === 'members'" />
+    <HouseholdNotificationPanel v-else />
 
     <HouseholdItemFormDialog :open="formOpen" :mode="formMode" :item="editing" @close="formOpen = false" @saved="reloadItems" />
     <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="reloadItems" @refresh="reloadItems" />

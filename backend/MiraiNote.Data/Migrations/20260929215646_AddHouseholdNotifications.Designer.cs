@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MiraiNote.Data.Context;
 
@@ -11,9 +12,11 @@ using MiraiNote.Data.Context;
 namespace MiraiNote.Data.Migrations
 {
     [DbContext(typeof(MiraiNoteDbContext))]
-    partial class MiraiNoteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260929215646_AddHouseholdNotifications")]
+    partial class AddHouseholdNotifications
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -81,7 +84,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "CreatedAt");
 
-                    b.ToTable("AIActionLogs", (string)null);
+                    b.ToTable("AIActionLogs");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.AgentMemory", b =>
@@ -145,7 +148,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("AgentMemories", (string)null);
+                    b.ToTable("AgentMemories");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.AgentRun", b =>
@@ -224,7 +227,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "SessionId", "Status");
 
-                    b.ToTable("AgentRun", (string)null);
+                    b.ToTable("AgentRun");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.AgentRunEvent", b =>
@@ -270,7 +273,7 @@ namespace MiraiNote.Data.Migrations
                     b.HasIndex("RunId", "Sequence")
                         .IsUnique();
 
-                    b.ToTable("AgentRunEvent", (string)null);
+                    b.ToTable("AgentRunEvent");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.ChatMessage", b =>
@@ -314,7 +317,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("SessionId", "CreatedAt");
 
-                    b.ToTable("ChatMessage", (string)null);
+                    b.ToTable("ChatMessage");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.ChatProject", b =>
@@ -366,7 +369,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "Name");
 
-                    b.ToTable("ChatProject", (string)null);
+                    b.ToTable("ChatProject");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.ChatSession", b =>
@@ -448,7 +451,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "ProjectId", "IsPinned", "UpdatedAt");
 
-                    b.ToTable("ChatSession", (string)null);
+                    b.ToTable("ChatSession");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.DailyBriefing", b =>
@@ -500,7 +503,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("DailyBriefings", (string)null);
+                    b.ToTable("DailyBriefings");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.EmailVerifyToken", b =>
@@ -551,7 +554,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("EmailVerifyToken", (string)null);
+                    b.ToTable("EmailVerifyToken");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.Household", b =>
@@ -584,7 +587,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Household", (string)null);
+                    b.ToTable("Household");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdCompletionRecord", b =>
@@ -679,7 +682,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IdempotencyKey] IS NOT NULL AND [IsDeleted] = 0");
 
-                    b.ToTable("HouseholdCompletionRecord", (string)null);
+                    b.ToTable("HouseholdCompletionRecord");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdConsumable", b =>
@@ -744,7 +747,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("HouseholdId");
 
-                    b.ToTable("HouseholdConsumable", (string)null);
+                    b.ToTable("HouseholdConsumable");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdConsumableReminder", b =>
@@ -789,7 +792,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("HouseholdConsumableReminder", (string)null);
+                    b.ToTable("HouseholdConsumableReminder");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdItem", b =>
@@ -898,7 +901,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("HouseholdId", "IsPaused", "NextDueDate");
 
-                    b.ToTable("HouseholdItem", (string)null);
+                    b.ToTable("HouseholdItem");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdItemTemplate", b =>
@@ -953,7 +956,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("SortOrder");
 
-                    b.ToTable("HouseholdItemTemplate", (string)null);
+                    b.ToTable("HouseholdItemTemplate");
 
                     b.HasData(
                         new
@@ -1245,7 +1248,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("HouseholdMember", (string)null);
+                    b.ToTable("HouseholdMember");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdNotificationSetting", b =>
@@ -1331,7 +1334,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("HouseholdNotificationSetting", (string)null);
+                    b.ToTable("HouseholdNotificationSetting");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.HouseholdReminderLog", b =>
@@ -1341,11 +1344,6 @@ namespace MiraiNote.Data.Migrations
                         .HasColumnType("int");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("AttemptCount")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(1);
 
                     b.Property<string>("Channel")
                         .IsRequired()
@@ -1372,25 +1370,11 @@ namespace MiraiNote.Data.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
-                    b.Property<DateTime?>("LastAttemptAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("LastError")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
                     b.Property<int>("MemberId")
                         .HasColumnType("int");
 
                     b.Property<DateOnly>("ReminderDate")
                         .HasColumnType("date");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)")
-                        .HasDefaultValue("Sent");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1406,7 +1390,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("HouseholdReminderLog", (string)null);
+                    b.ToTable("HouseholdReminderLog");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.InboxItem", b =>
@@ -1468,7 +1452,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "Status", "CreatedAt");
 
-                    b.ToTable("InboxItems", (string)null);
+                    b.ToTable("InboxItems");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.LifeLog", b =>
@@ -1516,7 +1500,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "LogDate");
 
-                    b.ToTable("LifeLog", (string)null);
+                    b.ToTable("LifeLog");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.Memo", b =>
@@ -1586,7 +1570,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "Section");
 
-                    b.ToTable("Memo", (string)null);
+                    b.ToTable("Memo");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.RefreshToken", b =>
@@ -1632,7 +1616,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("RefreshToken", (string)null);
+                    b.ToTable("RefreshToken");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.ScheduledTask", b =>
@@ -1694,7 +1678,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "Status");
 
-                    b.ToTable("ScheduledTask", (string)null);
+                    b.ToTable("ScheduledTask");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.User", b =>
@@ -1757,7 +1741,7 @@ namespace MiraiNote.Data.Migrations
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
 
-                    b.ToTable("User", (string)null);
+                    b.ToTable("User");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.WeeklyReport", b =>
@@ -1806,7 +1790,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "WeekStart");
 
-                    b.ToTable("WeeklyReport", (string)null);
+                    b.ToTable("WeeklyReport");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.WeeklyReportReference", b =>
@@ -1863,7 +1847,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("WeeklyReportReference", (string)null);
+                    b.ToTable("WeeklyReportReference");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.WelcomeGreeting", b =>
@@ -1908,7 +1892,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("IsActive", "SortOrder");
 
-                    b.ToTable("WelcomeGreeting", (string)null);
+                    b.ToTable("WelcomeGreeting");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.WorkLog", b =>
@@ -1971,7 +1955,7 @@ namespace MiraiNote.Data.Migrations
 
                     b.HasIndex("UserId", "LogDate");
 
-                    b.ToTable("WorkLog", (string)null);
+                    b.ToTable("WorkLog");
                 });
 
             modelBuilder.Entity("MiraiNote.Data.Entities.AIActionLog", b =>

@@ -185,19 +185,55 @@ export function validateCompletionDraft(input: CompletionDraftInput): Record<str
 }
 
 const PURCHASE_LINK_MAX = 500
+const DISALLOWED_URL_CHARS = /\p{Cc}|\p{Cf}/u
 
-/** 空链接合法。非空时必须能被 URL 解析，且协议只能是 http: 或 https:。 */
+/** 同样内容在 3 秒内换新 key 再完成时，接口返回 409。 */
+export const duplicateCompletionMessage = '刚刚已提交过，请稍后再试'
+
+/** Bark 推送地址只接受 https。主机白名单由服务器判断。 */
+export const barkAddressError = 'Bark 地址只接受 https'
+
+/**
+ * 只接受带主机名的 http/https，并返回解析后的绝对地址。
+ * `http:evil.com`、`http:///evil`、javascript、data，以及控制字符、零宽字符都拒绝。
+ */
+export function canonicalHttpUrl(raw: string): string | null {
+  if (DISALLOWED_URL_CHARS.test(raw)) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  if (/^https?:\/\/\//i.test(trimmed)) return null
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    if (!url.hostname || url.hostname.replace(/\./g, '') === '') return null
+    return url.href
+  } catch {
+    return null
+  }
+}
+
+/** Bark 地址。购买链接仍允许 http，这里只留下 https，并且只接受 443（省略端口或显式 :443）。 */
+export function canonicalHttpsUrl(raw: string): string | null {
+  const canonical = canonicalHttpUrl(raw)
+  if (!canonical?.startsWith('https://')) return null
+  try {
+    if (new URL(canonical).port !== '') return null
+  } catch {
+    return null
+  }
+  return canonical
+}
+
+/** 空链接合法。非空时必须是有主机名的 http/https，含控制字符直接拒绝。 */
 export function purchaseLinkError(raw: string): string {
+  if (DISALLOWED_URL_CHARS.test(raw)) return '购买链接只接受 http 或 https'
   const trimmed = raw.trim()
   if (!trimmed) return ''
   if (trimmed.length > PURCHASE_LINK_MAX) return '购买链接不能超过 500 个字符'
-  try {
-    const url = new URL(trimmed)
-    if (url.protocol === 'http:' || url.protocol === 'https:') return ''
-  } catch {
-    // 解析失败与 javascript/data 等协议共用同一句提示。
-  }
-  return '购买链接只接受 http 或 https'
+  const canonical = canonicalHttpUrl(trimmed)
+  if (!canonical || canonical.length > PURCHASE_LINK_MAX) return '购买链接只接受 http 或 https'
+  return ''
 }
 
 /**
@@ -205,15 +241,12 @@ export function purchaseLinkError(raw: string): string {
  * 返回的是解析后的 href，不把原始字符串直接放进链接。
  */
 export function safeHttpUrl(raw: string | null | undefined): string | null {
-  const trimmed = raw?.trim() ?? ''
-  if (!trimmed) return null
-  try {
-    const url = new URL(trimmed)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-    return url.href
-  } catch {
-    return null
-  }
+  if (!raw || DISALLOWED_URL_CHARS.test(raw)) return null
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed.length > PURCHASE_LINK_MAX) return null
+  const canonical = canonicalHttpUrl(trimmed)
+  if (!canonical || canonical.length > PURCHASE_LINK_MAX) return null
+  return canonical
 }
 
 export function parseAliases(raw: string): string[] {

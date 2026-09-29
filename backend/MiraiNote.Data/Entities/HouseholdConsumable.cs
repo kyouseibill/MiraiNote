@@ -5,7 +5,7 @@ namespace MiraiNote.Data.Entities;
 
 /// <summary>
 /// 耗材。一个耗材可以关联多个事项。
-/// <see cref="LowStockReminderSent"/> 留给 PR5：低库存提醒发出后置 true，补货时重置。
+/// <see cref="LowStockReminderSent"/> 在本轮低库存提醒发出后置 true，补货时重置。
 /// </summary>
 [Table("HouseholdConsumable")]
 public class HouseholdConsumable : BaseEntity

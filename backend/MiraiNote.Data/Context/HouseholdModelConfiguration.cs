@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared.Dtos.Household;
 
 namespace MiraiNote.Data.Context;
 
@@ -12,6 +13,9 @@ internal static class HouseholdModelConfiguration
         ConfigureCompletion(modelBuilder);
         ConfigureConsumable(modelBuilder);
         ConfigureTemplate(modelBuilder);
+        ConfigureNotificationSetting(modelBuilder);
+        ConfigureReminderLog(modelBuilder);
+        ConfigureConsumableReminder(modelBuilder);
     }
 
     private static void ConfigureMember(ModelBuilder modelBuilder)
@@ -108,5 +112,71 @@ internal static class HouseholdModelConfiguration
         entity.Property(t => t.CycleUnit).HasConversion<string>().HasMaxLength(32);
         entity.HasIndex(t => t.SortOrder);
         entity.HasData(HouseholdItemTemplateSeed.All);
+    }
+
+    private static void ConfigureNotificationSetting(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdNotificationSetting>();
+        entity.Property(s => s.LeadChannel).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdNotificationChannel.Email)
+            .HasSentinel((HouseholdNotificationChannel)0);
+        entity.Property(s => s.DueChannel).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdNotificationChannel.Bark)
+            .HasSentinel((HouseholdNotificationChannel)0);
+        entity.Property(s => s.BarkEnabled).HasDefaultValue(true);
+        entity.Property(s => s.EmailEnabled).HasDefaultValue(true);
+        entity.Property(s => s.PushHour).HasDefaultValue(9);
+        entity.Property(s => s.PushMinute).HasDefaultValue(0);
+        entity.Property(s => s.OverdueIntervalDays).HasDefaultValue(3);
+        entity.HasIndex(s => s.MemberId).IsUnique().HasFilter("[IsDeleted] = 0");
+
+        entity.HasOne(s => s.Member)
+            .WithMany()
+            .HasForeignKey(s => s.MemberId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureReminderLog(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdReminderLog>();
+        entity.Property(r => r.Channel).HasConversion<string>().HasMaxLength(16);
+        entity.Property(r => r.Status).HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(HouseholdReminderDeliveryStatus.Sent)
+            .HasSentinel((HouseholdReminderDeliveryStatus)0);
+        entity.Property(r => r.AttemptCount).HasDefaultValue(1);
+        entity.Property(r => r.LastError).HasMaxLength(200);
+        entity.HasIndex(r => new { r.HouseholdItemId, r.MemberId, r.ReminderDate, r.Channel })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+        entity.HasIndex(r => new { r.MemberId, r.ReminderDate });
+
+        entity.HasOne(r => r.Item)
+            .WithMany()
+            .HasForeignKey(r => r.HouseholdItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(r => r.Member)
+            .WithMany()
+            .HasForeignKey(r => r.MemberId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureConsumableReminder(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdConsumableReminder>();
+        entity.Property(r => r.Channel).HasConversion<string>().HasMaxLength(16);
+        entity.HasIndex(r => new { r.ConsumableId, r.MemberId, r.Channel })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        entity.HasOne(r => r.Consumable)
+            .WithMany()
+            .HasForeignKey(r => r.ConsumableId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(r => r.Member)
+            .WithMany()
+            .HasForeignKey(r => r.MemberId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

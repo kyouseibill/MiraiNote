@@ -18,10 +18,12 @@ import type {
   HouseholdItemQuery,
   HouseholdItemTemplate,
   HouseholdMember,
+  HouseholdNotificationSettings,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
   UpdateHouseholdConsumablePayload,
   UpdateHouseholdItemPayload,
+  UpdateHouseholdNotificationSettingsPayload,
 } from '@/types/household'
 
 const archivedReadOnlyMessage = '已归档事项请先由管理员恢复'
@@ -65,6 +67,7 @@ export const useHouseholdStore = defineStore('household', () => {
   const lastQuery = ref<HouseholdItemQuery>({ includePaused: true })
   const serverToday = ref<string | null>(null)
   const serverTodayUnavailable = ref(false)
+  const notificationSettings = ref<HouseholdNotificationSettings | null>(null)
 
   const isAdmin = computed(() => household.value?.myRole === 'Admin')
   const calendarToday = computed(() => serverToday.value ?? shanghaiToday())
@@ -524,6 +527,65 @@ export const useHouseholdStore = defineStore('household', () => {
     return lifeLogApi.uploadImage(file)
   }
 
+  function defaultNotificationSettings(): HouseholdNotificationSettings {
+    return {
+      barkEnabled: true,
+      barkConfigured: false,
+      barkAddressSuffix: null,
+      emailEnabled: true,
+      email: 'preview@mirainote.local',
+      pushHour: 9,
+      pushMinute: 0,
+      leadChannel: 'Email',
+      dueChannel: 'Bark',
+      overdueIntervalDays: 3,
+      notificationsEnabled: false,
+    }
+  }
+
+  async function fetchNotificationSettings() {
+    if (previewMode.value) {
+      notificationSettings.value ??= defaultNotificationSettings()
+      return notificationSettings.value
+    }
+    notificationSettings.value = await householdApi.getNotificationSettings()
+    return notificationSettings.value
+  }
+
+  async function saveNotificationSettings(payload: UpdateHouseholdNotificationSettingsPayload) {
+    if (previewMode.value) {
+      const current = notificationSettings.value ?? defaultNotificationSettings()
+      const next: HouseholdNotificationSettings = {
+        ...current,
+        barkEnabled: payload.barkEnabled,
+        emailEnabled: payload.emailEnabled,
+        email: payload.email?.trim() || null,
+        pushHour: payload.pushHour,
+        pushMinute: payload.pushMinute,
+        leadChannel: payload.leadChannel,
+        dueChannel: payload.dueChannel,
+        overdueIntervalDays: payload.overdueIntervalDays,
+      }
+      if (payload.clearBarkAddress) {
+        next.barkConfigured = false
+        next.barkAddressSuffix = null
+      } else if (payload.barkAddress?.trim()) {
+        next.barkConfigured = true
+        next.barkAddressSuffix = payload.barkAddress.trim().slice(-4)
+      }
+      notificationSettings.value = next
+      return next
+    }
+    notificationSettings.value = await householdApi.updateNotificationSettings(payload)
+    return notificationSettings.value
+  }
+
+  async function testNotificationChannel(kind: 'bark' | 'email', value?: string | null) {
+    if (previewMode.value) return
+    if (kind === 'bark') await householdApi.testBark(value)
+    else await householdApi.testEmail(value)
+  }
+
   function consumableName(id: number | null | undefined) {
     if (id == null) return ''
     return consumables.value.find((item) => item.id === id)?.name ?? ''
@@ -566,5 +628,9 @@ export const useHouseholdStore = defineStore('household', () => {
     removeConsumable,
     uploadPhoto,
     consumableName,
+    notificationSettings,
+    fetchNotificationSettings,
+    saveNotificationSettings,
+    testNotificationChannel,
   }
 })

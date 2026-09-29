@@ -38,6 +38,9 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<HouseholdCompletionRecord> HouseholdCompletionRecords => Set<HouseholdCompletionRecord>();
     public DbSet<HouseholdConsumable> HouseholdConsumables => Set<HouseholdConsumable>();
     public DbSet<HouseholdItemTemplate> HouseholdItemTemplates => Set<HouseholdItemTemplate>();
+    public DbSet<HouseholdNotificationSetting> HouseholdNotificationSettings => Set<HouseholdNotificationSetting>();
+    public DbSet<HouseholdReminderLog> HouseholdReminderLogs => Set<HouseholdReminderLog>();
+    public DbSet<HouseholdConsumableReminder> HouseholdConsumableReminders => Set<HouseholdConsumableReminder>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)

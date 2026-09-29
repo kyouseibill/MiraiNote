@@ -9,12 +9,35 @@ public sealed class HouseholdOptions
     public const string SectionName = "Household";
 
     /// <summary>
-    /// 事项页的公网根地址，供以后的通知链接拼接。
-    /// 为空时不生成链接。不要在仓库里填写真实地址。
+    /// 事项页的公网根地址，Bark 点击和邮件里的事项链接都从这里拼。
+    /// 为空或不是 http/https 时不生成链接。不要在仓库里填写真实地址。
     /// </summary>
     public string? PublicBaseUrl { get; set; }
 
     public HouseholdTestClockOptions TestClock { get; set; } = new();
+
+    public HouseholdNotificationOptions Notifications { get; set; } = new();
+}
+
+/// <summary>
+/// 家务通知。默认关闭：到点不发送，设置页和「发送测试」仍可用。
+/// 环境变量：Household__Notifications__Enabled、Household__Notifications__ProtectionKey、
+/// Household__Notifications__BarkAllowedHosts__0。
+/// ProtectionKey 是 Bark 地址的加密密钥，只从配置读取，不写进代码。
+/// </summary>
+public sealed class HouseholdNotificationOptions
+{
+    /// <summary>默认 false。关闭时调度器不发送任何通知。</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Bark 地址加密用的密钥材料。为空时不能保存 Bark 地址。</summary>
+    public string? ProtectionKey { get; set; }
+
+    /// <summary>
+    /// 追加允许的 Bark 主机，不含协议。api.day.app 始终放行，这里不会把它拿掉。
+    /// 环境变量从 Household__Notifications__BarkAllowedHosts__0 开始。默认空。
+    /// </summary>
+    public string[] BarkAllowedHosts { get; set; } = [];
 }
 
 public sealed class HouseholdTestClockOptions
