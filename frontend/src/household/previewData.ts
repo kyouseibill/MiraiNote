@@ -72,7 +72,7 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
       modelSpec: '标准', itemType: 'Recurring', cycleValue: 3, cycleUnit: 'Month',
       lastDoneDate: '2026-06-01', nextDueDate: shiftCalendarDay(today, -2), expiryDate: null,
       leadDays: 7, assigneeMemberId: 2, assigneeName: '林夏', consumableId: 1, note: '南北两台一起换',
-      purchaseLink: null, isPaused: false, mileageCycleKm: null, aliases: ['滤网'],
+      purchaseLink: null, isPaused: false, isArchived: false, mileageCycleKm: null, aliases: ['滤网'],
       createdAt: stamp, updatedAt: stamp,
     },
     {
@@ -80,7 +80,7 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
       modelSpec: null, itemType: 'Recurring', cycleValue: 6, cycleUnit: 'Month',
       lastDoneDate: '2026-04-01', nextDueDate: shiftCalendarDay(today, 3), expiryDate: null,
       leadDays: 7, assigneeMemberId: null, assigneeName: null, consumableId: 2, note: null,
-      purchaseLink: null, isPaused: false, mileageCycleKm: null, aliases: [],
+      purchaseLink: null, isPaused: false, isArchived: false, mileageCycleKm: null, aliases: [],
       createdAt: stamp, updatedAt: stamp,
     },
     {
@@ -88,7 +88,7 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
       modelSpec: null, itemType: 'Recurring', cycleValue: 12, cycleUnit: 'Month',
       lastDoneDate: '2025-10-01', nextDueDate: shiftCalendarDay(today, 18), expiryDate: null,
       leadDays: 7, assigneeMemberId: 1, assigneeName: 'Bill', consumableId: null, note: null,
-      purchaseLink: null, isPaused: false, mileageCycleKm: 5000, aliases: [],
+      purchaseLink: null, isPaused: false, isArchived: false, mileageCycleKm: 5000, aliases: [],
       createdAt: stamp, updatedAt: stamp,
     },
     {
@@ -96,7 +96,7 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
       modelSpec: null, itemType: 'OneOffExpiry', cycleValue: null, cycleUnit: null,
       lastDoneDate: '2024-01-01', nextDueDate: shiftCalendarDay(today, 12), expiryDate: shiftCalendarDay(today, 12),
       leadDays: 30, assigneeMemberId: 1, assigneeName: 'Bill', consumableId: null, note: null,
-      purchaseLink: null, isPaused: false, mileageCycleKm: null, aliases: [],
+      purchaseLink: null, isPaused: false, isArchived: false, mileageCycleKm: null, aliases: [],
       createdAt: stamp, updatedAt: stamp,
     },
     {
@@ -104,11 +104,19 @@ export function buildHouseholdPreview(asMember: boolean): HouseholdPreviewBundle
       modelSpec: null, itemType: 'Recurring', cycleValue: 1, cycleUnit: 'Month',
       lastDoneDate: '2026-08-01', nextDueDate: shiftCalendarDay(today, -10), expiryDate: null,
       leadDays: 7, assigneeMemberId: null, assigneeName: null, consumableId: null, note: '暂停到搬家后',
-      purchaseLink: null, isPaused: true, mileageCycleKm: null, aliases: [],
+      purchaseLink: null, isPaused: true, isArchived: false, mileageCycleKm: null, aliases: [],
+      createdAt: stamp, updatedAt: stamp,
+    },
+    {
+      id: 6, householdId: 1, name: '旧签证', category: 'Document', location: null,
+      modelSpec: null, itemType: 'OneOffExpiry', cycleValue: null, cycleUnit: null,
+      lastDoneDate: '2025-01-01', nextDueDate: '2025-06-01', expiryDate: '2025-06-01',
+      leadDays: 30, assigneeMemberId: null, assigneeName: null, consumableId: null, note: null,
+      purchaseLink: null, isPaused: false, isArchived: true, mileageCycleKm: null, aliases: [],
       createdAt: stamp, updatedAt: stamp,
     },
   ]
-  const active = items.filter((item) => !item.isPaused && item.nextDueDate)
+  const active = items.filter((item) => !item.isPaused && !item.isArchived && item.nextDueDate)
   const upcoming: HouseholdUpcoming = {
     today,
     overdue: active.filter((item) => (item.nextDueDate ?? '') < today).map((item) => upcomingItem(item, today, 2, 0)),

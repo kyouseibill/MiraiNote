@@ -11,6 +11,7 @@ const toneClass: Record<ItemStatusTone, string> = {
   soon: 'text-[#4c6178]',
   ok: 'text-[#7f7a72]',
   paused: 'text-[#7f7a72]',
+  archived: 'text-[#7f7a72]',
   none: 'text-[#7f7a72]',
 }
 
@@ -19,6 +20,7 @@ const dotClass: Record<ItemStatusTone, string> = {
   soon: 'bg-[#4c6178]',
   ok: 'bg-[#c8c2b8]',
   paused: 'bg-[#c8c2b8]',
+  archived: 'bg-[#c8c2b8]',
   none: 'bg-[#c8c2b8]',
 }
 </script>

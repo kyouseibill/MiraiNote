@@ -13,6 +13,7 @@ public sealed class HouseholdAccessPolicy
     public bool OnlyAdminCanPauseItems { get; init; } = true;
     public bool OnlyAdminCanDeleteItems { get; init; } = true;
     public bool OnlyAdminCanDeleteConsumables { get; init; } = true;
+    public bool OnlyAdminCanRestoreArchivedItems { get; init; } = true;
 
     public static HouseholdAccessPolicy Default { get; } = new();
 
@@ -27,6 +28,9 @@ public sealed class HouseholdAccessPolicy
 
     public void EnsureCanDeleteConsumable(bool isAdmin) =>
         Ensure(OnlyAdminCanDeleteConsumables, isAdmin, "只有管理员可以删除耗材");
+
+    public void EnsureCanRestoreArchivedItem(bool isAdmin) =>
+        Ensure(OnlyAdminCanRestoreArchivedItems, isAdmin, "只有管理员可以恢复已归档事项");
 
     private static void Ensure(bool restricted, bool isAdmin, string message)
     {

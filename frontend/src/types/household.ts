@@ -41,6 +41,7 @@ export interface HouseholdItem {
   note: string | null
   purchaseLink: string | null
   isPaused: boolean
+  isArchived: boolean
   mileageCycleKm: number | null
   aliases: string[]
   createdAt: string
@@ -50,6 +51,12 @@ export interface HouseholdItem {
 export interface HouseholdItemQuery {
   category?: HouseholdCategory
   includePaused?: boolean
+  /** 为 true 时只看已归档事项。 */
+  archivedOnly?: boolean
+}
+
+export interface HouseholdServerToday {
+  today: string
 }
 
 export interface CreateHouseholdItemPayload {

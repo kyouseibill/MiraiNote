@@ -50,12 +50,13 @@ const tomorrow = computed(() => shiftCalendarDay(today.value, 1))
 const consumable = computed(() => store.consumables.find((entry) => entry.id === item.value?.consumableId) ?? null)
 const backfill = computed(() => Boolean(item.value?.lastDoneDate && completedOn.value && completedOn.value < item.value.lastDoneDate))
 
-function reset() {
+async function reset() {
   item.value = null
   loadError.value = ''
   serverError.value = ''
   errors.value = {}
-  today.value = shanghaiToday()
+  if (!store.previewMode) await store.fetchServerToday()
+  today.value = store.calendarToday
   completedOn.value = today.value
   memberId.value = store.household?.myMemberId ? String(store.household.myMemberId) : ''
   photos.value = []
@@ -93,8 +94,7 @@ async function load() {
 
 watch(() => props.open, (open) => {
   if (!open) return
-  reset()
-  void load()
+  void reset().then(() => load())
 })
 
 watch(backfill, (isBackfill) => {
@@ -106,7 +106,8 @@ watch(backfill, (isBackfill) => {
 async function submit() {
   if (submitting.value || uploading.value || !item.value) return
   serverError.value = ''
-  today.value = shanghaiToday()
+  if (!store.previewMode) await store.fetchServerToday()
+  today.value = store.calendarToday
   const renewing = item.value.itemType === 'OneOffExpiry' && renew.value && !backfill.value
   const linkError = purchaseLinkError(purchaseLink.value)
   errors.value = validateCompletionDraft({
@@ -199,7 +200,10 @@ async function submit() {
         <input id="complete-date" v-model="completedOn" data-dialog-autofocus type="date" class="form-input mt-1.5 h-10" :max="today" :disabled="submitting" />
         <p class="mt-1 text-[11px] text-[var(--mn-muted)]">默认今天，可以改成过去的日期。今天按北京时间，不能晚于今天。</p>
         <p v-if="errors.completedOn" class="mt-1 text-[12px] text-[#9d3b34]">{{ errors.completedOn }}</p>
-        <p v-if="backfill" class="mt-1 text-[12px] text-[#4c6178]">这个日期早于上次完成日期，只会补进历史，不会改下次到期日。{{ backfillRenewalMessage }}</p>
+        <p v-if="backfill" class="mt-1 text-[12px] text-[#4c6178]">
+          这个日期早于上次完成日期，只会补进历史，不会改下次到期日。
+          <template v-if="item.itemType === 'OneOffExpiry'">{{ backfillRenewalMessage }}</template>
+        </p>
       </div>
       <div>
         <label class="text-[13px] font-medium" for="complete-member">执行人</label>
@@ -226,10 +230,10 @@ async function submit() {
       </div>
       <div v-if="consumable" class="rounded-md border border-[var(--mn-line)] px-3 py-3">
         <p class="text-[13px] font-medium">关联耗材：{{ consumable.name }}</p>
-        <p class="mt-1 text-[11px] text-[var(--mn-muted)]">当前库存 {{ consumable.currentStock }}{{ consumable.unit || '' }}。默认扣 1，可以改数量或这次不扣。</p>
+        <p class="mt-1 text-[11px] text-[var(--mn-muted)]">当前库存 {{ consumable.currentStock }}{{ consumable.unit || '' }}。默认扣 1，可以改数量，也可以不扣减耗材。</p>
         <label class="mt-3 flex items-center gap-2 text-[13px]">
           <input v-model="skipDeduction" type="checkbox" :disabled="submitting" />
-          这次不扣减
+          不扣减耗材
         </label>
         <div v-if="!skipDeduction" class="mt-3">
           <label class="text-[13px]" for="complete-qty">扣减数量</label>
@@ -243,7 +247,7 @@ async function submit() {
           续期，并设置新的到期日
         </label>
         <p class="mt-1 text-[11px] text-[var(--mn-muted)]">
-          {{ backfill ? backfillRenewalMessage : '不续期则保持当前到期日。新的到期日必须晚于今天，也必须晚于这次的完成日期。' }}
+          {{ backfill ? backfillRenewalMessage : '不续期会归档：移出首页分组，不再提醒，也不算逾期。续期则填写新的到期日，必须晚于今天，也必须晚于这次的完成日期。' }}
         </p>
         <div v-if="renew && !backfill" class="mt-3">
           <label class="text-[13px]" for="complete-expiry">新的到期日</label>

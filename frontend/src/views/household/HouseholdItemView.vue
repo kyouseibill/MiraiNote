@@ -5,6 +5,7 @@ import { IconArrowLeft, IconLoader2 } from '@tabler/icons-vue'
 import AppDialog from '@/components/AppDialog.vue'
 import HouseholdCompleteDialog from '@/components/household/HouseholdCompleteDialog.vue'
 import HouseholdItemFormDialog from '@/components/household/HouseholdItemFormDialog.vue'
+import HouseholdRestoreDialog from '@/components/household/HouseholdRestoreDialog.vue'
 import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
@@ -18,7 +19,6 @@ import {
   itemStatus,
   itemTypeLabel,
   safeHttpUrl,
-  shanghaiToday,
 } from '@/utils/householdFormat'
 
 const route = useRoute()
@@ -30,11 +30,12 @@ const error = ref('')
 const formOpen = ref(false)
 const completeOpen = ref(false)
 const confirmDelete = ref(false)
+const restoreOpen = ref(false)
 const busy = ref(false)
 
 const itemId = computed(() => Number(route.params.id))
 const item = computed(() => store.currentItem)
-const status = computed(() => item.value ? itemStatus(item.value, shanghaiToday()) : null)
+const status = computed(() => item.value ? itemStatus(item.value, store.calendarToday) : null)
 
 async function load() {
   loading.value = true
@@ -47,8 +48,8 @@ async function load() {
   try {
     if (active.value) await store.loadWorkspace(true, asMember.value)
     else await store.loadWorkspace(false)
+    await store.fetchItem(itemId.value)
     await Promise.all([
-      store.fetchItem(itemId.value),
       store.fetchHistory(itemId.value),
       store.members.length ? Promise.resolve() : store.fetchMembers(),
       store.consumables.length ? Promise.resolve() : store.fetchConsumables(),
@@ -117,8 +118,9 @@ async function remove() {
         <p class="mt-1 text-[12px] text-[var(--mn-muted)]">由服务器计算，页面不推算周期。</p>
         <div class="mt-5 flex flex-wrap gap-2">
           <button type="button" class="h-9 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] text-white" @click="completeOpen = true">已完成</button>
+          <button v-if="store.isAdmin && item.isArchived" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="restoreOpen = true">恢复</button>
           <button v-if="store.isAdmin" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="formOpen = true">编辑</button>
-          <button v-if="store.isAdmin" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="togglePause">{{ item.isPaused ? '恢复' : '暂停' }}</button>
+          <button v-if="store.isAdmin && !item.isArchived" type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="togglePause">{{ item.isPaused ? '恢复' : '暂停' }}</button>
           <button v-if="store.isAdmin" type="button" class="h-9 px-3 text-[13px] text-[#b4493f]" :disabled="busy" @click="confirmDelete = true">删除</button>
         </div>
       </header>
@@ -151,7 +153,7 @@ async function remove() {
           <li v-for="record in store.history" :key="record.id" class="py-4">
             <p class="text-[14px] text-[var(--mn-ink)]">
               <span class="tabular-nums">{{ formatCalendarDate(record.completedOn) }}</span>
-              <span class="ml-2 text-[13px] text-[var(--mn-muted)]">{{ record.completedByUsername }} 完成</span>
+              <span class="text-[13px] text-[var(--mn-muted)]"> · {{ record.completedByUsername }} 完成</span>
             </p>
             <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
               <template v-if="record.cost != null">费用 {{ formatCost(record.cost) }} · </template>
@@ -174,6 +176,7 @@ async function remove() {
 
     <HouseholdItemFormDialog :open="formOpen" mode="edit" :item="item" @close="formOpen = false" @saved="load" />
     <HouseholdCompleteDialog :open="completeOpen" :item-id="item?.id ?? null" @close="completeOpen = false" @completed="load" @refresh="load" />
+    <HouseholdRestoreDialog :open="restoreOpen" :item="item" @close="restoreOpen = false" @restored="load" />
     <AppDialog :open="confirmDelete" title="删除事项" :description="item ? `确定删除「${item.name}」？` : ''" :busy="busy" @close="confirmDelete = false">
       <template #footer>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="confirmDelete = false">取消</button>

@@ -61,16 +61,17 @@ export function roleLabel(value: HouseholdRole): string {
   return value === 'Admin' ? '管理员' : '成员'
 }
 
-export type ItemStatusTone = 'overdue' | 'soon' | 'ok' | 'paused' | 'none'
+export type ItemStatusTone = 'overdue' | 'soon' | 'ok' | 'paused' | 'archived' | 'none'
 
 /**
  * 用接口给出的 nextDueDate 和北京时间的今天做状态标签。
  * 暂停不算逾期。这里不推算到期日。
  */
 export function itemStatus(
-  item: { isPaused: boolean; nextDueDate: string | null },
+  item: { isPaused: boolean; isArchived?: boolean; nextDueDate: string | null },
   today = shanghaiToday(),
 ): { tone: ItemStatusTone; label: string } {
+  if (item.isArchived) return { tone: 'archived', label: '已归档' }
   if (item.isPaused) return { tone: 'paused', label: '已暂停' }
   if (!item.nextDueDate) return { tone: 'none', label: '未排期' }
   const due = item.nextDueDate.slice(0, 10)

@@ -136,6 +136,27 @@ public class HouseholdTestClockTests
     }
 
     [Fact]
+    public async Task ServerToday_FollowsClockWithoutSystemAdmin_AndIs404WhenDisabled()
+    {
+        await using var fx = new HouseholdFixture(Sep30At2359Shanghai);
+        var disabled = fx.CreateClock(enabled: false, Environments.Development);
+        var missing = Assert.Throws<BusinessException>(() => disabled.GetReadableToday());
+        Assert.Equal(404, missing.StatusCode);
+
+        var enabled = fx.CreateClock(enabled: true, HouseholdTestClockPolicy.TestingEnvironmentName);
+        var forbidden = await Assert.ThrowsAsync<BusinessException>(() => enabled.GetAsync(fx.OwnerId));
+        Assert.Equal(403, forbidden.StatusCode);
+        Assert.Equal(new DateOnly(2026, 9, 30), enabled.GetReadableToday().Today);
+
+        fx.Clock.SetAbsolute(new DateTimeOffset(2026, 9, 30, 16, 0, 0, TimeSpan.Zero));
+        Assert.Equal(new DateOnly(2026, 10, 1), enabled.GetReadableToday().Today);
+
+        var production = fx.CreateClock(enabled: true, Environments.Production);
+        var blocked = Assert.Throws<BusinessException>(() => production.GetReadableToday());
+        Assert.Equal(404, blocked.StatusCode);
+    }
+
+    [Fact]
     public void PublicBaseUrl_HasNoBuiltInHost()
     {
         var empty = new HouseholdLinkBuilder(Options.Create(new HouseholdOptions()));

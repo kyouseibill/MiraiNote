@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { IconLoader2, IconPlus } from '@tabler/icons-vue'
 import AppDialog from '@/components/AppDialog.vue'
@@ -7,6 +7,7 @@ import HouseholdCompleteDialog from '@/components/household/HouseholdCompleteDia
 import HouseholdConsumablePanel from '@/components/household/HouseholdConsumablePanel.vue'
 import HouseholdItemFormDialog from '@/components/household/HouseholdItemFormDialog.vue'
 import HouseholdMemberPanel from '@/components/household/HouseholdMemberPanel.vue'
+import HouseholdRestoreDialog from '@/components/household/HouseholdRestoreDialog.vue'
 import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
@@ -18,7 +19,6 @@ import {
   formatCalendarDate,
   itemStatus,
   roleLabel,
-  shanghaiToday,
 } from '@/utils/householdFormat'
 
 const { active, asMember, withPreview } = useDesignPreview()
@@ -26,6 +26,9 @@ const { toast, store, report } = useHouseholdFeedback()
 const section = ref<'items' | 'stock' | 'members'>('items')
 const category = ref<HouseholdCategory | ''>('')
 const includePaused = ref(true)
+const listScope = ref<'active' | 'archived'>('active')
+const menuId = ref<number | null>(null)
+const restoring = ref<HouseholdItem | null>(null)
 const pageError = ref('')
 const formOpen = ref(false)
 const formMode = ref<'create' | 'template' | 'edit'>('template')
@@ -39,8 +42,28 @@ function query() {
   return {
     category: category.value || undefined,
     includePaused: includePaused.value,
+    archivedOnly: listScope.value === 'archived',
   }
 }
+
+function closeMenu() {
+  menuId.value = null
+}
+
+function toggleMenu(id: number) {
+  menuId.value = menuId.value === id ? null : id
+}
+
+function onDocumentClick() {
+  menuId.value = null
+}
+
+watch(menuId, (id) => {
+  document.removeEventListener('click', onDocumentClick)
+  if (id != null) document.addEventListener('click', onDocumentClick)
+})
+
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 async function load() {
   pageError.value = ''
@@ -65,7 +88,10 @@ async function reloadItems() {
 }
 
 onMounted(load)
-watch([category, includePaused], () => { void reloadItems() })
+watch([category, includePaused, listScope], () => {
+  closeMenu()
+  void reloadItems()
+})
 
 function openCreate(mode: 'create' | 'template') {
   editing.value = null
@@ -108,7 +134,7 @@ async function confirmDelete() {
 }
 
 function statusOf(item: HouseholdItem) {
-  return itemStatus(item, shanghaiToday())
+  return itemStatus(item, store.calendarToday)
 }
 </script>
 
@@ -118,11 +144,7 @@ function statusOf(item: HouseholdItem) {
       <div>
         <p class="mb-2 text-[11px] font-medium tracking-[0.17em] text-[var(--mn-muted)]">MIRAI / HOUSEHOLD</p>
         <h1 class="font-serif text-2xl text-[var(--mn-ink)] sm:text-[28px]">家务周期</h1>
-        <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">
-          {{ store.household?.name || '我的家庭' }}
-          <span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>
-          。下次到期日由服务器计算，日期按北京时间展示。
-        </p>
+        <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">{{ store.household?.name || '我的家庭' }}<span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>。下次到期日由服务器计算，日期按北京时间展示。</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] font-medium text-white hover:bg-[var(--mn-indigo-dark)]" @click="openCreate('template')">
@@ -156,6 +178,13 @@ function statusOf(item: HouseholdItem) {
             <option v-for="item in HOUSEHOLD_CATEGORIES" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </label>
+        <label>
+          <span class="sr-only">归档</span>
+          <select v-model="listScope" class="form-input h-10 w-auto">
+            <option value="active">未归档</option>
+            <option value="archived">已归档</option>
+          </select>
+        </label>
         <label class="inline-flex items-center gap-2 text-[var(--mn-muted)]">
           <input v-model="includePaused" type="checkbox" />
           显示已暂停
@@ -163,10 +192,10 @@ function statusOf(item: HouseholdItem) {
       </div>
 
       <p v-if="!store.items.length" class="rounded-md border border-dashed border-[var(--mn-line)] px-4 py-14 text-center text-[13px] text-[var(--mn-muted)]">
-        还没有事项。从模板新建，填上上次完成日期，通常半分钟内就能建好。
+        {{ listScope === 'archived' ? '没有已归档的事项。一次性事项完成且不续期后会出现在这里。' : '还没有事项。从模板新建，填上上次完成日期，通常半分钟内就能建好。' }}
       </p>
       <ul v-else class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
-        <li v-for="item in store.items" :key="item.id" class="flex flex-wrap items-start gap-4 py-4" :class="item.isPaused ? 'opacity-70' : ''">
+        <li v-for="item in store.items" :key="item.id" class="flex flex-wrap items-start gap-4 py-4" :class="item.isPaused && !item.isArchived ? 'opacity-70' : ''">
           <div class="min-w-0 flex-1">
             <RouterLink :to="withPreview(`/household/items/${item.id}`)" class="text-[15px] text-[var(--mn-ink)] hover:text-[#384b60]">{{ item.name }}</RouterLink>
             <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
@@ -180,11 +209,31 @@ function statusOf(item: HouseholdItem) {
               <HouseholdStatusPill :label="statusOf(item).label" :tone="statusOf(item).tone" />
             </p>
           </div>
-          <div class="flex flex-wrap gap-2">
+          <div class="flex shrink-0 items-center gap-2">
             <button type="button" class="h-8 rounded-md bg-[var(--mn-indigo)] px-3 text-[12px] text-white" :disabled="busy" @click="completeId = item.id">已完成</button>
-            <button v-if="store.isAdmin" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="openEdit(item)">编辑</button>
-            <button v-if="store.isAdmin" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="togglePause(item)">{{ item.isPaused ? '恢复' : '暂停' }}</button>
-            <button v-if="store.isAdmin" type="button" class="h-8 px-2 text-[12px] text-[#b4493f]" :disabled="busy" @click="deleting = item">删除</button>
+            <div v-if="store.isAdmin" class="hidden items-center gap-2 sm:flex">
+              <button v-if="item.isArchived" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="restoring = item">恢复</button>
+              <button type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="openEdit(item)">编辑</button>
+              <button v-if="!item.isArchived" type="button" class="h-8 rounded-md border border-[var(--mn-line)] px-3 text-[12px]" :disabled="busy" @click="togglePause(item)">{{ item.isPaused ? '恢复' : '暂停' }}</button>
+              <button type="button" class="h-8 px-2 text-[12px] text-[#b4493f]" :disabled="busy" @click="deleting = item">删除</button>
+            </div>
+            <div v-if="store.isAdmin" class="relative sm:hidden">
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--mn-line)] text-[16px] leading-none"
+                :aria-label="`更多操作：${item.name}`"
+                aria-haspopup="menu"
+                :aria-expanded="menuId === item.id"
+                :disabled="busy"
+                @click.stop="toggleMenu(item.id)"
+              >…</button>
+              <div v-if="menuId === item.id" role="menu" class="absolute right-0 top-9 z-20 min-w-[8.5rem] rounded-md border border-[var(--mn-line)] bg-white py-1 shadow-md" @click.stop>
+                <button v-if="item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="restoring = item; closeMenu()">恢复</button>
+                <button type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="openEdit(item); closeMenu()">编辑</button>
+                <button v-if="!item.isArchived" type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] hover:bg-[#f4f1eb]" @click="togglePause(item); closeMenu()">{{ item.isPaused ? '恢复' : '暂停' }}</button>
+                <button type="button" role="menuitem" class="block w-full px-3 py-2 text-left text-[13px] text-[#b4493f] hover:bg-[#fff5f3]" @click="deleting = item; closeMenu()">删除</button>
+              </div>
+            </div>
           </div>
         </li>
       </ul>
@@ -195,6 +244,7 @@ function statusOf(item: HouseholdItem) {
 
     <HouseholdItemFormDialog :open="formOpen" :mode="formMode" :item="editing" @close="formOpen = false" @saved="reloadItems" />
     <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="reloadItems" @refresh="reloadItems" />
+    <HouseholdRestoreDialog :open="restoring != null" :item="restoring" @close="restoring = null" @restored="reloadItems" />
     <AppDialog :open="deleting != null" title="删除事项" :description="deleting ? `确定删除「${deleting.name}」？此操作需要管理员权限。` : ''" :busy="busy" @close="deleting = null">
       <p class="text-[13px] leading-6">删除后事项不再出现在列表和近期到期里。</p>
       <template #footer>

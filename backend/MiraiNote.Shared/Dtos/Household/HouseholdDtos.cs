@@ -88,8 +88,11 @@ public class HouseholdItemListQuery
 {
     public HouseholdCategory? Category { get; set; }
 
-    /// <summary>是否包含已暂停事项。默认包含。</summary>
+    /// <summary>是否包含已暂停事项。默认包含。已归档事项不受这一项控制，见 <see cref="ArchivedOnly"/>。</summary>
     public bool IncludePaused { get; set; } = true;
+
+    /// <summary>为 true 时只返回已归档事项。默认不包含已归档。</summary>
+    public bool ArchivedOnly { get; set; }
 }
 
 public class HouseholdUpcomingQuery
@@ -100,7 +103,7 @@ public class HouseholdUpcomingQuery
 /// <summary>
 /// 近期到期。分组按 Asia/Shanghai 的今天计算：
 /// overdue 为到期日早于今天；within7Days 为今天到今天+7（含两端）；
-/// within30Days 为今天+8 到今天+30（含两端）。暂停事项不出现。
+/// within30Days 为今天+8 到今天+30（含两端）。暂停事项和已归档事项不出现。
 /// </summary>
 public class HouseholdUpcomingDto
 {
@@ -148,6 +151,10 @@ public class HouseholdItemDto
     public string? Note { get; set; }
     public string? PurchaseLink { get; set; }
     public bool IsPaused { get; set; }
+
+    /// <summary>一次性事项完成且未续期。已归档事项不进首页分组，不算逾期。</summary>
+    public bool IsArchived { get; set; }
+
     public int? MileageCycleKm { get; set; }
     public List<string> Aliases { get; set; } = [];
     public DateTime CreatedAt { get; set; }
@@ -170,7 +177,10 @@ public class CreateHouseholdItemRequest
     public int? ConsumableId { get; set; }
     public string? Note { get; set; }
     public string? PurchaseLink { get; set; }
+
+    /// <summary>仅管理员可传 true。成员传 true 时返回 403。</summary>
     public bool IsPaused { get; set; }
+
     public int? MileageCycleKm { get; set; }
     public List<string>? Aliases { get; set; }
 }
@@ -248,8 +258,14 @@ public class CompleteHouseholdItemRequest
     /// <summary>扣减数量。关联了耗材且未跳过时，缺省为 1；0 表示不扣。</summary>
     public int? ConsumableQuantity { get; set; }
 
-    /// <summary>仅一次性到期事项可填。必须晚于今天（Asia/Shanghai）且晚于完成日期。补记更早日期时只写入历史，不改到期日。</summary>
+    /// <summary>仅一次性到期事项可填。必须晚于今天（Asia/Shanghai）且晚于完成日期。不填则归档，不自动顺延。补记更早日期时只写入历史，不改到期日、也不归档。</summary>
     public DateOnly? NewExpiryDate { get; set; }
+}
+
+/// <summary>恢复已归档的一次性事项。新的到期日必须晚于今天（Asia/Shanghai）。</summary>
+public class RestoreHouseholdItemRequest
+{
+    public DateOnly ExpiryDate { get; set; }
 }
 
 public class HouseholdCompletionDto
@@ -314,6 +330,12 @@ public class SaveHouseholdConsumableRequest
 public class RestockHouseholdConsumableRequest
 {
     public int Quantity { get; set; }
+}
+
+/// <summary>家务模块的「今天」。测试时钟关闭时接口返回 404，生产环境不改前端本地日期。</summary>
+public class HouseholdServerTodayDto
+{
+    public DateOnly Today { get; set; }
 }
 
 /// <summary>测试时钟状态。仅在非 Production 且 Household:TestClock:Enabled=true 时可用。</summary>

@@ -68,8 +68,14 @@ public class HouseholdItem : BaseEntity
     [MaxLength(500)]
     public string? PurchaseLink { get; set; }
 
-    /// <summary>暂停期间不进入近期到期，也不算逾期。</summary>
+    /// <summary>暂停期间不进入近期到期，也不算逾期。标记完成不会解除暂停。</summary>
     public bool IsPaused { get; set; }
+
+    /// <summary>
+    /// 一次性事项完成且未续期后归档。归档后不进首页任何分组、不再提醒、不算逾期。
+    /// 与软删除不同：归档可在事项列表筛选查看，管理员填写新的到期日后可恢复。
+    /// </summary>
+    public bool IsArchived { get; set; }
 
     /// <summary>里程周期（公里）。只记录，不参与到期计算。</summary>
     public int? MileageCycleKm { get; set; }

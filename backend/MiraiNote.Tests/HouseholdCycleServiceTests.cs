@@ -151,7 +151,8 @@ public class HouseholdCycleServiceTests
             LastDoneDate = new DateOnly(2026, 9, 1),
             AssigneeMemberId = otherHome.MyMemberId
         }));
-        Assert.Equal(403, assign.StatusCode);
+        Assert.Equal(400, assign.StatusCode);
+        Assert.Equal(HouseholdItemService.AssigneeMustBelongMessage, assign.Message);
 
         var consumable = await fx.Consumables.CreateAsync(otherId, new SaveHouseholdConsumableRequest { Name = "机油", CurrentStock = 2 });
         var link = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, new CreateHouseholdItemRequest
@@ -164,7 +165,8 @@ public class HouseholdCycleServiceTests
             LastDoneDate = new DateOnly(2026, 3, 1),
             ConsumableId = consumable.Id
         }));
-        Assert.Equal(403, link.StatusCode);
+        Assert.Equal(400, link.StatusCode);
+        Assert.Equal(HouseholdItemService.ConsumableMustBelongMessage, link.Message);
 
         var hidden = await Assert.ThrowsAsync<BusinessException>(() => fx.Consumables.GetAsync(fx.OwnerId, consumable.Id));
         Assert.Equal(404, hidden.StatusCode);
@@ -884,6 +886,310 @@ public class HouseholdCycleServiceTests
         Assert.Equal(0, HouseholdItemService.CompletionGateCount);
     }
 
+    [Fact]
+    public async Task OneOff_CompleteWithoutRenewal_ArchivesAndLeavesUpcoming_RestoreNeedsFutureDate()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var memberId = await fx.AddUserAsync("member");
+        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        var item = await fx.CreateOneOffAsync("护照", new DateOnly(2026, 9, 1));
+
+        var archived = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 20)
+        });
+        Assert.True(archived.Item.IsArchived);
+        Assert.Equal(new DateOnly(2026, 9, 1), archived.Item.ExpiryDate);
+        Assert.Equal(new DateOnly(2026, 9, 1), archived.Item.NextDueDate);
+        Assert.Equal(new DateOnly(2026, 9, 20), archived.Item.LastDoneDate);
+
+        var upcoming = await fx.Items.UpcomingAsync(fx.OwnerId, new HouseholdUpcomingQuery());
+        Assert.DoesNotContain(upcoming.Overdue, i => i.Id == item.Id);
+        Assert.DoesNotContain(upcoming.Within7Days, i => i.Id == item.Id);
+        Assert.DoesNotContain(upcoming.Within30Days, i => i.Id == item.Id);
+
+        var active = await fx.Items.ListAsync(fx.OwnerId, new HouseholdItemListQuery());
+        Assert.DoesNotContain(active, i => i.Id == item.Id);
+        var archivedList = await fx.Items.ListAsync(fx.OwnerId, new HouseholdItemListQuery { ArchivedOnly = true });
+        Assert.Equal(["护照"], archivedList.Select(i => i.Name).ToArray());
+
+        var denied = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.RestoreAsync(memberId, item.Id, new RestoreHouseholdItemRequest
+        {
+            ExpiryDate = new DateOnly(2027, 1, 1)
+        }));
+        Assert.Equal(403, denied.StatusCode);
+
+        var today = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.RestoreAsync(fx.OwnerId, item.Id, new RestoreHouseholdItemRequest
+        {
+            ExpiryDate = new DateOnly(2026, 10, 1)
+        }));
+        Assert.Equal(400, today.StatusCode);
+
+        var restored = await fx.Items.RestoreAsync(fx.OwnerId, item.Id, new RestoreHouseholdItemRequest
+        {
+            ExpiryDate = new DateOnly(2026, 10, 8)
+        });
+        Assert.False(restored.IsArchived);
+        Assert.Equal(new DateOnly(2026, 10, 8), restored.NextDueDate);
+        var after = await fx.Items.UpcomingAsync(fx.OwnerId, new HouseholdUpcomingQuery());
+        Assert.Contains(after.Within7Days, i => i.Id == item.Id);
+
+        var renewed = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            NewExpiryDate = new DateOnly(2030, 1, 1)
+        });
+        Assert.False(renewed.Item.IsArchived);
+        Assert.Equal(new DateOnly(2030, 1, 1), renewed.Item.NextDueDate);
+    }
+
+    [Fact]
+    public async Task Complete_MonthRollover_FollowsActualCompletion_NotOriginalAnchor()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 4, 1, 2, 0));
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "月末", new DateOnly(2025, 12, 31));
+        var first = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 1, 31)
+        });
+        Assert.Equal(new DateOnly(2026, 2, 28), first.Item.NextDueDate);
+
+        var second = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 2, 28)
+        });
+        Assert.Equal(new DateOnly(2026, 3, 28), second.Item.NextDueDate);
+        Assert.Equal(new DateOnly(2026, 2, 28), second.Item.LastDoneDate);
+    }
+
+    [Fact]
+    public async Task Complete_SameDayAsLastDone_KeepsDueDate()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "同日", new DateOnly(2026, 8, 1));
+        var done = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 8, 1)
+        });
+        Assert.Equal(item.NextDueDate, done.Item.NextDueDate);
+        Assert.Equal(new DateOnly(2026, 9, 1), done.Item.NextDueDate);
+        Assert.Equal(new DateOnly(2026, 8, 1), done.Item.LastDoneDate);
+        Assert.Single(await fx.Items.HistoryAsync(fx.OwnerId, item.Id));
+    }
+
+    [Fact]
+    public async Task Complete_PausedItem_AdvancesDueAndStaysPaused()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "暂停中", new DateOnly(2026, 8, 1));
+        await fx.Items.SetPausedAsync(fx.OwnerId, item.Id, true);
+
+        var done = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 15)
+        });
+        Assert.True(done.Item.IsPaused);
+        Assert.Equal(new DateOnly(2026, 9, 15), done.Item.LastDoneDate);
+        Assert.Equal(new DateOnly(2026, 10, 15), done.Item.NextDueDate);
+
+        var upcoming = await fx.Items.UpcomingAsync(fx.OwnerId, new HouseholdUpcomingQuery());
+        Assert.DoesNotContain(upcoming.Overdue, i => i.Id == item.Id);
+        Assert.DoesNotContain(upcoming.Within7Days, i => i.Id == item.Id);
+        Assert.DoesNotContain(upcoming.Within30Days, i => i.Id == item.Id);
+    }
+
+    [Fact]
+    public async Task EarlierCompletion_StillDeductsStock_UnlessSkipped()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "滤芯",
+            CurrentStock = 3
+        });
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "净水器", new DateOnly(2026, 8, 1), 1, consumable.Id);
+        var backfill = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 7, 1)
+        });
+        Assert.Equal(new DateOnly(2026, 9, 1), backfill.Item.NextDueDate);
+        Assert.Equal(1, backfill.ConsumableQuantityDeducted);
+        Assert.Equal(2, backfill.ConsumableStockAfter);
+
+        var skipped = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 6, 1),
+            SkipConsumableDeduction = true
+        });
+        Assert.Equal(0, skipped.ConsumableQuantityDeducted);
+        Assert.Equal(2, (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).CurrentStock);
+        Assert.Equal(2, (await fx.Items.HistoryAsync(fx.OwnerId, item.Id)).Count);
+    }
+
+    [Fact]
+    public async Task OneOff_AllowsPastExpiry()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var item = await fx.CreateOneOffAsync("过期护照", new DateOnly(2020, 1, 15));
+        Assert.Equal(new DateOnly(2020, 1, 15), item.ExpiryDate);
+        Assert.Equal(new DateOnly(2020, 1, 15), item.NextDueDate);
+        var upcoming = await fx.Items.UpcomingAsync(fx.OwnerId, new HouseholdUpcomingQuery());
+        Assert.Contains(upcoming.Overdue, i => i.Id == item.Id);
+    }
+
+    [Fact]
+    public async Task DeleteConsumable_WhenLinked_ListsItemNames_AndSoftDeleteStays()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "滤网",
+            CurrentStock = 2
+        });
+        await fx.CreateRecurringAsync(fx.OwnerId, "客厅空调", new DateOnly(2026, 1, 1), 3, consumable.Id);
+        await fx.CreateRecurringAsync(fx.OwnerId, "卧室空调", new DateOnly(2026, 2, 1), 3, consumable.Id);
+        var removed = await fx.CreateRecurringAsync(fx.OwnerId, "已删事项", new DateOnly(2026, 3, 1), 3, consumable.Id);
+        await fx.Items.DeleteAsync(fx.OwnerId, removed.Id);
+
+        var blocked = await Assert.ThrowsAsync<BusinessException>(() => fx.Consumables.DeleteAsync(fx.OwnerId, consumable.Id));
+        Assert.Equal(400, blocked.StatusCode);
+        Assert.Equal(HouseholdConsumableService.LinkedItemsMessagePrefix + "卧室空调、客厅空调", blocked.Message);
+
+        var raw = await fx.Db.HouseholdItems.IgnoreQueryFilters().SingleAsync(i => i.Id == removed.Id);
+        Assert.True(raw.IsDeleted);
+        Assert.Equal("滤网", (await fx.Consumables.GetAsync(fx.OwnerId, consumable.Id)).Name);
+    }
+
+    [Fact]
+    public async Task Member_CanUpdateConsumable_ButCannotDelete()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var memberId = await fx.AddUserAsync("member");
+        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        var created = await fx.Consumables.CreateAsync(memberId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 4,
+            RestockThreshold = 1
+        });
+        var updated = await fx.Consumables.UpdateAsync(memberId, created.Id, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉加厚",
+            SpecModel = "10 寸",
+            CurrentStock = 4,
+            RestockThreshold = 2,
+            Unit = "支",
+            PurchaseLink = "https://example.com/pp",
+            Note = "厨房用"
+        });
+        Assert.Equal("PP 棉加厚", updated.Name);
+        Assert.Equal("10 寸", updated.SpecModel);
+        Assert.Equal(2, updated.RestockThreshold);
+        Assert.Equal("支", updated.Unit);
+        Assert.Equal("https://example.com/pp", updated.PurchaseLink);
+        Assert.Equal("厨房用", updated.Note);
+
+        var denied = await Assert.ThrowsAsync<BusinessException>(() => fx.Consumables.DeleteAsync(memberId, created.Id));
+        Assert.Equal(403, denied.StatusCode);
+    }
+
+    [Fact]
+    public async Task Member_CreatePausedItem_IsForbidden()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var memberId = await fx.AddUserAsync("member");
+        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        var denied = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(memberId, new CreateHouseholdItemRequest
+        {
+            Name = "成员暂停",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1),
+            IsPaused = true
+        }));
+        Assert.Equal(403, denied.StatusCode);
+        Assert.Equal(HouseholdItemService.MemberCannotCreatePausedMessage, denied.Message);
+        Assert.Empty(await fx.Items.ListAsync(fx.OwnerId, new HouseholdItemListQuery()));
+
+        var paused = await fx.Items.CreateAsync(fx.OwnerId, new CreateHouseholdItemRequest
+        {
+            Name = "管理员暂停",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1),
+            IsPaused = true
+        });
+        Assert.True(paused.IsPaused);
+    }
+
+    [Fact]
+    public async Task ForeignIds_MissingAndOtherHousehold_ShareOne400()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var otherId = await fx.AddUserAsync("other");
+        var otherHome = await fx.Household.GetMineAsync(otherId);
+        var otherConsumable = await fx.Consumables.CreateAsync(otherId, new SaveHouseholdConsumableRequest
+        {
+            Name = "别人的耗材",
+            CurrentStock = 1
+        });
+
+        var requestMissingMember = Recurring("缺负责人", null);
+        requestMissingMember.AssigneeMemberId = 987654;
+        var missingAssignee = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, requestMissingMember));
+        var otherAssignee = Recurring("别人负责", null);
+        otherAssignee.AssigneeMemberId = otherHome.MyMemberId;
+        var foreignAssignee = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, otherAssignee));
+        Assert.Equal(400, missingAssignee.StatusCode);
+        Assert.Equal(400, foreignAssignee.StatusCode);
+        Assert.Equal(HouseholdItemService.AssigneeMustBelongMessage, missingAssignee.Message);
+        Assert.Equal(missingAssignee.Message, foreignAssignee.Message);
+
+        var missingConsumable = Recurring("缺耗材", null);
+        missingConsumable.ConsumableId = 987654;
+        var missingLink = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, missingConsumable));
+        var foreignConsumable = Recurring("别人耗材", null);
+        foreignConsumable.ConsumableId = otherConsumable.Id;
+        var foreignLink = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(fx.OwnerId, foreignConsumable));
+        Assert.Equal(400, missingLink.StatusCode);
+        Assert.Equal(400, foreignLink.StatusCode);
+        Assert.Equal(HouseholdItemService.ConsumableMustBelongMessage, missingLink.Message);
+        Assert.Equal(missingLink.Message, foreignLink.Message);
+
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "完成人", new DateOnly(2026, 8, 1));
+        var missingActor = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedByMemberId = 987654
+        }));
+        var foreignActor = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedByMemberId = otherHome.MyMemberId
+        }));
+        Assert.Equal(400, missingActor.StatusCode);
+        Assert.Equal(400, foreignActor.StatusCode);
+        Assert.Equal(HouseholdItemService.ActorMustBelongMessage, missingActor.Message);
+        Assert.Equal(missingActor.Message, foreignActor.Message);
+        Assert.Empty(await fx.Items.HistoryAsync(fx.OwnerId, item.Id));
+    }
+
+    [Fact]
+    public async Task IdempotencyKey_UsesRawRequestBeforeDefaults_AcrossShanghaiMidnight()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 9, 30, 15, 59, 0, TimeSpan.Zero));
+        await using var fx = new HouseholdFixture(clock);
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "跨日", new DateOnly(2026, 8, 1));
+        var first = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest(), "midnight-key");
+        Assert.Equal(new DateOnly(2026, 9, 30), first.Record.CompletedOn);
+        Assert.Equal(new DateOnly(2026, 10, 30), first.Item.NextDueDate);
+
+        clock.UtcNow = new DateTimeOffset(2026, 9, 30, 16, 1, 0, TimeSpan.Zero);
+        var replay = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest(), "midnight-key");
+        Assert.Equal(first.Record.Id, replay.Record.Id);
+        Assert.Equal(new DateOnly(2026, 9, 30), replay.Record.CompletedOn);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+    }
+
     private static DateTimeOffset Utc(int year, int month, int day, int hour, int minute) =>
         new(year, month, day, hour, minute, 0, TimeSpan.Zero);
 
@@ -901,6 +1207,15 @@ public class HouseholdCycleServiceTests
 
         public HouseholdFixture(
             DateTimeOffset utcNow,
+            bool useRetryingExecutionStrategy = false,
+            IInterceptor? interceptor = null,
+            Func<ExecutionStrategyDependencies, IExecutionStrategy>? executionStrategy = null)
+            : this(new FixedTimeProvider(utcNow), useRetryingExecutionStrategy, interceptor, executionStrategy)
+        {
+        }
+
+        public HouseholdFixture(
+            TimeProvider clock,
             bool useRetryingExecutionStrategy = false,
             IInterceptor? interceptor = null,
             Func<ExecutionStrategyDependencies, IExecutionStrategy>? executionStrategy = null)
@@ -926,7 +1241,7 @@ public class HouseholdCycleServiceTests
 
             Db = new MiraiNoteDbContext(builder.Options);
             OwnerId = Db.Users.Single().Id;
-            _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(new FixedTimeProvider(utcNow)));
+            _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(clock));
             var access = new HouseholdAccessService(Db);
             Household = new HouseholdService(Db, access);
             Items = new HouseholdItemService(Db, access, _rules, _policy);
@@ -978,6 +1293,15 @@ public class HouseholdCycleServiceTests
             await Db.DisposeAsync();
             _fx.Dispose();
         }
+    }
+
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        public MutableTimeProvider(DateTimeOffset utcNow) => UtcNow = utcNow;
+
+        public DateTimeOffset UtcNow { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => UtcNow;
     }
 
     /// <summary>

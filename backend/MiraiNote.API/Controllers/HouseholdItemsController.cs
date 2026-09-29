@@ -12,12 +12,25 @@ namespace MiraiNote.API.Controllers;
 public class HouseholdItemsController : ControllerBase
 {
     private readonly IHouseholdItemService _service;
+    private readonly IHouseholdTestClockService _clock;
     private readonly ICurrentUserService _currentUser;
 
-    public HouseholdItemsController(IHouseholdItemService service, ICurrentUserService currentUser)
+    public HouseholdItemsController(
+        IHouseholdItemService service,
+        IHouseholdTestClockService clock,
+        ICurrentUserService currentUser)
     {
         _service = service;
+        _clock = clock;
         _currentUser = currentUser;
+    }
+
+    /// <summary>Testing / Development 且测试时钟打开时返回上海今天。关闭时 404，生产环境走这条。</summary>
+    [HttpGet("server-today")]
+    public ActionResult<ApiResponse<HouseholdServerTodayDto>> ServerToday()
+    {
+        var result = _clock.GetReadableToday();
+        return Ok(ApiResponse<HouseholdServerTodayDto>.Ok(result));
     }
 
     [HttpGet("items")]
@@ -70,6 +83,14 @@ public class HouseholdItemsController : ControllerBase
     {
         await _service.DeleteAsync(_currentUser.UserId, id, ct);
         return Ok(ApiResponse.Ok("已删除"));
+    }
+
+    [HttpPost("items/{id:int}/restore")]
+    public async Task<ActionResult<ApiResponse<HouseholdItemDto>>> Restore(
+        int id, [FromBody] RestoreHouseholdItemRequest request, CancellationToken ct)
+    {
+        var result = await _service.RestoreAsync(_currentUser.UserId, id, request, ct);
+        return Ok(ApiResponse<HouseholdItemDto>.Ok(result, "已恢复"));
     }
 
     [HttpPost("items/{id:int}/complete")]

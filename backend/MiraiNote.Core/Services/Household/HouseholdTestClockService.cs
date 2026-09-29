@@ -12,6 +12,12 @@ public interface IHouseholdTestClockService
     Task<HouseholdTestClockDto> GetAsync(int userId, CancellationToken ct = default);
     Task<HouseholdTestClockDto> SetAsync(int userId, SetHouseholdTestClockRequest request, CancellationToken ct = default);
     Task<HouseholdTestClockDto> ResetAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 只读的上海日历日。测试时钟未启用时 404，不要求系统管理员。
+    /// 生产环境策略关闭，因此不会把测试时钟暴露出去。
+    /// </summary>
+    HouseholdServerTodayDto GetReadableToday();
 }
 
 public sealed class HouseholdTestClockService : IHouseholdTestClockService
@@ -57,6 +63,17 @@ public sealed class HouseholdTestClockService : IHouseholdTestClockService
         await WithAdminAsync(userId, ct);
         _clock.Reset();
         return Describe();
+    }
+
+    public HouseholdServerTodayDto GetReadableToday()
+    {
+        if (!HouseholdTestClockPolicy.IsEnabled(_options, _environment))
+            throw new BusinessException("测试时钟未启用", 404);
+
+        return new HouseholdServerTodayDto
+        {
+            Today = ShanghaiClock.ToShanghaiDate(_clock.UtcNow)
+        };
     }
 
     private async Task<HouseholdTestClockDto> WithAdminAsync(int userId, CancellationToken ct)

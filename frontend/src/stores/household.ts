@@ -59,8 +59,10 @@ export const useHouseholdStore = defineStore('household', () => {
   const upcomingSource = ref<HouseholdUpcoming | null>(null)
   const historySource = ref<Record<number, HouseholdCompletion[]>>({})
   const lastQuery = ref<HouseholdItemQuery>({ includePaused: true })
+  const serverToday = ref<string | null>(null)
 
   const isAdmin = computed(() => household.value?.myRole === 'Admin')
+  const calendarToday = computed(() => serverToday.value ?? shanghaiToday())
 
   function assertAdmin(message: string) {
     if (!isAdmin.value) throw new HouseholdRequestError(403, message)
@@ -69,6 +71,11 @@ export const useHouseholdStore = defineStore('household', () => {
   function applyItemQuery() {
     const query = lastQuery.value
     items.value = itemSource.value.filter((item) => {
+      if (query.archivedOnly) {
+        if (!item.isArchived) return false
+      } else if (item.isArchived) {
+        return false
+      }
       if (!query.includePaused && item.isPaused) return false
       if (query.category && item.category !== query.category) return false
       return true
@@ -92,6 +99,7 @@ export const useHouseholdStore = defineStore('household', () => {
     const bundle = buildHouseholdPreview(asMember)
     previewMode.value = true
     previewAsMember.value = asMember
+    serverToday.value = null
     household.value = bundle.household
     members.value = bundle.members
     itemSource.value = bundle.items
@@ -103,6 +111,20 @@ export const useHouseholdStore = defineStore('household', () => {
     currentItem.value = null
     history.value = []
     applyItemQuery()
+  }
+
+  async function fetchServerToday() {
+    if (previewMode.value) {
+      serverToday.value = null
+      return null
+    }
+    try {
+      const result = await householdApi.serverToday()
+      serverToday.value = result.today.slice(0, 10)
+    } catch {
+      serverToday.value = null
+    }
+    return serverToday.value
   }
 
   async function fetchHousehold() {
@@ -118,7 +140,11 @@ export const useHouseholdStore = defineStore('household', () => {
   }
 
   async function fetchItems(query: HouseholdItemQuery = {}) {
-    lastQuery.value = { includePaused: query.includePaused ?? true, category: query.category }
+    lastQuery.value = {
+      includePaused: query.includePaused ?? true,
+      category: query.category,
+      archivedOnly: query.archivedOnly ?? false,
+    }
     if (previewMode.value) {
       applyItemQuery()
       return items.value
@@ -177,6 +203,7 @@ export const useHouseholdStore = defineStore('household', () => {
         return
       }
       previewMode.value = false
+      await fetchServerToday()
       await fetchHousehold()
       await Promise.all([
         fetchMembers(),
@@ -211,6 +238,7 @@ export const useHouseholdStore = defineStore('household', () => {
         note: payload.note ?? null,
         purchaseLink: payload.purchaseLink ?? null,
         isPaused: false,
+        isArchived: false,
         mileageCycleKm: payload.mileageCycleKm ?? null,
         aliases: payload.aliases ?? [],
         createdAt: new Date().toISOString(),
@@ -317,14 +345,33 @@ export const useHouseholdStore = defineStore('household', () => {
     if (previewMode.value) {
       const current = itemSource.value.find((item) => item.id === id)
       if (!current) throw new HouseholdRequestError(404, '事项不存在')
-      const completedOn = payload.completedOn ?? shanghaiToday()
+      const completedOn = payload.completedOn ?? calendarToday.value
       const backfill = Boolean(current.lastDoneDate && completedOn < current.lastDoneDate)
-      const nextDue = payload.newExpiryDate ?? current.nextDueDate
+      const sameDay = Boolean(current.lastDoneDate && completedOn === current.lastDoneDate)
+      const renewing = Boolean(payload.newExpiryDate) && !backfill
+      let lastDoneDate = current.lastDoneDate
+      let expiryDate = current.expiryDate
+      let nextDueDate = current.nextDueDate
+      let isArchived = current.isArchived
+      if (!backfill && current.itemType === 'OneOffExpiry') {
+        if (renewing) {
+          expiryDate = payload.newExpiryDate ?? expiryDate
+          nextDueDate = payload.newExpiryDate ?? nextDueDate
+          isArchived = false
+          lastDoneDate = completedOn
+        } else {
+          isArchived = true
+          if (!sameDay) lastDoneDate = completedOn
+        }
+      } else if (!backfill && !sameDay) {
+        lastDoneDate = completedOn
+      }
       const next: HouseholdItem = {
         ...current,
-        lastDoneDate: backfill ? current.lastDoneDate : completedOn,
-        expiryDate: payload.newExpiryDate ?? current.expiryDate,
-        nextDueDate: backfill ? current.nextDueDate : nextDue,
+        lastDoneDate,
+        expiryDate,
+        nextDueDate,
+        isArchived,
       }
       replaceItem(next)
       const record: HouseholdCompletion = {
@@ -390,6 +437,45 @@ export const useHouseholdStore = defineStore('household', () => {
     return created
   }
 
+  async function updateConsumable(id: number, payload: SaveHouseholdConsumablePayload) {
+    if (previewMode.value) {
+      const found = consumables.value.find((item) => item.id === id)
+      if (!found) throw new HouseholdRequestError(404, '耗材不存在')
+      found.name = payload.name
+      found.specModel = payload.specModel ?? null
+      found.currentStock = payload.currentStock
+      found.restockThreshold = payload.restockThreshold ?? found.restockThreshold
+      found.unit = payload.unit ?? null
+      found.purchaseLink = payload.purchaseLink ?? null
+      found.note = payload.note ?? null
+      found.isLowStock = found.currentStock <= found.restockThreshold
+      found.updatedAt = new Date().toISOString()
+      return found
+    }
+    const updated = await householdApi.updateConsumable(id, payload)
+    const index = consumables.value.findIndex((item) => item.id === id)
+    if (index >= 0) consumables.value[index] = updated
+    else consumables.value = [...consumables.value, updated].sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    return updated
+  }
+
+  async function restoreItem(id: number, expiryDate: string) {
+    assertAdmin('只有管理员可以恢复已归档事项')
+    if (previewMode.value) {
+      const current = itemSource.value.find((item) => item.id === id)
+      if (!current || !current.isArchived) throw new HouseholdRequestError(400, '只有已归档的一次性事项可以恢复')
+      const next = { ...current, isArchived: false, expiryDate, nextDueDate: expiryDate }
+      replaceItem(next)
+      applyItemQuery()
+      return next
+    }
+    const updated = await householdApi.restoreItem(id, expiryDate)
+    replaceItem(updated)
+    await fetchItems(lastQuery.value)
+    if (currentItem.value?.id === id) currentItem.value = updated
+    return updated
+  }
+
   async function restockConsumable(id: number, quantity: number) {
     if (previewMode.value) {
       const found = consumables.value.find((item) => item.id === id)
@@ -438,6 +524,8 @@ export const useHouseholdStore = defineStore('household', () => {
     loading,
     previewMode,
     isAdmin,
+    calendarToday,
+    fetchServerToday,
     fetchHousehold,
     fetchMembers,
     fetchItems,
@@ -454,7 +542,9 @@ export const useHouseholdStore = defineStore('household', () => {
     setPaused,
     removeItem,
     completeItem,
+    restoreItem,
     createConsumable,
+    updateConsumable,
     restockConsumable,
     removeConsumable,
     uploadPhoto,

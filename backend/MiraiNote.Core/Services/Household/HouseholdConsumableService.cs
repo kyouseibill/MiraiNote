@@ -18,6 +18,8 @@ public interface IHouseholdConsumableService
 
 public sealed class HouseholdConsumableService : IHouseholdConsumableService
 {
+    public const string LinkedItemsMessagePrefix = "仍有事项关联该耗材，无法删除：";
+
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
     private readonly HouseholdAccessPolicy _policy;
@@ -72,10 +74,14 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
         _policy.EnsureCanDeleteConsumable(ctx.IsAdmin);
-        var inUse = await _db.HouseholdItems.AnyAsync(i =>
-            i.HouseholdId == ctx.Household.Id && i.ConsumableId == entity.Id, ct);
-        if (inUse)
-            throw new BusinessException("仍有事项关联该耗材，无法删除", 400);
+        var names = await _db.HouseholdItems.AsNoTracking()
+            .Where(i => i.HouseholdId == ctx.Household.Id && i.ConsumableId == entity.Id)
+            .OrderBy(i => i.Name)
+            .ThenBy(i => i.Id)
+            .Select(i => i.Name)
+            .ToListAsync(ct);
+        if (names.Count > 0)
+            throw new BusinessException(LinkedItemsMessagePrefix + string.Join("、", names), 400);
 
         entity.IsDeleted = true;
         await _db.SaveChangesAsync(ct);

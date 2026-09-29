@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useHouseholdStore } from '@/stores/household'
 import { useToast } from '@/composables/useToast'
 import { staticUrl } from '@/composables/useStaticUrl'
@@ -18,9 +18,20 @@ const emit = defineEmits<{
 
 const store = useHouseholdStore()
 const toast = useToast()
+const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
+const fileNames = ref<string[]>([])
 const maxCount = 9
 const maxBytes = 5 * 1024 * 1024
+
+watch(() => props.modelValue.length, (length) => {
+  if (length === 0) fileNames.value = []
+})
+
+function openPicker() {
+  if (props.disabled || uploading.value || props.modelValue.length >= maxCount) return
+  fileInput.value?.click()
+}
 
 async function onPick(event: Event) {
   const input = event.target as HTMLInputElement
@@ -47,15 +58,20 @@ async function onPick(event: Event) {
   uploading.value = true
   emit('uploading', true)
   const uploaded: string[] = []
+  const names: string[] = []
   try {
     for (const file of files) {
       try {
         uploaded.push(await store.uploadPhoto(file))
+        names.push(file.name)
       } catch {
         // 单张失败时继续其余图片，错误由拦截器提示。
       }
     }
-    if (uploaded.length) emit('update:modelValue', [...props.modelValue, ...uploaded])
+    if (uploaded.length) {
+      fileNames.value = [...fileNames.value, ...names]
+      emit('update:modelValue', [...props.modelValue, ...uploaded])
+    }
   } finally {
     uploading.value = false
     emit('uploading', false)
@@ -63,6 +79,7 @@ async function onPick(event: Event) {
 }
 
 function remove(index: number) {
+  fileNames.value = fileNames.value.filter((_, current) => current !== index)
   emit('update:modelValue', props.modelValue.filter((_, current) => current !== index))
 }
 
@@ -75,14 +92,25 @@ function remove(index: number) {
       <span class="text-[11px] text-[var(--mn-muted)]">{{ modelValue.length }} / {{ maxCount }} 张 · 单张最大 5MB</span>
     </div>
     <input
+      ref="fileInput"
       type="file"
       accept="image/*"
       multiple
-      class="block text-[13px] text-[var(--mn-muted)]"
+      class="sr-only"
       :disabled="disabled || uploading || modelValue.length >= maxCount"
       @change="onPick"
     />
-    <p v-if="uploading" class="mt-1 text-[11px] text-[var(--mn-muted)]">上传中…</p>
+    <button
+      type="button"
+      class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px] text-[var(--mn-ink)] disabled:opacity-50"
+      :disabled="disabled || uploading || modelValue.length >= maxCount"
+      @click="openPicker"
+    >
+      {{ uploading ? '上传中…' : '上传照片' }}
+    </button>
+    <ul v-if="fileNames.length" class="mt-2 space-y-1 text-[12px] text-[var(--mn-muted)]">
+      <li v-for="(name, index) in fileNames" :key="`${name}-${index}`">{{ name }}</li>
+    </ul>
     <div v-if="modelValue.length" class="mt-3 grid grid-cols-3 gap-2">
       <div v-for="(path, index) in modelValue" :key="`${path}-${index}`" class="relative aspect-square">
         <img :src="staticUrl(path)" class="h-full w-full rounded-md border border-[var(--mn-line)] object-cover" :alt="`照片 ${index + 1}`" />
