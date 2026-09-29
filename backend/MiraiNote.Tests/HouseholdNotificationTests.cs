@@ -399,6 +399,66 @@ public class HouseholdNotificationTests
     }
 
     [Fact]
+    public async Task ScheduledEmail_FailedRowsDoNotConsumeQuota_EveryItemGetsThreeAttempts()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(due: HouseholdNotificationChannel.Email));
+        var itemIds = new List<int>();
+        for (var i = 0; i < 5; i++)
+            itemIds.Add((await lab.CreateDueTodayAsync("事项" + i)).Id);
+
+        lab.Email.FailuresRemaining = 100;
+        lab.Email.FailMessage = "auth failed " + SmtpPassword;
+
+        await lab.DispatchAsync();
+        var first = await lab.Db.HouseholdReminderLogs.AsNoTracking().ToListAsync();
+        Assert.Equal(3, first.Count);
+        Assert.All(first, log =>
+        {
+            Assert.Equal(HouseholdReminderDeliveryStatus.Failed, log.Status);
+            Assert.Equal(1, log.AttemptCount);
+            Assert.DoesNotContain(SmtpPassword, log.LastError);
+        });
+        Assert.Equal(97, lab.Email.FailuresRemaining);
+
+        var rateLimited = RateLimitCount(lab);
+        await lab.DispatchAsync();
+        var stillWaiting = await lab.Db.HouseholdReminderLogs.AsNoTracking().OrderBy(r => r.HouseholdItemId).ToListAsync();
+        Assert.Equal(3, stillWaiting.Count);
+        Assert.All(stillWaiting, log => Assert.Equal(1, log.AttemptCount));
+        Assert.Equal(97, lab.Email.FailuresRemaining);
+        Assert.Equal(rateLimited + 2, RateLimitCount(lab));
+
+        List<HouseholdReminderLog> logs = stillWaiting;
+        for (var step = 0; step < 40; step++)
+        {
+            if (logs.Count == itemIds.Count && logs.All(log => log.AttemptCount == HouseholdReminderAttempt.MaxAttempts))
+                break;
+            lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+            await lab.DispatchAsync();
+            logs = await lab.Db.HouseholdReminderLogs.AsNoTracking().ToListAsync();
+        }
+
+        Assert.Equal(itemIds.OrderBy(id => id), logs.Select(log => log.HouseholdItemId).OrderBy(id => id));
+        Assert.All(logs, log =>
+        {
+            Assert.Equal(HouseholdReminderDeliveryStatus.Failed, log.Status);
+            Assert.Equal(HouseholdReminderAttempt.MaxAttempts, log.AttemptCount);
+            Assert.DoesNotContain(SmtpPassword, log.LastError ?? "");
+        });
+        Assert.Equal(100 - itemIds.Count * HouseholdReminderAttempt.MaxAttempts, lab.Email.FailuresRemaining);
+        Assert.Empty(lab.Email.Sent);
+
+        rateLimited = RateLimitCount(lab);
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        var capped = await lab.Db.HouseholdReminderLogs.AsNoTracking().ToListAsync();
+        Assert.All(capped, log => Assert.Equal(HouseholdReminderAttempt.MaxAttempts, log.AttemptCount));
+        Assert.Equal(100 - itemIds.Count * HouseholdReminderAttempt.MaxAttempts, lab.Email.FailuresRemaining);
+        Assert.Equal(rateLimited, RateLimitCount(lab));
+    }
+
+    [Fact]
     public async Task FailedReminder_RetriesWithBackoff_ThenStopsAtThree()
     {
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
@@ -557,6 +617,9 @@ public class HouseholdNotificationTests
         Assert.DoesNotContain("127.0.0.1", log.LastError);
         Assert.DoesNotContain("device-key", log.LastError);
     }
+
+    private static int RateLimitCount(NotificationLab lab) =>
+        lab.Logs.Messages.Count(message => message.Contains("达到频率上限", StringComparison.Ordinal));
 
     private static UpdateHouseholdNotificationSettingsRequest SettingsWith(
         string? email = null,

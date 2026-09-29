@@ -52,6 +52,7 @@ public static class DependencyInjection
         {
             AllowAutoRedirect = false,
             UseCookies = false,
+            UseProxy = false,
             ConnectTimeout = TimeSpan.FromSeconds(Services.Household.BarkNotificationChannel.TimeoutSeconds),
             ConnectCallback = Services.Household.HouseholdBarkConnector.ConnectCallback
         })

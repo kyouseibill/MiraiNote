@@ -146,12 +146,16 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         var channel = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
         if (!preference.CanDeliver(channel, _protector.IsConfigured))
             return;
-        if (!AllowScheduledEmail(preference, channel))
-            return;
 
-        var logId = await ClaimItemLogAsync(item, member.Id, today, channel, kind, preference.OverdueIntervalDays, ct);
-        if (logId == null)
+        // 先抢到日志再扣邮件名额。已发送、次数用尽或还在退避中的记录直接跳过，不能占掉本分钟的名额。
+        var claim = await ClaimItemLogAsync(item, member.Id, today, channel, kind, preference.OverdueIntervalDays, ct);
+        if (claim == null)
             return;
+        if (!AllowScheduledEmail(preference, channel))
+        {
+            await ReleaseItemClaimAsync(claim, ct);
+            return;
+        }
 
         if (BeforeDeliveryAsync != null)
             await BeforeDeliveryAsync(ct);
@@ -163,7 +167,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         if (fresh?.NextDueDate is not DateOnly due
             || !HouseholdReminderSchedule.ShouldNotify(today, due, fresh.LeadDays, preference.OverdueIntervalDays, lastSent))
         {
-            await FinishItemLogAsync(logId.Value, HouseholdReminderDeliveryStatus.Skipped, null, ct);
+            await FinishItemLogAsync(claim.LogId, HouseholdReminderDeliveryStatus.Skipped, null, ct);
             return;
         }
 
@@ -201,13 +205,13 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
 
         var error = await DeliverAsync(preference, channel, message, member.Id, item.Id, ct);
         await FinishItemLogAsync(
-            logId.Value,
+            claim.LogId,
             error == null ? HouseholdReminderDeliveryStatus.Sent : HouseholdReminderDeliveryStatus.Failed,
             error,
             ct);
     }
 
-    private async Task<int?> ClaimItemLogAsync(
+    private async Task<ItemClaim?> ClaimItemLogAsync(
         ItemRow item,
         int memberId,
         DateOnly today,
@@ -237,10 +241,44 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                 .SetProperty(r => r.LastError, (string?)null)
                 .SetProperty(r => r.Kind, kind.ToString()), ct);
         _db.Entry(existing).State = EntityState.Detached;
-        return updated == 1 ? existing.Id : null;
+        return updated == 1
+            ? new ItemClaim(existing.Id, false, previousStatus, previousAttempts, existing.LastAttemptAt, existing.LastError, existing.Kind, nextAttempts)
+            : null;
     }
 
-    private async Task<int?> InsertItemLogAsync(
+    /// <summary>
+    /// 名额不够时把刚抢到的记录退回去。新插入的删掉，已有失败记录恢复原状态和次数，这样下一轮还能抢，也不多记一次重试。
+    /// </summary>
+    private async Task ReleaseItemClaimAsync(ItemClaim claim, CancellationToken ct)
+    {
+        if (claim.Inserted)
+        {
+            await _db.HouseholdReminderLogs
+                .Where(r => r.Id == claim.LogId
+                    && r.Status == HouseholdReminderDeliveryStatus.Pending
+                    && r.AttemptCount == 1)
+                .ExecuteDeleteAsync(ct);
+        }
+        else
+        {
+            await _db.HouseholdReminderLogs
+                .Where(r => r.Id == claim.LogId
+                    && r.Status == HouseholdReminderDeliveryStatus.Pending
+                    && r.AttemptCount == claim.NextAttempts)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(r => r.Status, claim.PreviousStatus)
+                    .SetProperty(r => r.AttemptCount, claim.PreviousAttempts)
+                    .SetProperty(r => r.LastAttemptAt, claim.PreviousLastAttemptAt)
+                    .SetProperty(r => r.LastError, claim.PreviousLastError)
+                    .SetProperty(r => r.Kind, claim.PreviousKind), ct);
+        }
+
+        var tracked = _db.HouseholdReminderLogs.Local.FirstOrDefault(r => r.Id == claim.LogId);
+        if (tracked != null)
+            _db.Entry(tracked).State = EntityState.Detached;
+    }
+
+    private async Task<ItemClaim?> InsertItemLogAsync(
         ItemRow item,
         int memberId,
         DateOnly today,
@@ -266,7 +304,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         try
         {
             await _db.SaveChangesAsync(ct);
-            return log.Id;
+            return new ItemClaim(log.Id, true, HouseholdReminderDeliveryStatus.Pending, 0, null, null, log.Kind, 1);
         }
         catch (DbUpdateException ex) when (HouseholdUniqueConflict.IsExpected(ex))
         {
@@ -436,6 +474,16 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             setting = new HouseholdNotificationSetting();
         return NotificationPreference.From(setting, userId, accountEmail);
     }
+
+    private sealed record ItemClaim(
+        int LogId,
+        bool Inserted,
+        HouseholdReminderDeliveryStatus PreviousStatus,
+        int PreviousAttempts,
+        DateTime? PreviousLastAttemptAt,
+        string? PreviousLastError,
+        string PreviousKind,
+        int NextAttempts);
 
     private readonly record struct MemberRow(int Id, int UserId);
 

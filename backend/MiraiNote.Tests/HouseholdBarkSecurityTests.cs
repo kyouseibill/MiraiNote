@@ -125,6 +125,9 @@ public class HouseholdBarkSecurityTests
     [InlineData("https://127.0.0.1/key", HouseholdBarkAddresses.UnusableMessage)]
     [InlineData("https://api.day.app.evil.com/key", HouseholdBarkAddresses.HostRejectedMessage)]
     [InlineData("https://user:secret@api.day.app/key", HouseholdBarkAddresses.UnusableMessage)]
+    [InlineData("https://api.day.app:8443/key", HouseholdBarkAddresses.PortRejectedMessage)]
+    [InlineData("https://api.day.app:80/key", HouseholdBarkAddresses.PortRejectedMessage)]
+    [InlineData("https://api.day.app:4430/key", HouseholdBarkAddresses.PortRejectedMessage)]
     public void Require_RejectsUnsafeBarkAddresses(string value, string message)
     {
         var ex = Assert.Throws<BusinessException>(() =>
@@ -141,6 +144,9 @@ public class HouseholdBarkSecurityTests
         Assert.Equal(
             "https://api.day.app/device-key",
             HouseholdBarkAddresses.Require("https://api.day.app/device-key", options, 500));
+        Assert.Equal(
+            "https://api.day.app/device-key",
+            HouseholdBarkAddresses.Require("https://api.day.app:443/device-key", options, 500));
         Assert.EndsWith(
             "bark.example.test/device",
             HouseholdBarkAddresses.Require("https://bark.example.test/device", options, 500));

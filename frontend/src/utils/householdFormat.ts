@@ -213,10 +213,15 @@ export function canonicalHttpUrl(raw: string): string | null {
   }
 }
 
-/** Bark 地址。购买链接仍允许 http，这里只留下 https。 */
+/** Bark 地址。购买链接仍允许 http，这里只留下 https，并且只接受 443（省略端口或显式 :443）。 */
 export function canonicalHttpsUrl(raw: string): string | null {
   const canonical = canonicalHttpUrl(raw)
   if (!canonical?.startsWith('https://')) return null
+  try {
+    if (new URL(canonical).port !== '') return null
+  } catch {
+    return null
+  }
   return canonical
 }
 

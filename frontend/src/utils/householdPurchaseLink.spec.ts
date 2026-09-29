@@ -61,13 +61,17 @@ describe('购买链接校验', () => {
 })
 
 describe('Bark 地址', () => {
-  it('只接受 https', () => {
+  it('只接受 https，并且只允许 443 端口', () => {
     expect(canonicalHttpsUrl('https://api.day.app/device')).toBe('https://api.day.app/device')
+    expect(canonicalHttpsUrl('https://api.day.app:443/device')).toBe('https://api.day.app/device')
     expect(canonicalHttpsUrl('http://api.day.app/device')).toBeNull()
     expect(canonicalHttpsUrl('http:evil.com')).toBeNull()
     expect(canonicalHttpsUrl('http:///evil')).toBeNull()
     expect(canonicalHttpsUrl('javascript:alert(1)')).toBeNull()
     expect(canonicalHttpsUrl('https://example.com/\n')).toBeNull()
+    expect(canonicalHttpsUrl('https://api.day.app:8443/device')).toBeNull()
+    expect(canonicalHttpsUrl('https://api.day.app:80/device')).toBeNull()
+    expect(canonicalHttpsUrl('https://api.day.app:4430/device')).toBeNull()
   })
 
   it('提示文案只提 https', () => {

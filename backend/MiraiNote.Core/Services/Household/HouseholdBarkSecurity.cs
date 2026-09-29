@@ -11,6 +11,7 @@ public static class HouseholdBarkAddresses
 {
     public const string DefaultHost = "api.day.app";
     public const string HttpsOnlyMessage = "Bark 地址只接受 https";
+    public const string PortRejectedMessage = "Bark 地址只接受 443 端口";
     public const string HostRejectedMessage = "Bark 地址不在允许的主机名单里";
     public const string UnusableMessage = "Bark 地址不可用";
 
@@ -40,6 +41,9 @@ public static class HouseholdBarkAddresses
 
         if (!Uri.TryCreate(absolute, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             throw new BusinessException(HttpsOnlyMessage, 400);
+
+        if (uri.Port != 443)
+            throw new BusinessException(PortRejectedMessage, 400);
 
         if (!string.IsNullOrEmpty(uri.UserInfo))
             throw new BusinessException(UnusableMessage, 400);
