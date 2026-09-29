@@ -1319,6 +1319,72 @@ public class HouseholdCycleServiceTests
         Assert.Equal(3, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
     }
 
+    [Fact]
+    public async Task IdempotencyKey_ReplaysAfterOneOffArchive_MismatchStays422_NewKeyStays400()
+    {
+        await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
+        var item = await fx.CreateOneOffAsync("护照", new DateOnly(2026, 9, 1));
+        var request = new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 20) };
+
+        var first = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request, "archive-key");
+        Assert.True(first.Item.IsArchived);
+
+        var replay = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request, "archive-key");
+        Assert.Equal(first.Record.Id, replay.Record.Id);
+        Assert.True(replay.Item.IsArchived);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+
+        var mismatch = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(
+            fx.OwnerId,
+            item.Id,
+            new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 21) },
+            "archive-key"));
+        Assert.Equal(422, mismatch.StatusCode);
+        Assert.Equal(HouseholdItemService.IdempotencyBodyMismatchMessage, mismatch.Message);
+
+        var freshKey = await Assert.ThrowsAsync<BusinessException>(() =>
+            fx.Items.CompleteAsync(fx.OwnerId, item.Id, request, "other-key"));
+        Assert.Equal(400, freshKey.StatusCode);
+        Assert.Equal(HouseholdItemService.ArchivedReadOnlyMessage, freshKey.Message);
+        Assert.Equal(1, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+    }
+
+    [Fact]
+    public async Task DuplicateWindow_RejectsEarlierFingerprint_NotOnlyTheLatest()
+    {
+        var clock = new MutableTimeProvider(Utc(2026, 10, 1, 2, 0));
+        await using var fx = new HouseholdFixture(clock);
+        var memberId = await fx.AddUserAsync("member");
+        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "滤网", new DateOnly(2026, 8, 1));
+        var request = new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 1) };
+
+        var admin = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request);
+        var member = await fx.Items.CompleteAsync(memberId, item.Id, request);
+        Assert.NotEqual(admin.Record.Id, member.Record.Id);
+
+        var again = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CompleteAsync(fx.OwnerId, item.Id, request));
+        Assert.Equal(409, again.StatusCode);
+        Assert.Equal("请勿重复提交", again.Message);
+        Assert.Equal(2, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+    }
+
+    [Fact]
+    public async Task DuplicateWindow_IgnoresRecordsNewerThanRewoundClock()
+    {
+        var clock = new MutableTimeProvider(Utc(2026, 10, 1, 2, 0));
+        await using var fx = new HouseholdFixture(clock);
+        var item = await fx.CreateRecurringAsync(fx.OwnerId, "滤网", new DateOnly(2026, 8, 1));
+        var request = new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 1) };
+
+        var first = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request);
+        clock.UtcNow = clock.UtcNow.AddSeconds(-(HouseholdItemService.DuplicateCompletionWindowSeconds + 1));
+
+        var again = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, request);
+        Assert.NotEqual(first.Record.Id, again.Record.Id);
+        Assert.Equal(2, await fx.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+    }
+
     private static DateTimeOffset Utc(int year, int month, int day, int hour, int minute) =>
         new(year, month, day, hour, minute, 0, TimeSpan.Zero);
 

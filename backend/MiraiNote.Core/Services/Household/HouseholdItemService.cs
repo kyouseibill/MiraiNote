@@ -218,7 +218,6 @@ public sealed class HouseholdItemService : IHouseholdItemService
         var photos = HouseholdPhotoRefs.Normalize(request.PhotoRefs);
 
         var item = await LoadAsync(householdId, id, tracking: true, ct);
-        EnsureNotArchived(item);
         var member = await RequireMemberAsync(
             householdId,
             request.CompletedByMemberId ?? callerMemberId,
@@ -231,6 +230,9 @@ public sealed class HouseholdItemService : IHouseholdItemService
             if (existing != null)
                 return await ReplayOrRejectAsync(householdId, existing, bodyHash, ct);
         }
+
+        // 归档只拦新的完成。同一 Idempotency-Key 的重放要先返回原结果，换内容仍是 422。
+        EnsureNotArchived(item);
 
         if (item.ItemType == HouseholdItemType.Recurring && request.NewExpiryDate != null)
             throw new BusinessException("周期型事项不能填写新的到期日", 400);
@@ -683,13 +685,14 @@ public sealed class HouseholdItemService : IHouseholdItemService
 
     private async Task RejectDuplicateSubmissionAsync(int itemId, string fingerprint, CancellationToken ct)
     {
-        var cutoff = _rules.UtcNow.UtcDateTime.AddSeconds(-DuplicateCompletionWindowSeconds);
-        var recent = await _db.HouseholdCompletionRecords.AsNoTracking()
-            .Where(r => r.HouseholdItemId == itemId && r.CreatedAt >= cutoff)
-            .OrderByDescending(r => r.Id)
-            .Select(r => r.SubmissionFingerprint)
-            .FirstOrDefaultAsync(ct);
-        if (recent == fingerprint)
+        var now = _rules.UtcNow.UtcDateTime;
+        var cutoff = now.AddSeconds(-DuplicateCompletionWindowSeconds);
+        var duplicate = await _db.HouseholdCompletionRecords.AsNoTracking()
+            .AnyAsync(r => r.HouseholdItemId == itemId
+                && r.SubmissionFingerprint == fingerprint
+                && r.CreatedAt >= cutoff
+                && r.CreatedAt <= now, ct);
+        if (duplicate)
             throw new BusinessException("请勿重复提交", 409);
     }
 
