@@ -237,6 +237,56 @@ public class HouseholdChatTests
         Assert.Equal(2, await lab.Db.HouseholdCompletionRecords.CountAsync());
     }
 
+    [Fact]
+    public async Task Confirm_SoftDeletedCandidate_Returns404_AndWritesNothing()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var item = await lab.CreateAsync("软删滤网");
+        var before = await lab.Db.HouseholdCompletionRecords.CountAsync();
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了软删滤网");
+        Assert.Equal("confirm", draft.Kind);
+        Assert.Contains(draft.Candidates, candidate => candidate.Id == item.Id);
+
+        await lab.Items.DeleteAsync(lab.OwnerId, item.Id);
+        var raw = await lab.Db.HouseholdItems.IgnoreQueryFilters().SingleAsync(i => i.Id == item.Id);
+        Assert.True(raw.IsDeleted);
+
+        var gone = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId, Confirm(draft, item.Id), "soft-deleted"));
+        Assert.Equal(404, gone.StatusCode);
+        Assert.Equal("事项不存在", gone.Message);
+        Assert.Equal(before, await lab.Db.HouseholdCompletionRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task SoftDeletedItem_IsHiddenFromMatchAndQuery()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var deleted = await lab.CreateAsync("护照", lastDone: new DateOnly(2026, 9, 8));
+        await lab.Items.CompleteAsync(lab.OwnerId, deleted.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 20)
+        });
+        var visible = await lab.CreateAsync("纱窗", lastDone: new DateOnly(2026, 9, 8));
+        await lab.Items.DeleteAsync(lab.OwnerId, deleted.Id);
+        Assert.True(await lab.Db.HouseholdItems.IgnoreQueryFilters().AnyAsync(i => i.Id == deleted.Id && i.IsDeleted));
+
+        var named = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
+        Assert.Equal("create", named.Kind);
+        Assert.DoesNotContain(named.Candidates, candidate => candidate.Id == deleted.Id);
+
+        var shared = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了纱窗");
+        Assert.Contains(shared.Candidates, candidate => candidate.Id == visible.Id);
+        Assert.DoesNotContain(shared.Candidates, candidate => candidate.Id == deleted.Id);
+
+        var history = await lab.Chat.InterpretAsync(lab.OwnerId, "护照什么时候换的？");
+        Assert.DoesNotContain(history.History, line => line.ItemId == deleted.Id);
+
+        var upcoming = await lab.Chat.InterpretAsync(lab.OwnerId, "最近要到期的有哪些？");
+        Assert.Contains(upcoming.Upcoming, line => line.ItemId == visible.Id);
+        Assert.DoesNotContain(upcoming.Upcoming, line => line.ItemId == deleted.Id);
+    }
+
     private static ConfirmHouseholdChatRequest Confirm(HouseholdChatInterpretationDto draft, int itemId, bool? deduct = null) => new()
     {
         DraftId = draft.DraftId!.Value,
