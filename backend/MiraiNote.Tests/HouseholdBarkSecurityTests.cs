@@ -67,6 +67,8 @@ public class HouseholdBarkSecurityTests
 
         Assert.False(opened);
         Assert.Equal("Bark 通知发送失败", blocked.Message);
+        Assert.Equal(HouseholdDeliveryFailureKind.SendFailed, blocked.Kind);
+        Assert.Null(blocked.InnerException);
     }
 
     [Fact]
@@ -177,6 +179,9 @@ public class HouseholdBarkSecurityTests
         Assert.True(HouseholdReminderAttempt.CanClaim(HouseholdReminderDeliveryStatus.Pending, 1, at, at.AddSeconds(60)));
         Assert.True(HouseholdReminderAttempt.CanClaim(HouseholdReminderDeliveryStatus.Skipped, 3, at, at));
         Assert.False(HouseholdReminderAttempt.CanClaim(HouseholdReminderDeliveryStatus.Sent, 1, at, at.AddDays(1)));
-        Assert.Equal("发送失败（InvalidOperationException）", HouseholdReminderAttempt.Summarize(new InvalidOperationException("https://api.day.app/secret")));
+        var summary = HouseholdReminderAttempt.Summarize(new InvalidOperationException("https://api.day.app/secret"));
+        Assert.Equal("发送失败", summary);
+        Assert.DoesNotContain("api.day.app", summary);
+        Assert.DoesNotContain("secret", summary);
     }
 }

@@ -198,6 +198,8 @@ export const barkReentryMessage = '保存的 Bark 地址无法读取，请重新
 
 export const deliveryFailureCheckMessage = '请点发送测试检查。'
 
+const DELIVERY_FAILURE_REASONS = new Set(['超时', '连接失败', '发送失败'])
+
 /** 把失败时间格式化成用户时区。没有单独的用户时区时用 Asia/Shanghai。 */
 export function formatDeliveryFailureTime(iso: string, timeZone = 'Asia/Shanghai'): string {
   const date = new Date(iso)
@@ -217,7 +219,7 @@ export function formatDeliveryFailureTime(iso: string, timeZone = 'Asia/Shanghai
 
 /** 失败之后又成功时传空，调用方就不显示警告。 */
 export function deliveryFailureText(failure: { failedAt: string; reason: string } | null | undefined, timeZone = 'Asia/Shanghai'): string {
-  if (!failure?.failedAt || !failure.reason) return ''
+  if (!failure?.failedAt || !failure.reason || !DELIVERY_FAILURE_REASONS.has(failure.reason)) return ''
   const when = formatDeliveryFailureTime(failure.failedAt, timeZone)
   if (!when) return ''
   return `最近一次投递失败：${when}（北京时间）。原因：${failure.reason}。${deliveryFailureCheckMessage}`

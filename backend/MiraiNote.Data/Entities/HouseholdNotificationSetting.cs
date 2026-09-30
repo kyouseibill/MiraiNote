@@ -20,6 +20,9 @@ public class HouseholdNotificationSetting : BaseEntity
 
     public bool BarkEnabled { get; set; } = true;
 
+    /// <summary>这个时刻及之前的 Bark 失败不再提示。重新保存、清空地址或关闭通道时写入。</summary>
+    public DateTime? BarkFailureAcknowledgedAt { get; set; }
+
     /// <summary>加密后的 Bark 地址。不要记录、不要返回给前端。</summary>
     [MaxLength(4000)]
     public string? BarkAddressProtected { get; set; }
@@ -29,6 +32,9 @@ public class HouseholdNotificationSetting : BaseEntity
     public string? BarkAddressSuffix { get; set; }
 
     public bool EmailEnabled { get; set; } = true;
+
+    /// <summary>这个时刻及之前的邮件失败不再提示。关闭邮件通道时写入。</summary>
+    public DateTime? EmailFailureAcknowledgedAt { get; set; }
 
     [MaxLength(200)]
     public string? NotificationEmail { get; set; }

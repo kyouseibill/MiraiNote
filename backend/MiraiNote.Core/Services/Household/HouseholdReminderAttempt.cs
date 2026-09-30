@@ -39,12 +39,8 @@ internal static class HouseholdReminderAttempt
     public static int NextAttemptCount(HouseholdReminderDeliveryStatus status, int attemptCount) =>
         status == HouseholdReminderDeliveryStatus.Skipped ? 1 : attemptCount + 1;
 
-    /// <summary>只保留异常类型。异常消息里经常带着请求地址，不能写入提醒日志。</summary>
-    public static string Summarize(Exception exception)
-    {
-        var text = "发送失败（" + exception.GetType().Name + "）";
-        return text.Length <= 200 ? text : text[..200];
-    }
+    /// <summary>只保留超时、连接失败、发送失败。异常消息里经常带着地址和邮箱，不能写入提醒日志。</summary>
+    public static string Summarize(Exception exception) => HouseholdDeliveryFailure.Classify(exception);
 
     private static DateTime AsUtc(DateTime value) =>
         value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc);

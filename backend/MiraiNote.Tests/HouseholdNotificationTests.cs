@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading;
 using Xunit;
@@ -768,6 +769,191 @@ public class HouseholdNotificationTests
         Assert.DoesNotContain("rotated-protection-key", json);
     }
 
+    [Fact]
+    public async Task Settings_StoresRealTimeoutAndConnectionFailures_WithoutSecrets()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.CreateDueTodayAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+
+        lab.Email.Failure = new TimeoutException("smtp timeout " + SmtpPassword + " tester@example.com");
+        await lab.DispatchAsync();
+        var emailLog = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdDeliveryFailure.TimedOut, emailLog.LastError);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        lab.Email.Failure = new TaskCanceledException("canceled " + BarkAddress);
+        await lab.DispatchAsync();
+        emailLog = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdDeliveryFailure.TimedOut, emailLog.LastError);
+        Assert.Equal(2, emailLog.AttemptCount);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(5);
+        lab.Email.Failure = new SocketException((int)SocketError.ConnectionRefused);
+        await lab.DispatchAsync();
+        emailLog = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, emailLog.LastError);
+        Assert.DoesNotContain(SmtpPassword, emailLog.LastError);
+        Assert.DoesNotContain("tester@example.com", emailLog.LastError);
+        Assert.DoesNotContain(BarkAddress, emailLog.LastError);
+
+        var dto = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.NotNull(dto.EmailFailure);
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, dto.EmailFailure!.Reason);
+        AssertNoSecrets(JsonSerializer.Serialize(dto.EmailFailure));
+
+        lab.Email.Failure = null;
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        lab.Bark.WaitForTimeout = true;
+        await lab.DispatchAsync();
+
+        var barkLog = await lab.Db.HouseholdReminderLogs.AsNoTracking()
+            .SingleAsync(r => r.Channel == HouseholdNotificationChannel.Bark);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, barkLog.Status);
+        Assert.Equal(HouseholdDeliveryFailure.TimedOut, barkLog.LastError);
+        Assert.DoesNotContain(BarkAddress, barkLog.LastError);
+
+        var afterBark = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.NotNull(afterBark.BarkFailure);
+        Assert.Equal(HouseholdDeliveryFailure.TimedOut, afterBark.BarkFailure!.Reason);
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, afterBark.EmailFailure!.Reason);
+        AssertNoSecrets(JsonSerializer.Serialize(afterBark.BarkFailure));
+        Assert.All(lab.Logs.Messages, message =>
+        {
+            Assert.DoesNotContain(BarkAddress, message);
+            Assert.DoesNotContain(SmtpPassword, message);
+        });
+    }
+
+    [Fact]
+    public async Task Settings_ClearsChannelFailure_AfterSuccessResaveClearOrDisable()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var otherId = await lab.AddUserAsync("linxia");
+        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        await lab.CreateDueTodayAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        lab.Email.Failure = new InvalidOperationException("smtp " + SmtpPassword);
+        await lab.DispatchAsync();
+
+        var failed = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, failed.EmailFailure!.Reason);
+        Assert.Null(failed.BarkFailure);
+        var other = await lab.Settings.GetAsync(otherId);
+        Assert.Null(other.EmailFailure);
+        Assert.Null(other.BarkFailure);
+        Assert.Equal("linxia@example.com", other.Email);
+        Assert.DoesNotContain(BarkAddress, JsonSerializer.Serialize(other));
+
+        lab.Email.Failure = null;
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        await lab.CreateDueTodayAsync("改走 Bark");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        lab.Bark.Failure = new HttpRequestException("connection refused");
+        await lab.DispatchAsync();
+        var barkFailed = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, barkFailed.BarkFailure!.Reason);
+        Assert.Null(barkFailed.EmailFailure);
+
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).BarkFailure);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.Equal(HouseholdDeliveryFailure.Unreachable, (await lab.Settings.GetAsync(lab.OwnerId)).BarkFailure!.Reason);
+
+        var clear = SettingsWith(due: HouseholdNotificationChannel.Bark);
+        clear.ClearBarkAddress = true;
+        await lab.Settings.UpdateAsync(lab.OwnerId, clear);
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).BarkFailure);
+
+        await lab.CreateDueTodayAsync("第二次");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        lab.Email.Failure = new InvalidOperationException("smtp");
+        lab.Bark.Failure = null;
+        await lab.DispatchAsync();
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, (await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure!.Reason);
+
+        var emailOff = SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email);
+        emailOff.EmailEnabled = false;
+        await lab.Settings.UpdateAsync(lab.OwnerId, emailOff);
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, (await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure!.Reason);
+
+        lab.Bark.Failure = new HttpRequestException("connection refused");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        Assert.NotNull((await lab.Settings.GetAsync(lab.OwnerId)).BarkFailure);
+
+        var barkOff = SettingsWith(due: HouseholdNotificationChannel.Bark);
+        barkOff.BarkEnabled = false;
+        await lab.Settings.UpdateAsync(lab.OwnerId, barkOff);
+        var hidden = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.Null(hidden.BarkFailure);
+        Assert.False(hidden.BarkEnabled);
+        Assert.NotNull(hidden.EmailFailure);
+    }
+
+    [Fact]
+    public async Task Settings_IgnoresDeletedItemsAndConsumables()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var keep = await lab.CreateDueTodayAsync("留下");
+        var drop = await lab.CreateDueTodayAsync("删掉");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(due: HouseholdNotificationChannel.Email));
+        lab.Email.Failure = new InvalidOperationException("smtp " + SmtpPassword);
+        await lab.DispatchAsync();
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, (await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure!.Reason);
+
+        await lab.Items.DeleteAsync(lab.OwnerId, drop.Id);
+        Assert.NotNull((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        await lab.Items.DeleteAsync(lab.OwnerId, keep.Id);
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        var consumable = await lab.Consumables.CreateAsync(lab.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 0,
+            RestockThreshold = 1
+        });
+        await lab.DispatchAsync();
+        var restock = await lab.Db.HouseholdConsumableReminders.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, restock.Status);
+        Assert.Equal(HouseholdDeliveryFailure.SendFailed, restock.LastError);
+        Assert.DoesNotContain(SmtpPassword, restock.LastError);
+        Assert.NotNull((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+
+        await lab.Consumables.DeleteAsync(lab.OwnerId, consumable.Id);
+        Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
+        Assert.Equal(1, await lab.Db.HouseholdConsumableReminders.CountAsync());
+    }
+
+    private static void AssertNoSecrets(string json)
+    {
+        Assert.DoesNotContain(SmtpPassword, json);
+        Assert.DoesNotContain("tester@example.com", json);
+        Assert.DoesNotContain(BarkAddress, json);
+        Assert.DoesNotContain("device-key", json);
+        Assert.DoesNotContain("api.day.app", json);
+        Assert.DoesNotContain("Exception", json);
+    }
+
     private static Task<bool> LowStockFlagAsync(NotificationLab lab) =>
         lab.Db.HouseholdConsumables.AsNoTracking().Select(c => c.LowStockReminderSent).SingleAsync();
 
@@ -880,7 +1066,7 @@ public class HouseholdNotificationTests
                 }),
                 new ListLogger<EmailNotificationChannel>(logs));
             var protector = new HouseholdSecretProtector(options);
-            var settings = new HouseholdNotificationSettingsService(db, access, protector, options, barkChannel, emailChannel, rates);
+            var settings = new HouseholdNotificationSettingsService(db, access, protector, options, barkChannel, emailChannel, rates, clock);
             HouseholdNotificationDispatcher Build(MiraiNoteDbContext context) => new(
                 context,
                 clock,
@@ -957,9 +1143,12 @@ public class HouseholdNotificationTests
         public List<(string To, string Subject, string Html)> Sent { get; } = new();
         public string? FailMessage { get; set; }
         public int FailuresRemaining { get; set; }
+        public Exception? Failure { get; set; }
 
         public Task SendCustomEmailAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
         {
+            if (Failure != null)
+                throw Failure;
             if (FailuresRemaining > 0)
             {
                 FailuresRemaining--;
@@ -985,10 +1174,21 @@ public class HouseholdNotificationTests
         public List<string> Bodies { get; } = new();
         public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
         public Exception? Failure { get; set; }
+        public bool WaitForTimeout
+        {
+            get => _waitForTimeout;
+            set
+            {
+                _waitForTimeout = value;
+                if (value)
+                    _client.Timeout = TimeSpan.FromMilliseconds(300);
+            }
+        }
         public TaskCompletionSource<bool>? Gate { get; set; }
         public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpClient _client;
         private readonly object _gate = new();
+        private bool _waitForTimeout;
 
         public RecordingBark()
         {
@@ -1012,6 +1212,8 @@ public class HouseholdNotificationTests
                     _owner.Bodies.Add(body);
                 }
                 _owner.Started.TrySetResult(true);
+                if (_owner.WaitForTimeout)
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
                 if (_owner.Gate != null)
                     await _owner.Gate.Task.WaitAsync(cancellationToken);
                 if (_owner.Failure != null)

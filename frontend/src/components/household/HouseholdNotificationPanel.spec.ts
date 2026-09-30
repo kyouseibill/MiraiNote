@@ -86,4 +86,19 @@ describe('HouseholdNotificationPanel', () => {
     expect(wrapper.text()).not.toContain('已配置')
     expect(wrapper.find('[data-testid="bark-delivery-failure"]').exists()).toBe(false)
   })
+
+  it('不渲染分类以外的失败原因', async () => {
+    useSettings({
+      barkFailure: { failedAt: '2026-10-08T01:05:00.000Z', reason: 'https://api.day.app/secret-key-should-not-render' },
+      emailFailure: { failedAt: '2026-10-08T01:07:00.000Z', reason: 'other-inbox@leak.test' },
+    })
+    const wrapper = mount(HouseholdNotificationPanel)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="bark-delivery-failure"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="email-delivery-failure"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('secret-key-should-not-render')
+    expect(wrapper.text()).not.toContain('leak.test')
+    expect(wrapper.text()).not.toContain('TimeoutException')
+  })
 })
