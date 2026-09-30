@@ -21,6 +21,28 @@ export interface HouseholdMember {
   role: HouseholdRole
 }
 
+export type HouseholdInvitationStatus = 'Pending' | 'Accepted' | 'Rejected' | 'Revoked'
+
+export interface HouseholdInvitation {
+  id: number
+  householdId: number
+  householdName: string
+  inviteeUserId: number
+  inviteeUsername: string
+  inviteeEmail: string | null
+  inviterUsername: string
+  role: HouseholdRole
+  status: HouseholdInvitationStatus
+  expiresAt: string
+  isExpired: boolean
+}
+
+export interface HouseholdConsumableLink {
+  id: number
+  name: string
+  isArchived: boolean
+}
+
 export interface HouseholdItem {
   id: number
   householdId: number
@@ -206,6 +228,7 @@ export interface HouseholdConsumable {
   unit: string | null
   purchaseLink: string | null
   note: string | null
+  linkedItems?: HouseholdConsumableLink[]
   createdAt: string
   updatedAt: string
 }

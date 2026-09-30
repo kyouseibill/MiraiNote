@@ -13,15 +13,17 @@ public interface IHouseholdService
     Task<HouseholdMemberDto> AddMemberAsync(int userId, AddHouseholdMemberRequest request, CancellationToken ct = default);
     Task<HouseholdMemberDto> ChangeRoleAsync(int userId, int memberId, ChangeHouseholdMemberRoleRequest request, CancellationToken ct = default);
     Task RemoveMemberAsync(int userId, int memberId, CancellationToken ct = default);
+    Task LeaveAsync(int userId, CancellationToken ct = default);
 }
 
 public sealed class HouseholdService : IHouseholdService
 {
     /// <summary>
     /// 「用户不存在」和「已属于其他家庭」共用这一句，避免探测账号是否存在。
-    /// 邀请确认流程属于后续 PR，这里仍是管理员直接添加。
+    /// 这个直接加入接口保持原行为。站内邀请走 <see cref="HouseholdInvitationService"/>。
     /// </summary>
     public const string AddMemberRejectedMessage = "邀请未能发出，请确认对方账号";
+    public const string LastAdminMessage = "家庭至少需要一名管理员";
 
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
@@ -143,15 +145,38 @@ public sealed class HouseholdService : IHouseholdService
         EnsureAdmin(ctx);
 
         var member = await LoadMemberAsync(ctx.Household.Id, memberId, ct);
-        if (member.Role == HouseholdRole.Admin)
-            await EnsureAnotherAdminAsync(ctx.Household.Id, member.Id, ct);
+        await DetachMemberAsync(ctx.Household.Id, member, ct);
+    }
 
-        // 负责人离开后事项变为未指派，提醒改走「通知全体成员」。
+    public async Task LeaveAsync(int userId, CancellationToken ct = default)
+    {
+        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var member = await LoadMemberAsync(ctx.Household.Id, ctx.Member.Id, ct);
+        await DetachMemberAsync(ctx.Household.Id, member, ct);
+    }
+
+    private async Task DetachMemberAsync(int householdId, HouseholdMember member, CancellationToken ct)
+    {
+        if (member.Role == HouseholdRole.Admin)
+            await EnsureAnotherAdminAsync(householdId, member.Id, ct);
+
         var assigned = await _db.HouseholdItems
-            .Where(i => i.HouseholdId == ctx.Household.Id && i.AssigneeMemberId == member.Id)
+            .Where(i => i.HouseholdId == householdId && i.AssigneeMemberId == member.Id)
             .ToListAsync(ct);
         foreach (var item in assigned)
             item.AssigneeMemberId = null;
+
+        var drafts = await _db.HouseholdChatDrafts
+            .Where(d => d.UserId == member.UserId && d.HouseholdId == householdId && d.IdempotencyKey == null)
+            .ToListAsync(ct);
+        foreach (var draft in drafts)
+            draft.IsDeleted = true;
+
+        var settings = await _db.HouseholdNotificationSettings
+            .Where(s => s.MemberId == member.Id)
+            .ToListAsync(ct);
+        foreach (var setting in settings)
+            setting.IsDeleted = true;
 
         member.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
@@ -184,7 +209,7 @@ public sealed class HouseholdService : IHouseholdService
         var otherAdmins = await _db.HouseholdMembers.CountAsync(m =>
             m.HouseholdId == householdId && m.Role == HouseholdRole.Admin && m.Id != exceptMemberId, ct);
         if (otherAdmins == 0)
-            throw new BusinessException("家庭至少需要一名管理员", 400);
+            throw new BusinessException(LastAdminMessage, 400);
     }
 
     private static void EnsureAdmin(HouseholdContext ctx)

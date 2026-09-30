@@ -17,6 +17,7 @@ import type {
   HouseholdItem,
   HouseholdItemQuery,
   HouseholdItemTemplate,
+  HouseholdInvitation,
   HouseholdMember,
   HouseholdNotificationSettings,
   HouseholdUpcoming,
@@ -51,6 +52,8 @@ function cloneUpcoming(source: HouseholdUpcoming, category?: HouseholdCategory):
 export const useHouseholdStore = defineStore('household', () => {
   const household = ref<Household | null>(null)
   const members = ref<HouseholdMember[]>([])
+  const outgoingInvitations = ref<HouseholdInvitation[]>([])
+  const incomingInvitations = ref<HouseholdInvitation[]>([])
   const items = ref<HouseholdItem[]>([])
   const templates = ref<HouseholdItemTemplate[]>([])
   const consumables = ref<HouseholdConsumable[]>([])
@@ -155,6 +158,70 @@ export const useHouseholdStore = defineStore('household', () => {
     if (previewMode.value) return members.value
     members.value = await householdApi.listMembers()
     return members.value
+  }
+
+  async function fetchInvitations() {
+    incomingInvitations.value = previewMode.value ? [] : await householdApi.listIncomingInvitations()
+    if (!isAdmin.value) {
+      outgoingInvitations.value = []
+      return { incoming: incomingInvitations.value, outgoing: outgoingInvitations.value }
+    }
+    outgoingInvitations.value = previewMode.value ? [] : await householdApi.listOutgoingInvitations()
+    return { incoming: incomingInvitations.value, outgoing: outgoingInvitations.value }
+  }
+
+  async function createInvitation(userIdentifier: string) {
+    assertAdmin('只有管理员可以邀请成员')
+    if (previewMode.value) return
+    await householdApi.createInvitation(userIdentifier)
+    await fetchInvitations()
+  }
+
+  async function revokeInvitation(id: number) {
+    assertAdmin('只有管理员可以撤回邀请')
+    if (previewMode.value) {
+      outgoingInvitations.value = outgoingInvitations.value.filter((item) => item.id !== id)
+      return
+    }
+    await householdApi.revokeInvitation(id)
+    await fetchInvitations()
+  }
+
+  async function acceptInvitation(id: number, idempotencyKey: string) {
+    if (previewMode.value) return
+    await householdApi.acceptInvitation(id, idempotencyKey)
+    await fetchHousehold()
+    await fetchMembers()
+    await fetchInvitations()
+  }
+
+  async function rejectInvitation(id: number) {
+    if (previewMode.value) {
+      incomingInvitations.value = incomingInvitations.value.filter((item) => item.id !== id)
+      return
+    }
+    await householdApi.rejectInvitation(id)
+    await fetchInvitations()
+  }
+
+  async function removeMember(memberId: number) {
+    assertAdmin('只有管理员可以移除成员')
+    if (previewMode.value) {
+      members.value = members.value.filter((member) => member.id !== memberId)
+      return
+    }
+    await householdApi.removeMember(memberId)
+    await fetchMembers()
+    await fetchItems(lastQuery.value)
+  }
+
+  async function leaveHousehold() {
+    if (previewMode.value) return
+    await householdApi.leaveHousehold()
+    await fetchHousehold()
+    await fetchMembers()
+    await fetchItems(lastQuery.value)
+    await fetchInvitations()
   }
 
   async function fetchItems(query: HouseholdItemQuery = {}) {
@@ -599,6 +666,8 @@ export const useHouseholdStore = defineStore('household', () => {
   return {
     household,
     members,
+    outgoingInvitations,
+    incomingInvitations,
     items,
     templates,
     consumables,
@@ -612,6 +681,13 @@ export const useHouseholdStore = defineStore('household', () => {
     fetchServerToday,
     fetchHousehold,
     fetchMembers,
+    fetchInvitations,
+    createInvitation,
+    revokeInvitation,
+    acceptInvitation,
+    rejectInvitation,
+    removeMember,
+    leaveHousehold,
     fetchItems,
     fetchTemplates,
     fetchConsumables,

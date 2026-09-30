@@ -136,13 +136,19 @@ async function remove() {
     </div>
     <p v-if="!store.consumables.length" class="rounded-md border border-dashed border-[var(--mn-line)] px-4 py-10 text-center text-[13px] text-[var(--mn-muted)]">还没有耗材。</p>
     <ul v-else class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
-      <li v-for="item in store.consumables" :key="item.id" class="flex flex-wrap items-center gap-3 py-4">
+      <li v-for="item in store.consumables" :key="item.id" class="flex flex-wrap items-center gap-3 py-4" :class="item.isLowStock ? 'bg-[#fff6f4]' : ''" :data-low-stock="item.isLowStock ? 'true' : 'false'">
         <div class="min-w-[180px] flex-1">
           <p class="text-[14px] text-[var(--mn-ink)]">{{ item.name }}</p>
           <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
             <span v-if="item.specModel">{{ item.specModel }} · </span>
             库存 {{ item.currentStock }}{{ item.unit || '' }} · 阈值 {{ item.restockThreshold }}
             <span v-if="item.isLowStock" class="ml-2 text-[#b4493f]">需补货</span>
+          </p>
+          <p v-if="item.linkedItems?.length" class="mt-1 text-[12px] text-[var(--mn-muted)]" data-testid="linked-items">
+            关联事项
+            <span v-for="(link, index) in item.linkedItems" :key="link.id">
+              <span v-if="index">、</span>{{ link.name }}<span v-if="link.isArchived">（已归档）</span>
+            </span>
           </p>
           <a v-if="safeHttpUrl(item.purchaseLink)" :href="safeHttpUrl(item.purchaseLink) || undefined" class="mt-1 inline-block break-all text-[12px] text-[#4c6178] hover:underline" target="_blank" rel="noopener noreferrer">{{ safeHttpUrl(item.purchaseLink) }}</a>
           <span v-else-if="item.purchaseLink" class="mt-1 inline-block break-all text-[12px] text-[var(--mn-muted)]">{{ item.purchaseLink }}</span>

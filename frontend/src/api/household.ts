@@ -12,6 +12,7 @@ import type {
   HouseholdItem,
   HouseholdItemQuery,
   HouseholdItemTemplate,
+  HouseholdInvitation,
   HouseholdMember,
   HouseholdServerToday,
   HouseholdNotificationSettings,
@@ -34,6 +35,26 @@ export const householdApi = {
   getMine: () => unwrap<Household>(http.get('/household')),
 
   listMembers: () => unwrap<HouseholdMember[]>(http.get('/household/members')),
+
+  removeMember: (memberId: number) => unwrap<null>(http.delete(`/household/members/${memberId}`)),
+
+  leaveHousehold: () => unwrap<null>(http.post('/household/leave')),
+
+  listOutgoingInvitations: () => unwrap<HouseholdInvitation[]>(http.get('/household/invitations')),
+
+  listIncomingInvitations: () => unwrap<HouseholdInvitation[]>(http.get('/household/invitations/incoming')),
+
+  createInvitation: (userIdentifier: string) =>
+    unwrap<HouseholdInvitation>(http.post('/household/invitations', { userIdentifier })),
+
+  revokeInvitation: (id: number) => unwrap<HouseholdInvitation>(http.delete(`/household/invitations/${id}`)),
+
+  acceptInvitation: (id: number, idempotencyKey: string) =>
+    unwrap<HouseholdMember>(http.post(`/household/invitations/${id}/accept`, null, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })),
+
+  rejectInvitation: (id: number) => unwrap<HouseholdInvitation>(http.post(`/household/invitations/${id}/reject`)),
 
   listItems: (query: HouseholdItemQuery = {}) =>
     unwrap<HouseholdItem[]>(http.get('/household/items', { params: itemParams(query) })),

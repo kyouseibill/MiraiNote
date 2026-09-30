@@ -17,6 +17,7 @@ internal static class HouseholdModelConfiguration
         ConfigureReminderLog(modelBuilder);
         ConfigureConsumableReminder(modelBuilder);
         ConfigureChatDraft(modelBuilder);
+        ConfigureInvitation(modelBuilder);
     }
 
     private static void ConfigureMember(ModelBuilder modelBuilder)
@@ -191,5 +192,21 @@ internal static class HouseholdModelConfiguration
         entity.Property(d => d.Cost).HasPrecision(18, 2);
         entity.Property(d => d.StoredCost).HasPrecision(18, 2);
         entity.HasIndex(d => new { d.UserId, d.ExpiresAt });
+    }
+
+    private static void ConfigureInvitation(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdInvitation>();
+        entity.Property(i => i.Role).HasConversion<string>().HasMaxLength(32);
+        entity.Property(i => i.Status).HasConversion<string>().HasMaxLength(32);
+        entity.HasIndex(i => new { i.HouseholdId, i.InviteeUserId })
+            .IsUnique()
+            .HasFilter("[Status] = 'Pending' AND [IsDeleted] = 0");
+        entity.HasIndex(i => new { i.InviteeUserId, i.Status, i.ExpiresAt });
+
+        entity.HasOne(i => i.Household)
+            .WithMany()
+            .HasForeignKey(i => i.HouseholdId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

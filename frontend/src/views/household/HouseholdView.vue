@@ -234,6 +234,7 @@ function statusOf(item: HouseholdItem) {
               · {{ item.itemType === 'OneOffExpiry' ? '一次性到期' : cycleLabel(item.cycleValue, item.cycleUnit) }}
               <template v-if="item.location"> · {{ item.location }}</template>
               <template v-if="item.assigneeName"> · {{ item.assigneeName }}</template>
+              <template v-if="store.consumableName(item.consumableId)"> · {{ store.consumableName(item.consumableId) }}</template>
             </p>
             <p class="mt-1 flex flex-wrap items-center gap-3 text-[12px]">
               <span class="tabular-nums text-[var(--mn-ink)]">下次到期 {{ formatCalendarDate(item.nextDueDate) }}</span>

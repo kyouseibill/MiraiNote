@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddSingleton<Services.Household.HouseholdCycleRules>();
         services.AddScoped<Services.Household.IHouseholdAccessService, Services.Household.HouseholdAccessService>();
         services.AddScoped<Services.Household.IHouseholdService, Services.Household.HouseholdService>();
+        services.AddScoped<Services.Household.IHouseholdInvitationService, Services.Household.HouseholdInvitationService>();
         services.AddScoped<Services.Household.IHouseholdItemService, Services.Household.HouseholdItemService>();
         services.AddScoped<Services.Household.IHouseholdConsumableService, Services.Household.HouseholdConsumableService>();
         services.AddScoped<Services.Household.IHouseholdTestClockService, Services.Household.HouseholdTestClockService>();
