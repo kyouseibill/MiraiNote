@@ -146,9 +146,12 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             return;
 
         var kind = HouseholdReminderSchedule.LatestKind(today, item.Due, item.LeadDays);
-        var channel = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
-        if (!preference.CanDeliver(channel, _protector.IsConfigured))
+        var preferred = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
+        // 不可用才改走。已经能发但投递失败的，仍占用原通道日志并按 +1/+5 分钟重试。
+        var resolved = preference.Resolve(preferred, _protector.IsConfigured);
+        if (resolved == null)
             return;
+        var channel = resolved.Value;
 
         // 先抢到日志再扣邮件名额。已发送、次数用尽或还在退避中的记录直接跳过，不能占掉本分钟的名额。
         var claim = await ClaimItemLogAsync(item, member.Id, today, channel, kind, preference.OverdueIntervalDays, ct);
@@ -498,7 +501,10 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         string? accountEmail)
     {
         if (!settings.TryGetValue(memberId, out var setting))
-            setting = new HouseholdNotificationSetting();
+        {
+            // 没保存过设置就没有 Bark 地址。到期和逾期默认走邮件，不改写已经保存的偏好。
+            setting = new HouseholdNotificationSetting { DueChannel = HouseholdNotificationChannel.Email };
+        }
         return NotificationPreference.From(setting, userId, accountEmail);
     }
 
@@ -549,12 +555,13 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             setting.DueChannel,
             setting.OverdueIntervalDays);
 
-        public bool CanDeliver(HouseholdNotificationChannel channel, bool protectorConfigured)
-        {
-            if (channel == HouseholdNotificationChannel.Bark)
-                return BarkEnabled && protectorConfigured && !string.IsNullOrEmpty(BarkAddressProtected);
-            return EmailEnabled && !string.IsNullOrWhiteSpace(Email);
-        }
+        public bool CanDeliver(HouseholdNotificationChannel channel, bool protectorConfigured) =>
+            HouseholdNotificationAvailability.CanDeliver(
+                channel, BarkEnabled, BarkAddressProtected, EmailEnabled, Email, protectorConfigured);
+
+        public HouseholdNotificationChannel? Resolve(HouseholdNotificationChannel preferred, bool protectorConfigured) =>
+            HouseholdNotificationAvailability.Resolve(
+                preferred, BarkEnabled, BarkAddressProtected, EmailEnabled, Email, protectorConfigured);
 
         public IEnumerable<HouseholdNotificationChannel> DeliverableChannels(bool protectorConfigured)
         {

@@ -442,6 +442,9 @@ public class HouseholdNotificationSettingsDto
     /// <summary>服务器总开关。关闭时到点不推送，设置和发送测试仍可用。</summary>
     public bool NotificationsEnabled { get; set; }
 
+    /// <summary>Bark 或邮件至少有一个当前能送达。两个都不行时通知页提示提醒不会发出。</summary>
+    public bool HasDeliverableChannel { get; set; }
+
     /// <summary>密文无法用当前密钥解开。为 true 时不要再显示「已配置」。</summary>
     public bool BarkAddressUnreadable { get; set; }
 
