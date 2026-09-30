@@ -125,10 +125,26 @@ public static class HouseholdNotificationComposer
     }
 }
 
+public enum HouseholdDeliveryFailureKind
+{
+    SendFailed = 0,
+    TimedOut = 1,
+    Unreachable = 2
+}
+
 public sealed class HouseholdNotificationDeliveryException : Exception
 {
-    public HouseholdNotificationDeliveryException(string message) : base(message)
+    public HouseholdDeliveryFailureKind Kind { get; }
+
+    public HouseholdNotificationDeliveryException(string message)
+        : this(message, HouseholdDeliveryFailureKind.SendFailed, null)
     {
+    }
+
+    public HouseholdNotificationDeliveryException(string message, HouseholdDeliveryFailureKind kind, Exception? innerException)
+        : base(message, innerException)
+    {
+        Kind = kind;
     }
 }
 
@@ -200,9 +216,12 @@ public sealed class BarkNotificationChannel
         }
         catch (Exception ex)
         {
-            // 异常文本经常带请求地址，而 Bark 地址里有密钥，所以只记类型。
+            // 异常文本经常带请求地址，而 Bark 地址里有密钥，所以只记类型。分类留给内层异常。
             _logger.LogError("Bark 通知发送失败，类型 {ExceptionType}", ex.GetType().Name);
-            throw new HouseholdNotificationDeliveryException("Bark 通知发送失败");
+            throw new HouseholdNotificationDeliveryException(
+                "Bark 通知发送失败",
+                HouseholdDeliveryFailure.KindOf(ex),
+                ex);
         }
     }
 }
@@ -239,7 +258,10 @@ public sealed class EmailNotificationChannel
         catch (Exception ex)
         {
             _logger.LogError("家务邮件通知发送失败，类型 {ExceptionType}", ex.GetType().Name);
-            throw new HouseholdNotificationDeliveryException("邮件发送失败");
+            throw new HouseholdNotificationDeliveryException(
+                "邮件发送失败",
+                HouseholdDeliveryFailure.KindOf(ex),
+                ex);
         }
     }
 }

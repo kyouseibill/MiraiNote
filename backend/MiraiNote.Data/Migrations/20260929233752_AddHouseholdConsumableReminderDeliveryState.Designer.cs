@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MiraiNote.Data.Context;
 
@@ -11,9 +12,11 @@ using MiraiNote.Data.Context;
 namespace MiraiNote.Data.Migrations
 {
     [DbContext(typeof(MiraiNoteDbContext))]
-    partial class MiraiNoteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260929233752_AddHouseholdConsumableReminderDeliveryState")]
+    partial class AddHouseholdConsumableReminderDeliveryState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1283,9 +1286,6 @@ namespace MiraiNote.Data.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
 
-                    b.Property<DateTime?>("BarkFailureAcknowledgedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -1303,9 +1303,6 @@ namespace MiraiNote.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
-
-                    b.Property<DateTime?>("EmailFailureAcknowledgedAt")
-                        .HasColumnType("datetime2");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");

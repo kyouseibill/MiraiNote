@@ -370,13 +370,19 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                     consumable.PurchaseLink);
                 foreach (var channel in channels)
                 {
+                    var logId = await InsertRestockLogAsync(consumable.Id, member.Id, channel, ct);
+                    if (logId == null)
+                        continue;
+
                     if (!AllowScheduledEmail(preference, channel))
                     {
+                        await DeleteRestockLogAsync(logId.Value, ct);
                         deferEpisode = true;
                         continue;
                     }
 
-                    await TrySendRestockAsync(consumable.Id, member.Id, preference, channel, message, ct);
+                    var error = await DeliverAsync(preference, channel, message, member.Id, itemId: null, ct);
+                    await FinishRestockLogAsync(logId.Value, error, ct);
                 }
             }
 
@@ -388,33 +394,51 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             await _db.SaveChangesAsync(ct);
     }
 
-    private async Task TrySendRestockAsync(
+    private async Task<int?> InsertRestockLogAsync(
         int consumableId,
         int memberId,
-        NotificationPreference preference,
         HouseholdNotificationChannel channel,
-        HouseholdNotificationMessage message,
         CancellationToken ct)
     {
         var log = new HouseholdConsumableReminder
         {
             ConsumableId = consumableId,
             MemberId = memberId,
-            Channel = channel
+            Channel = channel,
+            Status = HouseholdReminderDeliveryStatus.Pending
         };
         _db.HouseholdConsumableReminders.Add(log);
         try
         {
             await _db.SaveChangesAsync(ct);
+            return log.Id;
         }
         catch (DbUpdateException ex) when (HouseholdUniqueConflict.IsExpected(ex))
         {
             _db.Entry(log).State = EntityState.Detached;
             _logger.LogDebug("补货提醒唯一约束冲突，视为已占用。耗材 {ConsumableId} 成员 {MemberId}", consumableId, memberId);
-            return;
+            return null;
         }
+    }
 
-        await DeliverAsync(preference, channel, message, memberId, itemId: null, ct);
+    /// <summary>名额不够时删掉刚插入的记录，下一轮还能再抢，也不把这一轮算成已经提醒过。</summary>
+    private async Task DeleteRestockLogAsync(int logId, CancellationToken ct)
+    {
+        await _db.HouseholdConsumableReminders
+            .Where(r => r.Id == logId && r.Status == HouseholdReminderDeliveryStatus.Pending)
+            .ExecuteDeleteAsync(ct);
+        var tracked = _db.HouseholdConsumableReminders.Local.FirstOrDefault(r => r.Id == logId);
+        if (tracked != null)
+            _db.Entry(tracked).State = EntityState.Detached;
+    }
+
+    private async Task FinishRestockLogAsync(int logId, string? error, CancellationToken ct)
+    {
+        var log = await _db.HouseholdConsumableReminders.FirstAsync(r => r.Id == logId, ct);
+        log.Status = error == null ? HouseholdReminderDeliveryStatus.Sent : HouseholdReminderDeliveryStatus.Failed;
+        log.LastAttemptAt = DateTime.SpecifyKind(_clock.UtcNow.UtcDateTime, DateTimeKind.Utc);
+        log.LastError = error;
+        await _db.SaveChangesAsync(ct);
     }
 
     private async Task<string?> DeliverAsync(
