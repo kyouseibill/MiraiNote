@@ -16,6 +16,7 @@ internal static class HouseholdModelConfiguration
         ConfigureNotificationSetting(modelBuilder);
         ConfigureReminderLog(modelBuilder);
         ConfigureConsumableReminder(modelBuilder);
+        ConfigureChatDraft(modelBuilder);
     }
 
     private static void ConfigureMember(ModelBuilder modelBuilder)
@@ -182,5 +183,13 @@ internal static class HouseholdModelConfiguration
             .WithMany()
             .HasForeignKey(r => r.MemberId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureChatDraft(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HouseholdChatDraft>();
+        entity.Property(d => d.Cost).HasPrecision(18, 2);
+        entity.Property(d => d.StoredCost).HasPrecision(18, 2);
+        entity.HasIndex(d => new { d.UserId, d.ExpiresAt });
     }
 }

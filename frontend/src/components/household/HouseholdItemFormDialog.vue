@@ -20,6 +20,7 @@ const props = defineProps<{
   open: boolean
   mode: 'create' | 'template' | 'edit'
   item?: HouseholdItem | null
+  initialName?: string | null
 }>()
 
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -145,6 +146,7 @@ async function prepareDialog() {
   serverError.value = ''
   errors.value = {}
   blank()
+  if (props.mode === 'create' && props.initialName?.trim()) form.name = props.initialName.trim()
   if (props.mode === 'edit' && props.item) fillFromItem(props.item)
   if (!store.previewMode) {
     try {

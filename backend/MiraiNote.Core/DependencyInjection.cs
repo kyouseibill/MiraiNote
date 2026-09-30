@@ -43,6 +43,7 @@ public static class DependencyInjection
         services.AddSingleton<Services.Household.HouseholdNotificationRateLimiter>();
         services.AddScoped<Services.Household.IHouseholdNotificationSettingsService, Services.Household.HouseholdNotificationSettingsService>();
         services.AddScoped<Services.Household.IHouseholdNotificationDispatcher, Services.Household.HouseholdNotificationDispatcher>();
+        services.AddScoped<Services.Household.IHouseholdChatService, Services.Household.HouseholdChatService>();
         services.AddHostedService<Services.Household.HouseholdNotificationBackgroundService>();
         services.AddHttpClient(Services.Household.BarkNotificationChannel.HttpClientName, client =>
         {
@@ -124,6 +125,7 @@ public static class DependencyInjection
         services.AddScoped<Services.Tools.ServerScheduleTaskTool>();
         services.AddScoped<Services.Tools.ServerListScheduledTasksTool>();
         services.AddScoped<Services.Tools.ServerLoadSkillTool>();
+        services.AddScoped<Services.Tools.ServerHouseholdChatTool>();
         // 混合推理模型"思考+正文"可能远超 HttpClient 默认 100s 超时导致流被掐断，
         // 改为无限超时；由 ChatService 读取循环里的空闲超时兜底（长时间收不到新行才中断）。
         services.AddHttpClient("DeepSeek").ConfigureHttpClient(c =>

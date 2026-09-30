@@ -1,3 +1,5 @@
+import type { HouseholdChatDraft } from '@/utils/householdChat'
+
 export interface ChatSession {
   id: number
   title: string
@@ -26,6 +28,8 @@ export interface ToolCallEvent {
   resultSummary?: string
   errorDetail?: string
   elapsedSeconds?: number
+  /** household_chat 的待确认草稿。工具本身不写完成记录。 */
+  householdDraft?: HouseholdChatDraft
 }
 
 export interface ChatMessage {

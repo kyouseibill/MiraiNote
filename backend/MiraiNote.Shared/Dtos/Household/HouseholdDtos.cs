@@ -448,3 +448,58 @@ public class TestHouseholdEmailRequest
     /// <summary>不填则发给账号邮箱。与账号邮箱不一致时返回 400。</summary>
     public string? Email { get; set; }
 }
+
+public class HouseholdChatCandidateDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Location { get; set; }
+    public bool IsPaused { get; set; }
+    public DateOnly? NextDueDate { get; set; }
+    public int? ConsumableId { get; set; }
+    public string? ConsumableName { get; set; }
+    public int? ConsumableStock { get; set; }
+}
+
+public class HouseholdChatHistoryLineDto
+{
+    public int ItemId { get; set; }
+    public string ItemName { get; set; } = string.Empty;
+    public DateOnly CompletedOn { get; set; }
+    public decimal? Cost { get; set; }
+}
+
+public class HouseholdChatUpcomingLineDto
+{
+    public int ItemId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public DateOnly DueDate { get; set; }
+}
+
+/// <summary>Chat 工具只返回这份草稿或查询结果，不写入完成记录。</summary>
+public class HouseholdChatInterpretationDto
+{
+    public string Kind { get; set; } = "unrecognized";
+    public string Message { get; set; } = string.Empty;
+    public int? DraftId { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public DateOnly? CompletedOn { get; set; }
+    public decimal? Cost { get; set; }
+    public bool DeductConsumable { get; set; }
+    public HouseholdChatCandidateDto? Item { get; set; }
+    public List<HouseholdChatCandidateDto> Candidates { get; set; } = [];
+    public string? SuggestedName { get; set; }
+    public List<HouseholdChatHistoryLineDto> History { get; set; } = [];
+    public List<HouseholdChatUpcomingLineDto> Upcoming { get; set; } = [];
+}
+
+public class ConfirmHouseholdChatRequest
+{
+    public int DraftId { get; set; }
+    public int ItemId { get; set; }
+    public DateOnly? CompletedOn { get; set; }
+    public decimal? Cost { get; set; }
+
+    /// <summary>缺省沿用草稿，默认扣减。false 表示这次不扣。</summary>
+    public bool? DeductConsumable { get; set; }
+}

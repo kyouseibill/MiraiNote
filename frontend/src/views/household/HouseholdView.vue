@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { IconLoader2, IconPlus } from '@tabler/icons-vue'
 import AppDialog from '@/components/AppDialog.vue'
 import HouseholdCompleteDialog from '@/components/household/HouseholdCompleteDialog.vue'
@@ -22,6 +22,8 @@ import {
   roleLabel,
 } from '@/utils/householdFormat'
 
+const route = useRoute()
+const router = useRouter()
 const { active, asMember, withPreview } = useDesignPreview()
 const { toast, store, report } = useHouseholdFeedback()
 const section = ref<'items' | 'stock' | 'members' | 'notifications'>('items')
@@ -32,6 +34,7 @@ const menuId = ref<number | null>(null)
 const restoring = ref<HouseholdItem | null>(null)
 const pageError = ref('')
 const formOpen = ref(false)
+const prefillName = ref('')
 const formMode = ref<'create' | 'template' | 'edit'>('template')
 const editing = ref<HouseholdItem | null>(null)
 const completeId = ref<number | null>(null)
@@ -88,7 +91,32 @@ async function reloadItems() {
   }
 }
 
-onMounted(load)
+function consumePrefill() {
+  const raw = route.query.prefill
+  const name = typeof raw === 'string' ? raw.trim() : ''
+  if (!name) return
+  prefillName.value = name
+  editing.value = null
+  formMode.value = 'create'
+  section.value = 'items'
+  formOpen.value = true
+}
+
+function closeForm() {
+  formOpen.value = false
+  prefillName.value = ''
+  if (typeof route.query.prefill === 'string') {
+    const query = { ...route.query }
+    delete query.prefill
+    void router.replace({ query })
+  }
+}
+
+onMounted(() => {
+  void load()
+  consumePrefill()
+})
+watch(() => route.query.prefill, () => consumePrefill())
 watch([category, includePaused, listScope], () => {
   closeMenu()
   void reloadItems()
@@ -96,6 +124,7 @@ watch([category, includePaused, listScope], () => {
 
 function openCreate(mode: 'create' | 'template') {
   editing.value = null
+  prefillName.value = ''
   formMode.value = mode
   formOpen.value = true
 }
@@ -245,7 +274,7 @@ function statusOf(item: HouseholdItem) {
     <HouseholdMemberPanel v-else-if="section === 'members'" />
     <HouseholdNotificationPanel v-else />
 
-    <HouseholdItemFormDialog :open="formOpen" :mode="formMode" :item="editing" @close="formOpen = false" @saved="reloadItems" />
+    <HouseholdItemFormDialog :open="formOpen" :mode="formMode" :item="editing" :initial-name="prefillName" @close="closeForm" @saved="reloadItems" />
     <HouseholdCompleteDialog :open="completeId != null" :item-id="completeId" @close="completeId = null" @completed="reloadItems" @refresh="reloadItems" />
     <HouseholdRestoreDialog :open="restoring != null" :item="restoring" @close="restoring = null" @restored="reloadItems" />
     <AppDialog :open="deleting != null" title="删除事项" :description="deleting ? `确定删除「${deleting.name}」？此操作需要管理员权限。` : ''" :busy="busy" @close="deleting = null">

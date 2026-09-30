@@ -26,6 +26,7 @@ import { skillsApi, type SkillSummary } from '@/api/skills'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
+import HouseholdChatConfirmCard from '@/components/household/HouseholdChatConfirmCard.vue'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -233,6 +234,13 @@ function toolEventsForMessage(msg: { id?: number; streaming?: boolean }) {
   if (msg.streaming) return store.toolCalls
   if (typeof msg.id === 'number') return store.pageToolEventsFor(msg.id)
   return []
+}
+
+function householdCardsFor(msg: { id?: number; streaming?: boolean }) {
+  return toolEventsForMessage(msg).filter((event) => {
+    const kind = event.householdDraft?.kind
+    return kind === 'confirm' || kind === 'choose' || kind === 'create'
+  })
 }
 
 function toolEventsSummary(events: ToolCallEvent[]) {
@@ -1688,6 +1696,11 @@ async function reloadConversations() {
                       </p>
                     </article>
                   </details>
+                  <HouseholdChatConfirmCard
+                    v-for="tc in householdCardsFor(msg)"
+                    :key="`${tc.id}-household`"
+                    :draft="tc.householdDraft!"
+                  />
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
                   <div v-if="msg.streaming && (!msg.answer || isWorkMode)" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{

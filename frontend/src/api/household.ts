@@ -1,6 +1,7 @@
 import { http, unwrap } from './auth'
 import type {
   CompleteHouseholdItemPayload,
+  ConfirmHouseholdChatPayload,
   CompleteHouseholdItemResult,
   CreateFromTemplatePayload,
   CreateHouseholdItemPayload,
@@ -62,6 +63,12 @@ export const householdApi = {
     unwrap<CompleteHouseholdItemResult>(http.post(`/household/items/${id}/complete`, payload, {
       headers: { 'Idempotency-Key': idempotencyKey },
       skipErrorToastStatuses: [409, 422],
+    })),
+
+  confirmChatDraft: (payload: ConfirmHouseholdChatPayload, idempotencyKey: string) =>
+    unwrap<CompleteHouseholdItemResult>(http.post('/household/chat/confirm', payload, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      skipErrorToastStatuses: [400, 404, 409],
     })),
 
   history: (id: number) => unwrap<HouseholdCompletion[]>(http.get(`/household/items/${id}/history`)),

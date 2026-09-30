@@ -41,6 +41,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<HouseholdNotificationSetting> HouseholdNotificationSettings => Set<HouseholdNotificationSetting>();
     public DbSet<HouseholdReminderLog> HouseholdReminderLogs => Set<HouseholdReminderLog>();
     public DbSet<HouseholdConsumableReminder> HouseholdConsumableReminders => Set<HouseholdConsumableReminder>();
+    public DbSet<HouseholdChatDraft> HouseholdChatDrafts => Set<HouseholdChatDraft>();
 
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
