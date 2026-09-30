@@ -678,7 +678,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
             return null;
         if (cost < 0)
             throw new BusinessException("费用不能为负", 400);
-        if (cost > 999999999.99m)
+        if (cost > HouseholdCost.MaxAmount)
             throw new BusinessException("费用超出范围", 400);
         return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
     }
@@ -744,8 +744,8 @@ public sealed class HouseholdItemService : IHouseholdItemService
         if (string.IsNullOrWhiteSpace(key))
             return null;
         var trimmed = key.Trim();
-        if (trimmed.Length > 100)
-            throw new BusinessException("Idempotency-Key 最长 100 个字符", 400);
+        if (trimmed.Length > HouseholdIdempotency.KeyMaxLength)
+            throw new BusinessException(HouseholdIdempotency.KeyTooLongMessage, 400);
         return trimmed;
     }
 

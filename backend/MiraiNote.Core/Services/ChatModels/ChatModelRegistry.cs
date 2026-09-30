@@ -8,6 +8,8 @@ namespace MiraiNote.Core.Services.ChatModels;
 /// </summary>
 public sealed class ChatModelRegistry : IChatModelRegistry
 {
+    public const string NoneAvailableMessage = "当前没有可用的模型，请联系管理员";
+
     private readonly IReadOnlyList<ChatModelDescriptor> _models;
     private readonly string? _defaultModelKey;
 
@@ -69,6 +71,9 @@ public sealed class ChatModelRegistry : IChatModelRegistry
 
     public ChatModelDescriptor ResolveForNewSession(string? key)
     {
+        if (!GetPublicCatalog().Any())
+            throw new ChatModelUnavailableException(NoneAvailableMessage);
+
         var resolvedKey = string.IsNullOrWhiteSpace(key) ? _defaultModelKey : key;
         var model = _models.FirstOrDefault(item => string.Equals(item.Key, resolvedKey, StringComparison.OrdinalIgnoreCase));
         if (model is null || !model.IsAvailable)
@@ -91,6 +96,8 @@ public sealed class ChatModelRegistry : IChatModelRegistry
             string.Equals(item.ModelId, model, StringComparison.OrdinalIgnoreCase));
         if (descriptor is null || !descriptor.IsAvailable)
         {
+            if (!GetPublicCatalog().Any())
+                throw new ChatModelUnavailableException(NoneAvailableMessage);
             throw new ChatModelUnavailableException("当前会话模型暂不可用，请使用默认模型创建新对话。");
         }
 

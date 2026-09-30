@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { createIdempotencyKey } from '@/utils/idempotencyKey'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -132,7 +133,7 @@ router.beforeEach(async (to) => {
   ) {
     auth.setAuth({
       // 运行时随机生成，避免硬编码凭据模式；仅为本地预览占位，后端不认可此值
-      accessToken: crypto.randomUUID(),
+      accessToken: createIdempotencyKey(),
       accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       user: {
         id: -1,

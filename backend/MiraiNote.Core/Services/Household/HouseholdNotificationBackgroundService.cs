@@ -40,6 +40,8 @@ public sealed class HouseholdNotificationBackgroundService : BackgroundService
             try
             {
                 using var scope = _services.CreateScope();
+                var chat = scope.ServiceProvider.GetRequiredService<IHouseholdChatService>();
+                await chat.PurgeExpiredDraftsAsync(stoppingToken);
                 var dispatcher = scope.ServiceProvider.GetRequiredService<IHouseholdNotificationDispatcher>();
                 await dispatcher.DispatchAsync(stoppingToken);
             }

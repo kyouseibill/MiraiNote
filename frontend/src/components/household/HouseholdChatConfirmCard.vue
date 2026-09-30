@@ -5,6 +5,7 @@ import { householdApi } from '@/api/household'
 import { apiFailure } from '@/utils/apiError'
 import { formatAccountDateTime } from '@/utils/accountTime'
 import { householdCreateHref, type HouseholdChatDraft } from '@/utils/householdChat'
+import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import { formatCalendarDate, formatCost } from '@/utils/householdFormat'
 
 const props = defineProps<{
@@ -16,7 +17,7 @@ const deduct = ref(props.draft.deductConsumable)
 const submitting = ref(false)
 const done = ref(false)
 const error = ref('')
-const idempotencyKey = crypto.randomUUID()
+const idempotencyKey = createIdempotencyKey()
 
 const selected = computed(() =>
   props.draft.candidates.find((item) => item.id === selectedId.value) ?? props.draft.item)

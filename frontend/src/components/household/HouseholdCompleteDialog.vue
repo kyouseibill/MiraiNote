@@ -5,6 +5,7 @@ import HouseholdPhotoField from '@/components/household/HouseholdPhotoField.vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import type { CompleteHouseholdItemResult, HouseholdItem } from '@/types/household'
 import { apiFailure } from '@/utils/apiError'
+import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import {
   backfillRenewalMessage,
   duplicateCompletionMessage,
@@ -69,7 +70,7 @@ async function reset() {
   skipDeduction.value = false
   quantity.value = '1'
   uploading.value = false
-  idempotencyKey.value = crypto.randomUUID()
+  idempotencyKey.value = createIdempotencyKey()
 }
 
 async function load() {
@@ -161,7 +162,7 @@ async function submit() {
       return
     }
     if (failure.status === 422) {
-      idempotencyKey.value = crypto.randomUUID()
+      idempotencyKey.value = createIdempotencyKey()
       serverError.value = failure.message ? `${failure.message}。请刷新后重试` : '请刷新后重试'
       toast.error('请刷新后重试')
       emit('refresh')

@@ -22,6 +22,7 @@ import {
   sessionDateGroup as sessionDateGroupByAccountTz,
 } from '@/utils/accountTime'
 import { chatApi } from '@/api/chat'
+import { apiFailure } from '@/utils/apiError'
 import { skillsApi, type SkillSummary } from '@/api/skills'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
@@ -1097,8 +1098,8 @@ async function newSession(modelKey = selectedModelKey.value || undefined) {
     showSessionList.value = false
     await focusInput()
     return true
-  } catch {
-    uiError.value = '新对话创建失败，请重试。'
+  } catch (error: unknown) {
+    uiError.value = apiFailure(error).message || '新对话创建失败，请重试。'
     return false
   } finally {
     creatingSession.value = false

@@ -19,6 +19,7 @@ import {
   categoryLabel,
   cycleLabel,
   formatCalendarDate,
+  invitationSentence,
   itemStatus,
   roleLabel,
 } from '@/utils/householdFormat'
@@ -43,6 +44,11 @@ const deleting = ref<HouseholdItem | null>(null)
 const busy = ref(false)
 const ready = ref(false)
 const invitationHouseholdName = computed(() => store.incomingInvitations?.[0]?.householdName ?? '')
+const invitationInviterName = computed(() => store.incomingInvitations?.[0]?.inviterUsername ?? '')
+const invitationLead = computed(() =>
+  invitationHouseholdName.value
+    ? invitationSentence(invitationInviterName.value, invitationHouseholdName.value)
+    : '')
 
 async function enterInvitationView() {
   pageError.value = ''
@@ -191,7 +197,7 @@ function statusOf(item: HouseholdItem) {
         <p class="mb-2 text-[11px] font-medium tracking-[0.17em] text-[var(--mn-muted)]">MIRAI / HOUSEHOLD</p>
         <h1 class="font-serif text-2xl text-[var(--mn-ink)] sm:text-[28px]">家务周期</h1>
         <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">
-          <template v-if="store.awaitingInvitation">你收到了『{{ invitationHouseholdName }}』的邀请，接受后加入这个家庭。</template>
+          <template v-if="store.awaitingInvitation && invitationLead">{{ invitationLead }}</template>
           <template v-else>{{ store.household?.name || '我的家庭' }}<span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>。下次到期日由服务器计算，日期按北京时间展示。</template>
         </p>
       </div>

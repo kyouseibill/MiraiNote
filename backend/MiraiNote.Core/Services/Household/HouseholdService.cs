@@ -1,4 +1,6 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
@@ -95,13 +97,22 @@ public sealed class HouseholdService : IHouseholdService
         if (!Enum.IsDefined(request.Role))
             throw new BusinessException("角色无效", 400);
 
-        var member = await LoadMemberAsync(ctx.Household.Id, memberId, ct);
-        if (member.Role == HouseholdRole.Admin && request.Role != HouseholdRole.Admin)
-            await EnsureAnotherAdminAsync(ctx.Household.Id, member.Id, ct);
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            _db.ChangeTracker.Clear();
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+            await LockHouseholdAsync(ctx.Household.Id, ct);
+            var member = await LoadMemberAsync(ctx.Household.Id, memberId, ct);
+            if (member.Role == HouseholdRole.Admin && request.Role != HouseholdRole.Admin)
+                await EnsureAnotherAdminAsync(ctx.Household.Id, member.Id, ct);
 
-        member.Role = request.Role;
-        await _db.SaveChangesAsync(ct);
-        return await MapMemberAsync(member, ct);
+            member.Role = request.Role;
+            await _db.SaveChangesAsync(ct);
+            var mapped = await MapMemberAsync(member, ct);
+            await tx.CommitAsync(ct);
+            return mapped;
+        });
     }
 
     public async Task RemoveMemberAsync(int userId, int memberId, CancellationToken ct = default)
@@ -109,21 +120,34 @@ public sealed class HouseholdService : IHouseholdService
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         EnsureAdmin(ctx);
 
-        var member = await LoadMemberAsync(ctx.Household.Id, memberId, ct);
-        await DetachMemberAsync(ctx.Household.Id, member, ct);
+        await DetachMemberAsync(ctx.Household.Id, memberId, ct);
     }
 
     public async Task LeaveAsync(int userId, CancellationToken ct = default)
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
-        var member = await LoadMemberAsync(ctx.Household.Id, ctx.Member.Id, ct);
-        await DetachMemberAsync(ctx.Household.Id, member, ct);
+        await DetachMemberAsync(ctx.Household.Id, ctx.Member.Id, ct);
     }
 
-    private async Task DetachMemberAsync(int householdId, HouseholdMember member, CancellationToken ct)
+    private async Task DetachMemberAsync(int householdId, int memberId, CancellationToken ct)
     {
-        if (member.Role == HouseholdRole.Admin)
-            await EnsureAnotherAdminAsync(householdId, member.Id, ct);
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            _db.ChangeTracker.Clear();
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+            await LockHouseholdAsync(householdId, ct);
+            var member = await LoadMemberAsync(householdId, memberId, ct);
+            if (member.Role == HouseholdRole.Admin)
+                await EnsureAnotherAdminAsync(householdId, member.Id, ct);
+
+            await ClearMemberFootprintsAsync(householdId, member, ct);
+            await tx.CommitAsync(ct);
+        });
+    }
+
+    private async Task ClearMemberFootprintsAsync(int householdId, HouseholdMember member, CancellationToken ct)
+    {
 
         var assigned = await _db.HouseholdItems
             .Where(i => i.HouseholdId == householdId && i.AssigneeMemberId == member.Id)
@@ -167,6 +191,38 @@ public sealed class HouseholdService : IHouseholdService
             Email = user.Email,
             Role = member.Role
         };
+    }
+
+    /// <summary>
+    /// 事务里的第一条语句锁住这一户。SQL Server 用家庭行的更新锁当互斥；
+    /// SQLite 没有 UPDLOCK，改写同一行来占住写锁。退出、移除、改角色都先走这里，再读成员。
+    /// </summary>
+    private async Task LockHouseholdAsync(int householdId, CancellationToken ct)
+    {
+        if (_db.Database.IsSqlServer())
+        {
+            var connection = _db.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync(ct);
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction()
+                ?? throw new InvalidOperationException("家庭锁必须在事务里取得");
+            command.CommandText = "SELECT [Id] FROM [Household] WITH (UPDLOCK, ROWLOCK) WHERE [Id] = @householdId";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@householdId";
+            parameter.Value = householdId;
+            command.Parameters.Add(parameter);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+            }
+
+            return;
+        }
+
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"""UPDATE "Household" SET "Name" = "Name" WHERE "Id" = {householdId}""", ct);
     }
 
     private async Task EnsureAnotherAdminAsync(int householdId, int exceptMemberId, CancellationToken ct)

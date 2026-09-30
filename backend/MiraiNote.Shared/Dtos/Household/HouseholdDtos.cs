@@ -122,6 +122,9 @@ public class HouseholdInvitationDto
     /// <summary>只在本家庭管理员查看待发出的邀请时返回。</summary>
     public string? InviteeEmail { get; set; }
 
+    /// <summary>
+    /// 邀请人展示名。账号没有单独的昵称字段，因此就是用户名。收件箱不返回邀请人邮箱。
+    /// </summary>
     public string InviterUsername { get; set; } = string.Empty;
     public HouseholdRole Role { get; set; }
     public HouseholdInvitationStatus Status { get; set; }

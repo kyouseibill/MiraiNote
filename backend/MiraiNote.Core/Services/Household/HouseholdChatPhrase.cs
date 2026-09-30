@@ -16,7 +16,8 @@ internal sealed record HouseholdChatParse(
     DateOnly? CompletedOn,
     decimal? Cost,
     string? NameHint,
-    bool FutureDate);
+    bool FutureDate,
+    bool InvalidInput = false);
 
 /// <summary>
 /// 从一句话里取出家务意图、相对日期和费用。识别不出就保持未识别，不猜测成写入。
@@ -24,6 +25,7 @@ internal sealed record HouseholdChatParse(
 internal static partial class HouseholdChatPhrase
 {
     public const string UnrecognizedMessage = "没听懂是要记下家务，还是要查询。请直接说做了什么，或问什么时候换过、最近哪些要到期。";
+    public const string RephraseMessage = "日期或金额不合理，请换一种说法。";
 
     private static readonly HashSet<string> StopFragments = new(StringComparer.Ordinal)
     {
@@ -33,7 +35,7 @@ internal static partial class HouseholdChatPhrase
 
     public static HouseholdChatParse Parse(string? text, DateOnly today)
     {
-        var raw = (text ?? "").Trim();
+        var raw = NormalizeAmounts((text ?? "").Trim());
         if (raw.Length == 0)
             return new HouseholdChatParse(HouseholdChatIntent.Unrecognized, null, null, null, false);
 
@@ -51,7 +53,10 @@ internal static partial class HouseholdChatPhrase
 
         var cost = ReadCost(raw);
         var date = ReadDate(raw, today);
-        var completedOn = date ?? today;
+        if (cost.Invalid || date.Invalid)
+            return new HouseholdChatParse(HouseholdChatIntent.Unrecognized, null, null, null, false, true);
+
+        var completedOn = date.Date ?? today;
         var hint = ExtractRecordName(raw);
         if (string.IsNullOrWhiteSpace(hint))
             return new HouseholdChatParse(HouseholdChatIntent.Unrecognized, null, null, null, false);
@@ -59,7 +64,7 @@ internal static partial class HouseholdChatPhrase
         return new HouseholdChatParse(
             HouseholdChatIntent.Record,
             completedOn,
-            cost,
+            cost.Amount,
             hint,
             completedOn > today);
     }
@@ -126,48 +131,101 @@ internal static partial class HouseholdChatPhrase
         return value.Trim();
     }
 
-    private static decimal? ReadCost(string text)
+    private readonly record struct CostRead(decimal? Amount, bool Invalid);
+
+    private readonly record struct DateRead(DateOnly? Date, bool Invalid);
+
+    private static CostRead ReadCost(string text)
     {
         var match = CostPattern().Match(text);
         if (!match.Success)
-            return null;
-        return decimal.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            return new CostRead(null, false);
+        if (!decimal.TryParse(match.Groups[1].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+            return new CostRead(null, true);
+        if (amount > HouseholdCost.MaxAmount)
+            return new CostRead(null, true);
+        return new CostRead(amount, false);
     }
 
-    private static DateOnly? ReadDate(string text, DateOnly today)
+    private static DateRead ReadDate(string text, DateOnly today)
     {
         var match = DatePattern().Match(text);
         if (!match.Success)
-            return null;
+            return new DateRead(null, false);
         var token = match.Value;
         if (token is "今天")
-            return today;
+            return new DateRead(today, false);
         if (token is "昨天")
-            return today.AddDays(-1);
+            return new DateRead(today.AddDays(-1), false);
         if (token is "前天")
-            return today.AddDays(-2);
+            return new DateRead(today.AddDays(-2), false);
         if (token is "明天")
-            return today.AddDays(1);
+            return new DateRead(today.AddDays(1), false);
         if (token is "后天")
-            return today.AddDays(2);
+            return new DateRead(today.AddDays(2), false);
         if (token.StartsWith("上周", StringComparison.Ordinal) && token.Length >= 3)
-            return LastWeekday(today, token[^1]);
+            return new DateRead(LastWeekday(today, token[^1]), false);
 
         if (token.Contains('年', StringComparison.Ordinal))
         {
             var parts = ChineseDate().Match(token);
-            if (parts.Success)
-                return new DateOnly(int.Parse(parts.Groups[1].Value), int.Parse(parts.Groups[2].Value), int.Parse(parts.Groups[3].Value));
+            if (!parts.Success)
+                return new DateRead(null, true);
+            return TryCreateDate(
+                int.Parse(parts.Groups[1].Value, CultureInfo.InvariantCulture),
+                int.Parse(parts.Groups[2].Value, CultureInfo.InvariantCulture),
+                int.Parse(parts.Groups[3].Value, CultureInfo.InvariantCulture),
+                out var chinese)
+                ? new DateRead(chinese, false)
+                : new DateRead(null, true);
         }
 
-        if (token.Contains('-', StringComparison.Ordinal) && DateOnly.TryParse(token, CultureInfo.InvariantCulture, DateTimeStyles.None, out var iso))
-            return iso;
+        if (token.Contains('-', StringComparison.Ordinal))
+        {
+            return DateOnly.TryParse(token, CultureInfo.InvariantCulture, DateTimeStyles.None, out var iso)
+                ? new DateRead(iso, false)
+                : new DateRead(null, true);
+        }
 
         var monthDay = MonthDay().Match(token);
         if (monthDay.Success)
-            return new DateOnly(today.Year, int.Parse(monthDay.Groups[1].Value), int.Parse(monthDay.Groups[2].Value));
+        {
+            return ResolveMonthDay(
+                today,
+                int.Parse(monthDay.Groups[1].Value, CultureInfo.InvariantCulture),
+                int.Parse(monthDay.Groups[2].Value, CultureInfo.InvariantCulture));
+        }
 
-        return null;
+        return new DateRead(null, false);
+    }
+
+    /// <summary>
+    /// 只说月日时先取今年。晚于今天就改取去年。两年都不存在（如 2月30日）则判为无效。
+    /// </summary>
+    private static DateRead ResolveMonthDay(DateOnly today, int month, int day)
+    {
+        var thisYearOk = TryCreateDate(today.Year, month, day, out var thisYear);
+        DateOnly lastYear = default;
+        var lastYearOk = today.Year > 1 && TryCreateDate(today.Year - 1, month, day, out lastYear);
+        if (thisYearOk && thisYear <= today)
+            return new DateRead(thisYear, false);
+        if ((thisYearOk && thisYear > today || !thisYearOk) && lastYearOk)
+            return new DateRead(lastYear, false);
+        return new DateRead(null, true);
+    }
+
+    private static bool TryCreateDate(int year, int month, int day, out DateOnly date)
+    {
+        date = default;
+        try
+        {
+            date = new DateOnly(year, month, day);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     private static DateOnly LastWeekday(DateOnly today, char weekday)
@@ -206,6 +264,36 @@ internal static partial class HouseholdChatPhrase
         return 0;
     }
 
+    /// <summary>
+    /// 全角数字和小数点先转成半角。千分位只去掉「一位数字、逗号、后面正好三位且不再跟数字」。
+    /// 12，3 这种逗号留着，避免被当成 123。
+    /// </summary>
+    private static string NormalizeAmounts(string text)
+    {
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var ch = chars[i];
+            if (ch is >= '０' and <= '９')
+                chars[i] = (char)('0' + (ch - '０'));
+            else if (ch == '，')
+                chars[i] = ',';
+            else if (ch == '．')
+                chars[i] = '.';
+        }
+
+        var normalized = new string(chars);
+        string previous;
+        do
+        {
+            previous = normalized;
+            normalized = ThousandsSeparator().Replace(normalized, "");
+        }
+        while (normalized != previous);
+
+        return normalized;
+    }
+
     private static string Compact(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -215,6 +303,9 @@ internal static partial class HouseholdChatPhrase
 
     [GeneratedRegex(@"(?:花了|花费|费用)\s*(\d+(?:\.\d{1,2})?)\s*元?")]
     private static partial Regex CostPattern();
+
+    [GeneratedRegex(@"(?<=\d)[,，](?=\d{3}(?!\d))")]
+    private static partial Regex ThousandsSeparator();
 
     [GeneratedRegex(@"上周[一二三四五六日天]|今天|昨天|前天|明天|后天|\d{4}年\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日")]
     private static partial Regex DatePattern();

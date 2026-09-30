@@ -27,7 +27,7 @@ public class HouseholdChatDraft : BaseEntity
 
     public DateTime ExpiresAt { get; set; }
 
-    [MaxLength(100)]
+    [MaxLength(HouseholdIdempotency.KeyMaxLength)]
     public string? IdempotencyKey { get; set; }
 
     public int? StoredItemId { get; set; }

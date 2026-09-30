@@ -392,7 +392,7 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             InviteeUserId = invitation.InviteeUserId,
             InviteeUsername = invitee.Username,
             InviteeEmail = includeEmail ? invitee.Email : null,
-            InviterUsername = inviter?.Username ?? "",
+            InviterUsername = string.IsNullOrWhiteSpace(inviter?.Username) ? "" : inviter.Username,
             Role = invitation.Role,
             Status = invitation.Status,
             ExpiresAt = new DateTimeOffset(expires),

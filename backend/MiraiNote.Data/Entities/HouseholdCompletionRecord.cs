@@ -62,7 +62,7 @@ public class HouseholdCompletionRecord : BaseEntity
     public int? IdempotencyUserId { get; set; }
 
     /// <summary>可选的 Idempotency-Key。同一用户对同一事项重复使用同一键且请求体一致时返回第一次的结果。</summary>
-    [MaxLength(100)]
+    [MaxLength(HouseholdIdempotency.KeyMaxLength)]
     public string? IdempotencyKey { get; set; }
 
     /// <summary>请求体哈希。同一键配上不同内容时拒绝，而不是再执行一次。</summary>

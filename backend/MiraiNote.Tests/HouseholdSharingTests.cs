@@ -1,4 +1,8 @@
+using System.Collections.Concurrent;
+using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MiraiNote.Core.Services.Household;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
@@ -170,6 +174,12 @@ public class HouseholdSharingTests
         var listed = Assert.Single(inbox);
         Assert.Equal(created.Id, listed.Id);
         Assert.Equal(created.HouseholdName, listed.HouseholdName);
+        Assert.Equal("tester", listed.InviterUsername);
+        Assert.Null(listed.InviteeEmail);
+        Assert.Null(typeof(HouseholdInvitationDto).GetProperty("InviterEmail"));
+        var incomingJson = JsonSerializer.Serialize(listed);
+        Assert.DoesNotContain("tester@example.com", incomingJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("opened@example.com", incomingJson, StringComparison.OrdinalIgnoreCase);
         var waiting = await lab.Household.GetMineAsync(invitee);
         Assert.Equal(empty.Id, waiting.Id);
         Assert.True(waiting.HasPendingInvitations);
@@ -394,6 +404,131 @@ public class HouseholdSharingTests
     }
 
     [Fact]
+    public async Task ConcurrentLeave_KeepsExactlyOneAdminWithoutRetryingTheLock()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var home = await lab.Household.GetMineAsync(lab.OwnerId);
+        var secondId = await lab.AddUserAsync("co-admin");
+        await lab.JoinAsync(lab.OwnerId, "co-admin", HouseholdRole.Admin);
+        var sql = new ConcurrentQueue<string>();
+        var capture = new SqlCapture(sql);
+
+        for (var round = 0; round < 8; round++)
+        {
+            if (round > 0)
+            {
+                var keeper = await lab.Db.HouseholdMembers
+                    .Where(m => m.HouseholdId == home.Id && m.Role == HouseholdRole.Admin)
+                    .Select(m => m.UserId)
+                    .SingleAsync();
+                await lab.JoinAsync(keeper, keeper == lab.OwnerId ? "co-admin" : "tester", HouseholdRole.Admin);
+            }
+
+            var locksBefore = sql.Count(IsHouseholdLock);
+            var first = lab.OpenHousehold(capture);
+            var second = lab.OpenHousehold(capture);
+            var outcomes = await Task.WhenAll(
+                LeaveQuietly(first, lab.OwnerId),
+                LeaveQuietly(second, secondId));
+
+            Assert.Equal(1, outcomes.Count(error => error == null));
+            var blocked = Assert.Single(outcomes, error => error != null);
+            var business = Assert.IsType<BusinessException>(blocked);
+            Assert.Equal(400, business.StatusCode);
+            Assert.Equal(HouseholdService.LastAdminMessage, business.Message);
+            Assert.Equal(1, await lab.Db.HouseholdMembers.CountAsync(m =>
+                m.HouseholdId == home.Id && m.Role == HouseholdRole.Admin));
+            Assert.Equal(locksBefore + 2, sql.Count(IsHouseholdLock));
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentDemote_KeepsExactlyOneAdminWithoutRetryingTheLock()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var home = await lab.Household.GetMineAsync(lab.OwnerId);
+        var secondId = await lab.AddUserAsync("co-admin");
+        var second = await lab.JoinAsync(lab.OwnerId, "co-admin", HouseholdRole.Admin);
+        var ownerMember = await lab.Db.HouseholdMembers.SingleAsync(m => m.HouseholdId == home.Id && m.UserId == lab.OwnerId);
+        var sql = new ConcurrentQueue<string>();
+        var capture = new SqlCapture(sql);
+
+        var outcomes = await Task.WhenAll(
+            RoleQuietly(lab.OpenHousehold(capture), lab.OwnerId, second.Id, HouseholdRole.Member),
+            RoleQuietly(lab.OpenHousehold(capture), secondId, ownerMember.Id, HouseholdRole.Member));
+
+        Assert.Equal(1, outcomes.Count(error => error == null));
+        var blocked = Assert.Single(outcomes, error => error != null);
+        var business = Assert.IsType<BusinessException>(blocked);
+        Assert.True(business.StatusCode is 400 or 403);
+        if (business.StatusCode == 400)
+            Assert.Equal(HouseholdService.LastAdminMessage, business.Message);
+        Assert.Equal(1, await lab.Db.HouseholdMembers.CountAsync(m =>
+            m.HouseholdId == home.Id && m.Role == HouseholdRole.Admin));
+        var locks = sql.Count(IsHouseholdLock);
+        Assert.InRange(locks, 1, 2);
+    }
+
+    [Fact]
+    public async Task LeaveAndRoleChange_LockTheHouseholdBeforeReadingMembers()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        await lab.Household.GetMineAsync(lab.OwnerId);
+        var memberId = await lab.AddUserAsync("helper");
+        var helper = await lab.JoinAsync(lab.OwnerId, "helper");
+        var sql = new ConcurrentQueue<string>();
+        var capture = new SqlCapture(sql);
+
+        await lab.OpenHousehold(capture).ChangeRoleAsync(
+            lab.OwnerId, helper.Id, new ChangeHouseholdMemberRoleRequest { Role = HouseholdRole.Admin });
+        AssertLockPrecedesMembers(sql);
+
+        sql.Clear();
+        await lab.OpenHousehold(capture).LeaveAsync(memberId);
+        AssertLockPrecedesMembers(sql);
+    }
+
+    private static bool IsHouseholdLock(string sql) =>
+        sql.Contains("UPDATE \"Household\" SET \"Name\" = \"Name\"", StringComparison.Ordinal);
+
+    private static void AssertLockPrecedesMembers(ConcurrentQueue<string> sql)
+    {
+        var commands = sql.ToList();
+        var lockAt = commands.FindIndex(IsHouseholdLock);
+        Assert.True(lockAt >= 0);
+        var memberAt = commands.FindIndex(lockAt + 1, text => text.Contains("HouseholdMember", StringComparison.Ordinal));
+        Assert.True(memberAt > lockAt);
+        Assert.Equal(1, commands.Count(IsHouseholdLock));
+    }
+
+    private static async Task<Exception?> RoleQuietly(
+        HouseholdService household, int userId, int memberId, HouseholdRole role)
+    {
+        try
+        {
+            await household.ChangeRoleAsync(userId, memberId, new ChangeHouseholdMemberRoleRequest { Role = role });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    private static async Task<Exception?> LeaveQuietly(HouseholdService household, int userId)
+    {
+        try
+        {
+            await household.LeaveAsync(userId);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    [Fact]
     public async Task Member_CannotEditPauseDeleteOrRemoveOthers_AndForeignItemIs404()
     {
         await using var lab = await SharingLab.CreateAsync(Morning);
@@ -502,6 +637,7 @@ public class HouseholdSharingTests
         public HouseholdConsumableService Consumables { get; }
         public HouseholdChatService Chat { get; }
         public int OwnerId { get; }
+        private readonly List<MiraiNoteDbContext> _extra = new();
 
         private SharingLab(
             MiraiTestFixture fx,
@@ -583,10 +719,49 @@ public class HouseholdSharingTests
             };
         }
 
+        public HouseholdService OpenHousehold(IInterceptor? interceptor = null)
+        {
+            var db = interceptor == null ? _fx.CreateContext() : _fx.CreateContextWithInterceptor(interceptor);
+            db.Database.OpenConnection();
+            db.Database.ExecuteSqlRaw("PRAGMA busy_timeout = 5000");
+            _extra.Add(db);
+            var access = new HouseholdAccessService(db, Clock);
+            return new HouseholdService(db, access);
+        }
+
         public async ValueTask DisposeAsync()
         {
+            foreach (var extra in _extra)
+                await extra.DisposeAsync();
             await Db.DisposeAsync();
             _fx.Dispose();
+        }
+    }
+
+    private sealed class SqlCapture : DbCommandInterceptor
+    {
+        private readonly ConcurrentQueue<string> _sql;
+
+        public SqlCapture(ConcurrentQueue<string> sql) => _sql = sql;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            _sql.Enqueue(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            _sql.Enqueue(command.CommandText);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 
