@@ -22,7 +22,8 @@ public class HouseholdCycleServiceTests
         {
             typeof(HouseholdController),
             typeof(HouseholdItemsController),
-            typeof(HouseholdConsumablesController)
+            typeof(HouseholdConsumablesController),
+            typeof(HouseholdChatController)
         })
         {
             Assert.NotNull(type.GetCustomAttribute<AuthorizeAttribute>());

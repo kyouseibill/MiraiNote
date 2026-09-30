@@ -14,6 +14,7 @@ import type {
 import { chatApi } from '@/api/chat'
 import { agentApi } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
+import { parseHouseholdChatDraft } from '@/utils/householdChat'
 
 export type ChatSendOutcome = 'completed' | 'stopped' | 'failed'
 
@@ -1107,11 +1108,17 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function householdDraftFromTool(data: any) {
+    if (String(data?.name || '') !== 'household_chat') return undefined
+    return parseHouseholdChatDraft(data?.result) ?? undefined
+  }
+
   function completeToolCall(data: any) {
     const id = String(data?.toolCallId || data?.id || '')
     const name = String(data?.name || '')
     const { summary, failed, detail } = summarizeToolResult(data?.result)
     const index = findToolCallIndex(data)
+    const householdDraft = householdDraftFromTool(data)
 
     if (index >= 0) {
       const prev = toolCalls.value[index]
@@ -1121,6 +1128,7 @@ export const useChatStore = defineStore('chat', () => {
         detail: failed ? (prev.detail || '执行失败') : (prev.detail || '已完成'),
         resultSummary: summary,
         errorDetail: failed ? detail : undefined,
+        householdDraft: householdDraft ?? prev.householdDraft,
       }
       return
     }
@@ -1135,6 +1143,7 @@ export const useChatStore = defineStore('chat', () => {
       detail: failed ? '执行失败' : '已完成',
       resultSummary: summary,
       errorDetail: failed ? detail : undefined,
+      householdDraft,
     })
   }
 
@@ -1165,6 +1174,7 @@ export const useChatStore = defineStore('chat', () => {
       get_weather: '查询天气',
       send_email: '发送邮件',
       export_file: '导出文件',
+      household_chat: '识别家务记录',
       query_calendar: '日期计算',
       get_current_time: '获取当前时间',
       calculate: '执行计算',

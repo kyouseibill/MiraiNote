@@ -1,0 +1,333 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using MiraiNote.Core.Services.Household;
+using MiraiNote.Core.Services.Tools;
+using MiraiNote.Data.Context;
+using MiraiNote.Data.Entities;
+using MiraiNote.Shared.Common;
+using MiraiNote.Shared.Dtos.Household;
+using Xunit;
+
+namespace MiraiNote.Tests;
+
+public class HouseholdChatTests
+{
+    private static readonly DateTimeOffset Morning = new(2026, 10, 8, 1, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void RelativeDates_UseShanghaiClock()
+    {
+        var today = new DateOnly(2026, 10, 8);
+        var saturday = HouseholdChatPhrase.Parse("上周六给车做了保养，花了 680", today);
+        Assert.Equal(HouseholdChatIntent.Record, saturday.Intent);
+        Assert.Equal(new DateOnly(2026, 10, 3), saturday.CompletedOn);
+        Assert.Equal(680m, saturday.Cost);
+        Assert.Equal("车保养", saturday.NameHint);
+
+        var yesterday = HouseholdChatPhrase.Parse("昨天换了厨房净水器 PP 棉", today);
+        Assert.Equal(new DateOnly(2026, 10, 7), yesterday.CompletedOn);
+        Assert.Equal("厨房净水器 PP 棉", yesterday.NameHint);
+
+        var todayPhrase = HouseholdChatPhrase.Parse("今天换了厨房净水器 PP 棉", today);
+        Assert.Equal(today, todayPhrase.CompletedOn);
+        Assert.False(todayPhrase.FutureDate);
+    }
+
+    [Fact]
+    public async Task Interpret_MatchesUniqueMultipleOrNone_WithoutWriting()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        await lab.CreateAsync("厨房净水器 PP 棉");
+        await lab.CreateAsync("客厅净水器 PP 棉");
+        await lab.CreateAsync("护照", aliases: ["证件"]);
+
+        var unique = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
+        Assert.Equal("confirm", unique.Kind);
+        Assert.Equal("护照", unique.Item!.Name);
+        Assert.NotNull(unique.DraftId);
+        Assert.NotNull(unique.ExpiresAt);
+
+        var many = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了净水器 PP 棉");
+        Assert.Equal("choose", many.Kind);
+        Assert.Equal(2, many.Candidates.Count);
+        Assert.Contains(many.Candidates, item => item.Name == "厨房净水器 PP 棉");
+        Assert.Contains(many.Candidates, item => item.Name == "客厅净水器 PP 棉");
+
+        var none = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了阳台纱窗");
+        Assert.Equal("create", none.Kind);
+        Assert.Equal("阳台纱窗", none.SuggestedName);
+        Assert.Null(none.DraftId);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+
+        var tool = new ServerHouseholdChatTool(lab.Chat);
+        var json = await tool.ExecuteAsync(lab.OwnerId, """{"utterance":"今天换了护照"}""", CancellationToken.None);
+        Assert.Contains("\"kind\":\"confirm\"", json);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task Confirm_WritesOnce_AndRejectsFutureExpiredForeignAndRepeat()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var item = await lab.CreateAsync("厨房净水器 PP 棉");
+        var otherId = await lab.AddUserAsync("other");
+        var foreign = await lab.CreateAsync("别人的滤网", userId: otherId);
+
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉，花了 12");
+        Assert.Equal("confirm", draft.Kind);
+
+        var future = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest
+            {
+                DraftId = draft.DraftId!.Value,
+                ItemId = item.Id,
+                CompletedOn = new DateOnly(2026, 10, 9)
+            },
+            "future-key"));
+        Assert.Equal(400, future.StatusCode);
+        Assert.Equal("完成日期不能晚于今天", future.Message);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+
+        var tomorrow = await lab.Chat.InterpretAsync(lab.OwnerId, "明天换了厨房净水器 PP 棉");
+        Assert.Equal("rejected", tomorrow.Kind);
+        Assert.Null(tomorrow.DraftId);
+
+        var cross = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest { DraftId = draft.DraftId!.Value, ItemId = foreign.Id },
+            "cross-key"));
+        Assert.Equal(404, cross.StatusCode);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == foreign.Id));
+
+        var missing = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest { DraftId = 99999, ItemId = foreign.Id },
+            "missing-draft"));
+        Assert.Equal(404, missing.StatusCode);
+
+        var first = await lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest { DraftId = draft.DraftId!.Value, ItemId = item.Id },
+            "once");
+        var second = await lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest { DraftId = draft.DraftId!.Value, ItemId = item.Id },
+            "again");
+        Assert.Equal(first.Record.Id, second.Record.Id);
+        Assert.Equal(12m, first.Record.Cost);
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync());
+
+        var later = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉");
+        lab.Clock.UtcNow = lab.Clock.UtcNow.Add(HouseholdChatService.DraftLifetime).AddSeconds(1);
+        var expired = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId,
+            new ConfirmHouseholdChatRequest { DraftId = later.DraftId!.Value, ItemId = item.Id },
+            "expired"));
+        Assert.Equal(400, expired.StatusCode);
+        Assert.Equal(HouseholdChatService.ExpiredMessage, expired.Message);
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task Confirm_ReusesCompletionRules_ForPauseSameDayBackfillArchiveDeleteAndStock()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var paused = await lab.CreateAsync("暂停滤网", lastDone: new DateOnly(2026, 9, 8));
+        await lab.Items.SetPausedAsync(lab.OwnerId, paused.Id, true);
+        var pausedDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了暂停滤网");
+        var pausedResult = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(pausedDraft, paused.Id), "paused");
+        Assert.True(pausedResult.Item.IsPaused);
+        Assert.Equal(new DateOnly(2026, 11, 8), pausedResult.Item.NextDueDate);
+
+        var same = await lab.CreateAsync("当天滤网", lastDone: new DateOnly(2026, 10, 8));
+        var sameDue = same.NextDueDate;
+        var sameDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了当天滤网");
+        var sameResult = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(sameDraft, same.Id), "same-day");
+        Assert.Equal(sameDue, sameResult.Item.NextDueDate);
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == same.Id));
+
+        var earlier = await lab.CreateAsync("补记滤网", lastDone: new DateOnly(2026, 10, 5));
+        var earlierDue = earlier.NextDueDate;
+        var earlierDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "10月1日换了补记滤网");
+        Assert.Equal(new DateOnly(2026, 10, 1), earlierDraft.CompletedOn);
+        var earlierResult = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(earlierDraft, earlier.Id), "backfill");
+        Assert.Equal(earlierDue, earlierResult.Item.NextDueDate);
+        Assert.Equal(new DateOnly(2026, 10, 1), earlierResult.Record.CompletedOn);
+
+        var archived = await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
+        {
+            Name = "护照",
+            ItemType = HouseholdItemType.OneOffExpiry,
+            ExpiryDate = new DateOnly(2027, 1, 1)
+        });
+        var archivedDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
+        await lab.Items.CompleteAsync(lab.OwnerId, archived.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 10, 8)
+        }, "manual-archive");
+        var denied = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId, Confirm(archivedDraft, archived.Id), "archived"));
+        Assert.Equal(400, denied.StatusCode);
+        Assert.Equal(HouseholdItemService.ArchivedReadOnlyMessage, denied.Message);
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == archived.Id));
+        var hidden = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
+        Assert.Equal("create", hidden.Kind);
+
+        var deleted = await lab.CreateAsync("要删的纱窗");
+        var deletedDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了要删的纱窗");
+        await lab.Items.DeleteAsync(lab.OwnerId, deleted.Id);
+        var gone = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
+            lab.OwnerId, Confirm(deletedDraft, deleted.Id), "deleted"));
+        Assert.Equal(404, gone.StatusCode);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == deleted.Id));
+
+        var consumable = await lab.Consumables.CreateAsync(lab.OwnerId, new SaveHouseholdConsumableRequest
+        {
+            Name = "PP 棉",
+            CurrentStock = 3
+        });
+        var linked = await lab.CreateAsync("扣库存滤网", consumableId: consumable.Id);
+        var linkedDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了扣库存滤网");
+        Assert.True(linkedDraft.DeductConsumable);
+        Assert.Equal(consumable.Id, linkedDraft.Item!.ConsumableId);
+        var deducted = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(linkedDraft, linked.Id), "deduct");
+        Assert.Equal(1, deducted.ConsumableQuantityDeducted);
+        Assert.Equal(2, await lab.Db.HouseholdConsumables.Where(c => c.Id == consumable.Id).Select(c => c.CurrentStock).SingleAsync());
+
+        var skippedItem = await lab.CreateAsync("不扣库存滤网", consumableId: consumable.Id);
+        var skipDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了不扣库存滤网");
+        var skipped = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(skipDraft, skippedItem.Id, deduct: false), "skip");
+        Assert.Equal(0, skipped.ConsumableQuantityDeducted);
+        Assert.Equal(2, await lab.Db.HouseholdConsumables.Where(c => c.Id == consumable.Id).Select(c => c.CurrentStock).SingleAsync());
+    }
+
+    [Fact]
+    public async Task Query_StaysInsideTheHousehold_AndUnrecognizedDoesNotWrite()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var mine = await lab.CreateAsync("净水器滤芯", lastDone: new DateOnly(2026, 9, 8));
+        await lab.Items.CompleteAsync(lab.OwnerId, mine.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 9, 20),
+            Cost = 30
+        });
+        var otherId = await lab.AddUserAsync("neighbor");
+        var theirs = await lab.CreateAsync("净水器滤芯", userId: otherId, lastDone: new DateOnly(2026, 8, 1));
+        await lab.Items.CompleteAsync(otherId, theirs.Id, new CompleteHouseholdItemRequest
+        {
+            CompletedOn = new DateOnly(2026, 8, 2)
+        });
+
+        var history = await lab.Chat.InterpretAsync(lab.OwnerId, "净水器滤芯什么时候换的？");
+        Assert.Equal("query", history.Kind);
+        Assert.Single(history.History);
+        Assert.Equal(new DateOnly(2026, 9, 20), history.History[0].CompletedOn);
+        Assert.Equal(mine.Id, history.History[0].ItemId);
+
+        var upcoming = await lab.Chat.InterpretAsync(lab.OwnerId, "最近要到期的有哪些？");
+        Assert.Equal("query", upcoming.Kind);
+        Assert.Contains(upcoming.Upcoming, item => item.ItemId == mine.Id);
+        Assert.DoesNotContain(upcoming.Upcoming, item => item.ItemId == theirs.Id);
+
+        var unknown = await lab.Chat.InterpretAsync(lab.OwnerId, "你好呀");
+        Assert.Equal("unrecognized", unknown.Kind);
+        Assert.Equal(HouseholdChatPhrase.UnrecognizedMessage, unknown.Message);
+        Assert.Null(unknown.DraftId);
+        Assert.Equal(2, await lab.Db.HouseholdCompletionRecords.CountAsync());
+    }
+
+    private static ConfirmHouseholdChatRequest Confirm(HouseholdChatInterpretationDto draft, int itemId, bool? deduct = null) => new()
+    {
+        DraftId = draft.DraftId!.Value,
+        ItemId = itemId,
+        DeductConsumable = deduct
+    };
+
+    private sealed class ChatLab : IAsyncDisposable
+    {
+        private readonly MiraiTestFixture _fx;
+        public MiraiNoteDbContext Db { get; }
+        public MutableTimeProvider Clock { get; }
+        public HouseholdItemService Items { get; }
+        public HouseholdConsumableService Consumables { get; }
+        public HouseholdChatService Chat { get; }
+        public int OwnerId { get; }
+
+        private ChatLab(
+            MiraiTestFixture fx,
+            MiraiNoteDbContext db,
+            MutableTimeProvider clock,
+            HouseholdItemService items,
+            HouseholdConsumableService consumables,
+            HouseholdChatService chat,
+            int ownerId)
+        {
+            _fx = fx;
+            Db = db;
+            Clock = clock;
+            Items = items;
+            Consumables = consumables;
+            Chat = chat;
+            OwnerId = ownerId;
+        }
+
+        public static Task<ChatLab> CreateAsync(DateTimeOffset utcNow)
+        {
+            var fx = new MiraiTestFixture();
+            var db = fx.CreateContext();
+            var clock = new MutableTimeProvider(utcNow);
+            var rules = new HouseholdCycleRules(clock);
+            var access = new HouseholdAccessService(db);
+            var policy = HouseholdAccessPolicy.Default;
+            var items = new HouseholdItemService(db, access, rules, policy);
+            var consumables = new HouseholdConsumableService(db, access, policy);
+            var chat = new HouseholdChatService(db, access, items, rules);
+            return Task.FromResult(new ChatLab(fx, db, clock, items, consumables, chat, db.Users.Single().Id));
+        }
+
+        public Task<HouseholdItemDto> CreateAsync(
+            string name,
+            int? userId = null,
+            DateOnly? lastDone = null,
+            int? consumableId = null,
+            IEnumerable<string>? aliases = null) =>
+            Items.CreateAsync(userId ?? OwnerId, new CreateHouseholdItemRequest
+            {
+                Name = name,
+                ItemType = HouseholdItemType.Recurring,
+                CycleValue = 1,
+                CycleUnit = HouseholdCycleUnit.Month,
+                LastDoneDate = lastDone ?? new DateOnly(2026, 9, 8),
+                ConsumableId = consumableId,
+                Aliases = aliases?.ToList()
+            });
+
+        public async Task<int> AddUserAsync(string username)
+        {
+            var user = new User
+            {
+                Username = username,
+                Email = username + "@example.com",
+                PasswordHash = "hash",
+                IsEmailVerified = true
+            };
+            Db.Users.Add(user);
+            await Db.SaveChangesAsync();
+            return user.Id;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Db.DisposeAsync();
+            _fx.Dispose();
+        }
+    }
+
+    private sealed class MutableTimeProvider : TimeProvider, IHouseholdClock
+    {
+        public MutableTimeProvider(DateTimeOffset utcNow) => UtcNow = utcNow;
+        public DateTimeOffset UtcNow { get; set; }
+        public override DateTimeOffset GetUtcNow() => UtcNow;
+    }
+}

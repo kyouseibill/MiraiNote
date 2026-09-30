@@ -127,6 +127,15 @@ export interface HouseholdItemTemplate {
   sortOrder: number
 }
 
+export interface ConfirmHouseholdChatPayload {
+  draftId: number
+  itemId: number
+  completedOn?: string | null
+  cost?: number | null
+  /** 缺省表示扣减。false 表示这次不扣。 */
+  deductConsumable?: boolean | null
+}
+
 export interface CompleteHouseholdItemPayload {
   completedOn?: string | null
   completedByMemberId?: number | null
