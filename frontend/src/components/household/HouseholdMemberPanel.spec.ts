@@ -53,6 +53,7 @@ const harness = vi.hoisted(() => {
       acceptInvitation: vi.fn().mockResolvedValue(undefined),
       rejectInvitation: vi.fn().mockResolvedValue(undefined),
       removeMember: vi.fn().mockResolvedValue(undefined),
+      changeMemberRole: vi.fn().mockResolvedValue(undefined),
       leaveHousehold: vi.fn().mockResolvedValue(undefined),
     },
   }
@@ -128,6 +129,7 @@ describe('HouseholdMemberPanel', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="invite-form"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="invite-form"] select').exists()).toBe(false)
     expect(wrapper.find('[data-testid="member-email"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('lin@example.com')
     expect(wrapper.find('[data-testid="revoke-invitation"]').exists()).toBe(true)
@@ -147,10 +149,11 @@ describe('HouseholdMemberPanel', () => {
     expect(wrapper.find('[data-testid="member-email"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('ning@example.com')
     expect(wrapper.find('[data-testid="remove-member"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="change-role"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="leave-household"]').attributes('disabled')).toBeUndefined()
   })
 
-  it('唯一管理员不能退出', async () => {
+  it('唯一管理员点退出时提示先指定另一位管理员', async () => {
     harness.store.isAdmin = true
     harness.store.household.myRole = 'Admin'
     harness.store.household.myMemberId = 1
@@ -160,8 +163,53 @@ describe('HouseholdMemberPanel', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="leave-household"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="sole-admin-note"]').text()).toContain('至少需要一名管理员')
+    harness.store.leaveHousehold.mockClear()
+    expect(wrapper.get('[data-testid="leave-household"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="leave-household"]').trigger('click')
+    expect(wrapper.get('[data-testid="sole-admin-leave-prompt"]').text()).toContain('先指定另一位管理员')
+    expect(harness.store.leaveHousehold).not.toHaveBeenCalled()
+  })
+
+  it('管理员可以把其他成员设为管理员或取消管理员', async () => {
+    harness.store.changeMemberRole.mockClear()
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="change-role"]').text()).toBe('设为管理员')
+    await wrapper.get('[data-testid="change-role"]').trigger('click')
+    await flushPromises()
+    expect(harness.store.changeMemberRole).toHaveBeenCalledWith(2, 'Admin')
+
+    harness.store.members = [
+      { id: 1, userId: 10, username: '林夏', email: 'lin@example.com', role: 'Admin' },
+      { id: 2, userId: 11, username: '阿宁', email: 'ning@example.com', role: 'Admin' },
+    ]
+    const demote = mountPanel()
+    await flushPromises()
+    expect(demote.get('[data-testid="change-role"]').text()).toBe('取消管理员')
+    expect(demote.get('[data-testid="change-role"]').attributes('disabled')).toBeUndefined()
+    await demote.get('[data-testid="change-role"]').trigger('click')
+    await flushPromises()
+    expect(harness.store.changeMemberRole).toHaveBeenCalledWith(2, 'Member')
+  })
+
+  it('最后一位管理员的取消按钮禁用并带提示', async () => {
+    harness.store.household.myMemberId = 1
+    harness.store.members = [
+      { id: 1, userId: 10, username: '林夏', email: 'lin@example.com', role: 'Member' },
+      { id: 2, userId: 11, username: '阿宁', email: 'ning@example.com', role: 'Admin' },
+    ]
+    harness.store.changeMemberRole.mockClear()
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const button = wrapper.get('[data-testid="change-role"]')
+    expect(button.text()).toBe('取消管理员')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.attributes('title')).toContain('至少需要一名管理员')
+    await button.trigger('click')
+    await flushPromises()
+    expect(harness.store.changeMemberRole).not.toHaveBeenCalled()
   })
 
   it('接受邀请使用同一条幂等键', async () => {

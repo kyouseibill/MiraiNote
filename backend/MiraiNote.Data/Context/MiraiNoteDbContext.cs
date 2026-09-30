@@ -344,6 +344,9 @@ public class MiraiNoteDbContext : DbContext
             {
                 if (entry.Entity.CreatedAt == default)
                     entry.Entity.CreatedAt = now;
+                // 接受邀请会事先写上家务时钟。自动创建的家庭不写，这里与 CreatedAt 对齐，避免把部署时刻当成新的加入起点。
+                if (entry.Entity is HouseholdMember joined && joined.NotifyFromUtc == default)
+                    joined.NotifyFromUtc = entry.Entity.CreatedAt;
                 entry.Entity.CreatedBy = effectiveUserId;
                 entry.Entity.UpdatedAt = now;
                 entry.Entity.UpdatedBy = effectiveUserId;

@@ -20,6 +20,15 @@ public class HouseholdChatController : ControllerBase
         _currentUser = currentUser;
     }
 
+    [HttpGet("chat/drafts")]
+    public async Task<ActionResult<ApiResponse<List<HouseholdChatInterpretationDto>>>> Drafts(
+        [FromQuery] int sessionId,
+        CancellationToken ct)
+    {
+        var result = await _chat.ListForSessionAsync(_currentUser.UserId, sessionId, ct);
+        return Ok(ApiResponse<List<HouseholdChatInterpretationDto>>.Ok(result));
+    }
+
     [HttpPost("chat/confirm")]
     public async Task<ActionResult<ApiResponse<CompleteHouseholdItemResult>>> Confirm(
         [FromBody] ConfirmHouseholdChatRequest request,

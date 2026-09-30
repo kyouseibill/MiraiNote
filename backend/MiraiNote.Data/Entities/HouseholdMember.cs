@@ -24,4 +24,10 @@ public class HouseholdMember : BaseEntity
     public User? User { get; set; }
 
     public HouseholdRole Role { get; set; } = HouseholdRole.Member;
+
+    /// <summary>
+    /// 提醒起算时间（UTC）。这一刻对应的推送日之前，本该发出的日程不补发。
+    /// 自动创建的家庭与历史成员与 <see cref="BaseEntity.CreatedAt"/> 相同，因此已有成员仍会补上加入之后漏发的一条。
+    /// </summary>
+    public DateTime NotifyFromUtc { get; set; }
 }

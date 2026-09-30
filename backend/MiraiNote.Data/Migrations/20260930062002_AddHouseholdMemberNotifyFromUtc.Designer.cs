@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MiraiNote.Data.Context;
 
@@ -11,9 +12,11 @@ using MiraiNote.Data.Context;
 namespace MiraiNote.Data.Migrations
 {
     [DbContext(typeof(MiraiNoteDbContext))]
-    partial class MiraiNoteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260930062002_AddHouseholdMemberNotifyFromUtc")]
+    partial class AddHouseholdMemberNotifyFromUtc
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -600,9 +603,6 @@ namespace MiraiNote.Data.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
-                    b.Property<int?>("ChatSessionId")
-                        .HasColumnType("int");
-
                     b.Property<DateOnly>("CompletedOn")
                         .HasColumnType("date");
 
@@ -654,8 +654,6 @@ namespace MiraiNote.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId", "ExpiresAt");
-
-                    b.HasIndex("UserId", "HouseholdId", "ChatSessionId");
 
                     b.ToTable("HouseholdChatDraft");
                 });

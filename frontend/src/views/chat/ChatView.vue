@@ -28,6 +28,7 @@ import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
 import HouseholdChatConfirmCard from '@/components/household/HouseholdChatConfirmCard.vue'
+import { visibleRestoredDrafts } from '@/utils/householdChat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -302,6 +303,17 @@ const displayMessages = computed(() => [
       ]
     : []),
 ])
+const restoredHouseholdDrafts = computed(() => {
+  const live = new Set<number>()
+  for (const msg of displayMessages.value) {
+    for (const event of toolEventsForMessage(msg)) {
+      const id = event.householdDraft?.draftId
+      if (typeof id === 'number') live.add(id)
+    }
+  }
+  if (store.isTemporary) return []
+  return visibleRestoredDrafts(store.sessionHouseholdDrafts, store.currentSession?.id, live)
+})
 const starters = [
   {
     title: '整理工作，写一份周报',
@@ -1736,6 +1748,13 @@ async function reloadConversations() {
                   </template>
                 </div>
               </article>
+              <div v-if="restoredHouseholdDrafts.length" data-testid="household-draft-restore">
+                <HouseholdChatConfirmCard
+                  v-for="draft in restoredHouseholdDrafts"
+                  :key="`restored-${draft.draftId ?? draft.suggestedName}`"
+                  :draft="draft"
+                />
+              </div>
             </template>
           </div>
         </div>

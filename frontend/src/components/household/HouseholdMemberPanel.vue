@@ -14,9 +14,15 @@ const removingId = ref<number | null>(null)
 const leaveOpen = ref(false)
 const acceptKeys = ref<Record<number, string>>({})
 
-const soleAdmin = computed(() => store.isAdmin && store.members.filter((member) => member.role === 'Admin').length <= 1)
+const adminCount = computed(() => store.members.filter((member) => member.role === 'Admin').length)
+const soleAdmin = computed(() => store.isAdmin && adminCount.value <= 1)
 const awaitingInvitation = computed(() => store.awaitingInvitation === true || store.household?.hasHousehold === false)
 const removing = computed(() => store.members.find((member) => member.id === removingId.value) ?? null)
+const soleAdminPrompt = ref(false)
+
+function demoteBlocked(role: 'Admin' | 'Member') {
+  return role === 'Admin' && adminCount.value <= 1
+}
 
 onMounted(() => {
   void store.fetchInvitations().catch((error: unknown) => {
@@ -100,6 +106,28 @@ async function confirmRemove() {
   }
 }
 
+function requestLeave() {
+  if (soleAdmin.value) {
+    soleAdminPrompt.value = true
+    return
+  }
+  leaveOpen.value = true
+}
+
+async function changeRole(memberId: number, role: 'Admin' | 'Member') {
+  const current = store.members.find((member) => member.id === memberId)
+  if (!store.isAdmin || !current || memberId === store.household?.myMemberId || demoteBlocked(current.role)) return
+  busy.value = true
+  try {
+    await store.changeMemberRole(memberId, role)
+    toast.success(role === 'Admin' ? '已设为管理员' : '已取消管理员')
+  } catch (error) {
+    await report(error)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function confirmLeave() {
   if (soleAdmin.value) return
   busy.value = true
@@ -175,6 +203,15 @@ async function confirmLeave() {
           <button
             v-if="store.isAdmin && member.id !== store.household?.myMemberId"
             type="button"
+            class="text-[12px] text-[var(--mn-ink)] hover:underline disabled:opacity-50"
+            data-testid="change-role"
+            :disabled="busy || demoteBlocked(member.role)"
+            :title="demoteBlocked(member.role) ? '家庭至少需要一名管理员' : undefined"
+            @click="changeRole(member.id, member.role === 'Admin' ? 'Member' : 'Admin')"
+          >{{ member.role === 'Admin' ? '取消管理员' : '设为管理员' }}</button>
+          <button
+            v-if="store.isAdmin && member.id !== store.household?.myMemberId"
+            type="button"
             class="text-[12px] text-[#b4493f] hover:underline"
             data-testid="remove-member"
             :disabled="busy"
@@ -186,8 +223,7 @@ async function confirmLeave() {
     <p v-if="!awaitingInvitation && !store.members.length" class="py-8 text-center text-[13px] text-[var(--mn-muted)]">还没有成员。</p>
 
     <div v-if="!awaitingInvitation" class="mt-6 flex flex-wrap items-center gap-3">
-      <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px] disabled:opacity-50" data-testid="leave-household" :disabled="busy || soleAdmin" @click="leaveOpen = true">退出家庭</button>
-      <p v-if="soleAdmin" class="text-[12px] text-[var(--mn-muted)]" data-testid="sole-admin-note">家庭至少需要一名管理员</p>
+      <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px] disabled:opacity-50" data-testid="leave-household" :disabled="busy" @click="requestLeave">退出家庭</button>
     </div>
 
     <AppDialog :open="removing != null" title="移除成员" :description="removing ? `确定移除「${removing.username}」？` : ''" :busy="busy" @close="removingId = null">
@@ -195,6 +231,13 @@ async function confirmLeave() {
       <template #footer>
         <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" :disabled="busy" @click="removingId = null">取消</button>
         <button type="button" class="h-9 rounded-md bg-[#b4493f] px-4 text-[13px] text-white disabled:opacity-50" data-testid="confirm-remove-member" :disabled="busy" @click="confirmRemove">移除</button>
+      </template>
+    </AppDialog>
+
+    <AppDialog :open="soleAdminPrompt" title="先指定管理员" description="请先指定另一位管理员，再退出家庭。" @close="soleAdminPrompt = false">
+      <p class="text-[13px] leading-6" data-testid="sole-admin-leave-prompt">请先指定另一位管理员，再退出家庭。</p>
+      <template #footer>
+        <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-4 text-[13px]" @click="soleAdminPrompt = false">知道了</button>
       </template>
     </AppDialog>
 

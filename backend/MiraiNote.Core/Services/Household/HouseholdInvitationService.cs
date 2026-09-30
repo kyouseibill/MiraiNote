@@ -45,9 +45,8 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
         if (string.IsNullOrWhiteSpace(identifier))
             throw new BusinessException("请填写用户名或邮箱", 400);
 
-        var role = request.Role ?? HouseholdRole.Member;
-        if (!Enum.IsDefined(role))
-            throw new BusinessException("角色无效", 400);
+        // 邀请不选角色。即使请求里带了管理员，也一律以成员身份加入，之后再调。
+        var role = HouseholdRole.Member;
 
         var lowered = identifier.ToLowerInvariant();
         var user = await _db.Users.FirstOrDefaultAsync(u =>
@@ -265,7 +264,8 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             {
                 HouseholdId = invitation.HouseholdId,
                 UserId = userId,
-                Role = invitation.Role
+                Role = HouseholdRole.Member,
+                NotifyFromUtc = now
             });
             try
             {

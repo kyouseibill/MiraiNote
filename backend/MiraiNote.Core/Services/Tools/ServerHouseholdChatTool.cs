@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MiraiNote.Core.Services.Household;
@@ -43,6 +45,56 @@ public sealed class ServerHouseholdChatTool : ServerQueryTool
         var utterance = ReadUtterance(argsJson);
         var result = await _chat.InterpretAsync(userId, utterance, ct);
         return JsonSerializer.Serialize(result, JsonOptions);
+    }
+
+    /// <summary>
+    /// 回给模型的工具结果去掉草稿号和 UTC 过期时间。需要时间时只给北京时间。
+    /// </summary>
+    public static string ForModel(string result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+            return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(result);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return result;
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                DateTimeOffset? expires = null;
+                foreach (var property in doc.RootElement.EnumerateObject())
+                {
+                    if (property.NameEquals("draftId"))
+                        continue;
+                    if (property.NameEquals("expiresAt"))
+                    {
+                        if (property.Value.ValueKind == JsonValueKind.String
+                            && DateTimeOffset.TryParse(property.Value.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+                            expires = parsed;
+                        continue;
+                    }
+
+                    property.WriteTo(writer);
+                }
+
+                if (expires is { } at)
+                {
+                    var local = TimeZoneInfo.ConvertTime(at, ShanghaiClock.Resolve());
+                    writer.WriteString("confirmBy", local.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+                }
+
+                writer.WriteEndObject();
+            }
+
+            return Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return result;
+        }
     }
 
     private static string ReadUtterance(string argsJson)

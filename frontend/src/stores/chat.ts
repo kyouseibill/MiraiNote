@@ -12,10 +12,11 @@ import type {
   ToolCallEvent,
 } from '@/types/chat'
 import { chatApi } from '@/api/chat'
+import { householdApi } from '@/api/household'
 import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import { agentApi } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
-import { parseHouseholdChatDraft } from '@/utils/householdChat'
+import { parseHouseholdChatDraft, type HouseholdChatDraft } from '@/utils/householdChat'
 
 export type ChatSendOutcome = 'completed' | 'stopped' | 'failed'
 
@@ -56,6 +57,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // 并行/串行工具调用事件（含已完成，供 Work 模式事件卡展示）
   const toolCalls = ref<ToolCallEvent[]>([])
+  const sessionHouseholdDrafts = ref<HouseholdChatDraft[]>([])
 
   // 上下文用量
   const contextUsage = ref<{ estimatedTokens: number; maxTokens: number; percentUsed: number; messageCount: number } | null>(null)
@@ -140,7 +142,11 @@ export const useChatStore = defineStore('chat', () => {
 
   if (typeof window !== 'undefined') {
     window.addEventListener('pageshow', (event: PageTransitionEvent) => {
-      if (event.persisted) clearPageLifetimeToolState()
+      if (!event.persisted) return
+      clearPageLifetimeToolState()
+      const sessionId = currentSession.value?.id
+      if (!isTemporary.value && sessionId && sessionId > 0)
+        void loadSessionDrafts(sessionId, selectionVersion)
     })
   }
 
@@ -165,15 +171,35 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function loadSessionDrafts(sessionId: number, requestVersion: number) {
+    try {
+      const rows = await householdApi.listChatDrafts(sessionId)
+      if (requestVersion !== selectionVersion) return
+      if (currentSession.value?.id !== sessionId || isTemporary.value) return
+      sessionHouseholdDrafts.value = rows
+        .map((row) => parseHouseholdChatDraft(row))
+        .filter((draft): draft is HouseholdChatDraft => {
+          if (!draft) return false
+          return draft.kind === 'confirm' || draft.kind === 'choose' || draft.kind === 'create'
+        })
+        .map((draft) => ({ ...draft, sessionId }))
+    } catch {
+      if (requestVersion === selectionVersion && currentSession.value?.id === sessionId)
+        sessionHouseholdDrafts.value = []
+    }
+  }
+
   async function openSession(sessionId: number) {
     savePendingAttachments()
     const requestVersion = ++selectionVersion
     isTemporary.value = false
+    sessionHouseholdDrafts.value = []
     const cached = sessionDetailsCache.get(sessionId)
     if (cached) {
       loading.value = false
       currentSession.value = cached
       restorePendingAttachments()
+      void loadSessionDrafts(sessionId, requestVersion)
       chatApi.getSession(sessionId)
         .then((fresh) => {
           if (requestVersion !== selectionVersion) return
@@ -200,6 +226,7 @@ export const useChatStore = defineStore('chat', () => {
       sessionDetailsCache.set(sessionId, detail)
       currentSession.value = detail
       restorePendingAttachments()
+      void loadSessionDrafts(sessionId, requestVersion)
     } finally {
       if (requestVersion === selectionVersion) loading.value = false
     }
@@ -215,6 +242,7 @@ export const useChatStore = defineStore('chat', () => {
     const detachedAttachments = startedWithoutSession ? [...pendingAttachments.value] : []
     savePendingAttachments()
     const requestVersion = ++selectionVersion
+    sessionHouseholdDrafts.value = []
     loading.value = false
     isTemporary.value = false
     const session = await chatApi.createSession({ title, projectId: selectedProjectId.value, modelKey })
@@ -290,6 +318,7 @@ export const useChatStore = defineStore('chat', () => {
     streamSessionId.value = null
     currentToolCall.value = ''
     toolCalls.value = []
+    sessionHouseholdDrafts.value = []
     contextUsage.value = null
     pendingConfirm.value = null
     pendingConfirmSessionId = null
@@ -1204,6 +1233,7 @@ export const useChatStore = defineStore('chat', () => {
     streamSessionId,
     currentToolCall,
     toolCalls,
+    sessionHouseholdDrafts,
     autoMode,
     contextUsage,
     pendingConfirm,

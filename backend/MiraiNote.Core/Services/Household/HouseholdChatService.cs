@@ -10,6 +10,7 @@ namespace MiraiNote.Core.Services.Household;
 public interface IHouseholdChatService
 {
     Task<HouseholdChatInterpretationDto> InterpretAsync(int userId, string? utterance, CancellationToken ct = default);
+    Task<List<HouseholdChatInterpretationDto>> ListForSessionAsync(int userId, int sessionId, CancellationToken ct = default);
     Task<CompleteHouseholdItemResult> ConfirmAsync(
         int userId, ConfirmHouseholdChatRequest request, string? idempotencyKey, CancellationToken ct = default);
     Task PurgeExpiredDraftsAsync(CancellationToken ct = default);
@@ -21,6 +22,8 @@ public sealed class HouseholdChatService : IHouseholdChatService
     public const string ExpiredMessage = "确认已过期，请重新说一次";
     public const string MissingKeyMessage = "缺少 Idempotency-Key";
     public const string NotCandidateMessage = "只能确认这次匹配到的事项";
+    public const string RetiredMessage = "这个事项已归档或已删除";
+    public const int MaxCandidates = 5;
 
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
@@ -63,45 +66,93 @@ public sealed class HouseholdChatService : IHouseholdChatService
             return Explain("rejected", "完成日期不能晚于今天");
 
         var items = await LoadItemsAsync(access.Household.Id, includeArchived: false, ct);
-        var matched = BestMatches(items, text);
-        if (matched.Count == 0)
+        var activeExact = items
+            .Where(item => HouseholdChatPhrase.IsExactName(parsed.NameHint, item.Name, item.Aliases))
+            .ToList();
+        List<MatchableItem> matched;
+        if (activeExact.Count > 0)
         {
-            return new HouseholdChatInterpretationDto
+            matched = activeExact;
+        }
+        else
+        {
+            var retired = await LoadRetiredAsync(access.Household.Id, ct);
+            if (retired.Any(item => HouseholdChatPhrase.IsExactName(parsed.NameHint, item.Name, item.Aliases)))
+                return Explain("rejected", RetiredMessage);
+
+            matched = BestMatches(items, text);
+            if (matched.Count == 0)
             {
-                Kind = "create",
-                Message = "没有匹配到事项。可以新建一个，名称已经预填。",
-                SuggestedName = parsed.NameHint,
-                CompletedOn = parsed.CompletedOn,
-                Cost = parsed.Cost
-            };
+                if (BestMatches(retired, text).Count > 0)
+                    return Explain("rejected", RetiredMessage);
+
+                return new HouseholdChatInterpretationDto
+                {
+                    Kind = "create",
+                    Message = "没有匹配到事项。可以新建一个，名称已经预填。",
+                    SuggestedName = parsed.NameHint,
+                    CompletedOn = parsed.CompletedOn,
+                    Cost = parsed.Cost
+                };
+            }
         }
 
+        var capped = matched.Take(MaxCandidates).ToList();
         var expires = UtcNow().Add(DraftLifetime);
         var draft = new HouseholdChatDraft
         {
             UserId = userId,
             HouseholdId = access.Household.Id,
+            ChatSessionId = HouseholdChatAmbient.SessionId,
             CompletedOn = parsed.CompletedOn ?? today,
             Cost = parsed.Cost,
-            CandidateItemIds = JsonSerializer.Serialize(matched.Select(item => item.Id).ToArray()),
+            CandidateItemIds = JsonSerializer.Serialize(capped.Select(item => item.Id).ToArray()),
             ExpiresAt = expires
         };
         _db.HouseholdChatDrafts.Add(draft);
         await _db.SaveChangesAsync(ct);
 
-        var candidates = matched.Select(ToCandidate).ToList();
+        var candidates = capped.Select(ToCandidate).ToList();
+        var single = candidates.Count == 1;
         return new HouseholdChatInterpretationDto
         {
-            Kind = matched.Count == 1 ? "confirm" : "choose",
-            Message = matched.Count == 1 ? "请确认后再写入。" : "匹配到多项，请选择一项再确认。",
+            Kind = single ? "confirm" : "choose",
+            Message = single ? "请确认后再写入。" : "匹配到多项，请选择一项再确认。",
             DraftId = draft.Id,
             ExpiresAt = new DateTimeOffset(DateTime.SpecifyKind(expires, DateTimeKind.Utc)),
             CompletedOn = draft.CompletedOn,
             Cost = draft.Cost,
-            DeductConsumable = candidates.Any(item => item.ConsumableId != null),
-            Item = matched.Count == 1 ? candidates[0] : null,
-            Candidates = candidates
+            DeductConsumable = single && candidates[0].ConsumableId != null,
+            Item = single ? candidates[0] : null,
+            Candidates = candidates,
+            SuggestedName = parsed.NameHint
         };
+    }
+
+    public async Task<List<HouseholdChatInterpretationDto>> ListForSessionAsync(int userId, int sessionId, CancellationToken ct = default)
+    {
+        var ownsSession = await _db.ChatSessions.AsNoTracking()
+            .AnyAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+        if (!ownsSession)
+            throw new BusinessException("对话不存在", 404);
+
+        var householdId = await _db.HouseholdMembers.AsNoTracking()
+            .Where(m => m.UserId == userId)
+            .Select(m => (int?)m.HouseholdId)
+            .FirstOrDefaultAsync(ct);
+        if (householdId == null)
+            return [];
+
+        var drafts = await _db.HouseholdChatDrafts.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.UserId == userId && d.HouseholdId == householdId && d.ChatSessionId == sessionId)
+            .OrderBy(d => d.Id)
+            .ToListAsync(ct);
+        if (drafts.Count == 0)
+            return [];
+
+        var items = await LoadItemsAsync(householdId.Value, includeArchived: true, ct);
+        var byId = items.ToDictionary(item => item.Id);
+        return drafts.Select(draft => MapListed(draft, byId)).ToList();
     }
 
     public async Task<CompleteHouseholdItemResult> ConfirmAsync(
@@ -299,6 +350,33 @@ public sealed class HouseholdChatService : IHouseholdChatService
         }).ToList();
     }
 
+    private async Task<List<MatchableItem>> LoadRetiredAsync(int householdId, CancellationToken ct)
+    {
+        var rows = await _db.HouseholdItems.IgnoreQueryFilters().AsNoTracking()
+            .Where(i => i.HouseholdId == householdId && (i.IsArchived || i.IsDeleted))
+            .OrderBy(i => i.Id)
+            .Select(i => new
+            {
+                i.Id,
+                i.Name,
+                i.Location,
+                i.AliasesJson,
+                i.IsPaused,
+                i.NextDueDate
+            })
+            .ToListAsync(ct);
+        return rows.Select(row => new MatchableItem(
+            row.Id,
+            row.Name,
+            row.Location,
+            HouseholdAliases.Deserialize(row.AliasesJson),
+            row.IsPaused,
+            row.NextDueDate,
+            null,
+            null,
+            null)).ToList();
+    }
+
     private static List<MatchableItem> BestMatches(List<MatchableItem> items, string text)
     {
         var scored = items
@@ -330,16 +408,46 @@ public sealed class HouseholdChatService : IHouseholdChatService
         SkipConsumableDeduction = draft.StoredSkipDeduction
     };
 
-    private static HashSet<int> CandidateIds(HouseholdChatDraft draft)
+    private static HashSet<int> CandidateIds(HouseholdChatDraft draft) => CandidateIdList(draft).ToHashSet();
+
+    private static int[] CandidateIdList(HouseholdChatDraft draft)
     {
         try
         {
-            return JsonSerializer.Deserialize<int[]>(draft.CandidateItemIds)?.ToHashSet() ?? [];
+            return JsonSerializer.Deserialize<int[]>(draft.CandidateItemIds) ?? [];
         }
         catch (JsonException)
         {
             return [];
         }
+    }
+
+    private static HouseholdChatInterpretationDto MapListed(HouseholdChatDraft draft, Dictionary<int, MatchableItem> byId)
+    {
+        var candidates = new List<HouseholdChatCandidateDto>();
+        foreach (var id in CandidateIdList(draft))
+        {
+            if (byId.TryGetValue(id, out var item))
+                candidates.Add(ToCandidate(item));
+        }
+
+        var single = candidates.Count == 1;
+        var confirmed = IsConfirmed(draft);
+        return new HouseholdChatInterpretationDto
+        {
+            Kind = single || candidates.Count == 0 ? "confirm" : "choose",
+            Message = confirmed
+                ? "已记下"
+                : single || candidates.Count == 0 ? "请确认后再写入。" : "匹配到多项，请选择一项再确认。",
+            DraftId = draft.Id,
+            ExpiresAt = new DateTimeOffset(DateTime.SpecifyKind(draft.ExpiresAt, DateTimeKind.Utc)),
+            CompletedOn = draft.CompletedOn,
+            Cost = draft.Cost,
+            DeductConsumable = single && candidates[0].ConsumableId != null,
+            Item = single ? candidates[0] : null,
+            Candidates = candidates,
+            Confirmed = confirmed
+        };
     }
 
     private DateTime UtcNow() => DateTime.SpecifyKind(_rules.UtcNow.UtcDateTime, DateTimeKind.Utc);

@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MiraiNote.Core.Services.Household;
 using MiraiNote.Core.Services.Mirai;
 using MiraiNote.Data.Context;
 
@@ -23,6 +25,9 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     private const string PoolCacheKey = "welcome-greeting-pool";
     private static readonly TimeSpan PoolCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan GenerateTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MinimumGreetingTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ShortGreetingTtl = TimeSpan.FromMinutes(5);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> GreetingLocks = new();
 
     /// <summary>
     /// P0 本地文案池（硬编码回退）。运行时优先读 WelcomeGreeting 表；
@@ -99,11 +104,37 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         CancellationToken ct = default)
     {
         _ = userId; // 保留签名兼容；随机池选句不再依赖 userId
+        if (!string.IsNullOrWhiteSpace(exclude))
+            return await PickFromPoolAsync(exclude, ct);
+
+        var key = $"welcome-greeting:{localDate:yyyy-MM-dd}";
+        if (_cache.TryGetValue(key, out string? cached) && !string.IsNullOrWhiteSpace(cached))
+            return cached;
+
+        var gate = GreetingLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
         try
         {
-            if (string.IsNullOrWhiteSpace(_options.ApiKey))
-                return await PickFromPoolAsync(exclude, ct);
+            if (_cache.TryGetValue(key, out cached) && !string.IsNullOrWhiteSpace(cached))
+                return cached;
 
+            var greeting = await GenerateDailyGreetingAsync(localDate, ct);
+            _cache.Set(key, greeting, GreetingTtl(localDate));
+            return greeting;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<string> GenerateDailyGreetingAsync(DateOnly localDate, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+            return await PickFromPoolAsync(ct: ct);
+
+        try
+        {
             using var client = DeepSeekJsonClient.CreateAuthorizedClient(
                 _httpClientFactory, _options.BaseUrl, _options.ApiKey);
             var messages = new List<object>
@@ -134,13 +165,30 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
                 "今日欢迎语生成结果无效，已回退文案池：内容长度 {Length}，包含换行 {HasLineBreak}",
                 greeting.Length,
                 greeting.Contains('\n') || greeting.Contains('\r'));
-            return await PickFromPoolAsync(exclude, ct);
+            return await PickFromPoolAsync(ct: ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             _logger.LogWarning("今日欢迎语生成失败：{Message}", ex.Message);
-            return await PickFromPoolAsync(exclude, ct);
+            return await PickFromPoolAsync(ct: ct);
         }
+    }
+
+    private static TimeSpan GreetingTtl(DateOnly localDate)
+    {
+        var nextMidnight = localDate.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        DateTime nextUtc;
+        try
+        {
+            nextUtc = TimeZoneInfo.ConvertTimeToUtc(nextMidnight, ShanghaiClock.Resolve());
+        }
+        catch (ArgumentException)
+        {
+            nextUtc = DateTime.SpecifyKind(nextMidnight, DateTimeKind.Utc);
+        }
+
+        var ttl = nextUtc - DateTime.UtcNow;
+        return ttl < MinimumGreetingTtl ? ShortGreetingTtl : ttl;
     }
 
     /// <summary>从缓存/DB 加载文案池后随机选句；池空或异常时回退硬编码原 40 条。</summary>

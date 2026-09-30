@@ -33,6 +33,14 @@ internal static partial class HouseholdChatPhrase
         "最近", "到期", "哪些", "一下", "一个", "做了", "换了", "花了", "完成"
     };
 
+    /// <summary>
+    /// 只靠这些泛词，或只蹭到两个字，不算匹配。整段名称或别名仍可以命中。
+    /// </summary>
+    private static readonly HashSet<string> GenericWords = new(StringComparer.Ordinal)
+    {
+        "厨房", "阳台", "卫生间", "客厅", "滤芯", "滤网", "过滤", "棉"
+    };
+
     public static HouseholdChatParse Parse(string? text, DateOnly today)
     {
         var raw = NormalizeAmounts((text ?? "").Trim());
@@ -73,7 +81,28 @@ internal static partial class HouseholdChatPhrase
         Score(utterance, name, location, aliases) >= 2;
 
     /// <summary>
-    /// 名称或别名里，出现在这句话中的最长片段。整名命中高于只蹭到「滤网」这类短词。
+    /// 去掉空白并忽略大小写后，这句话抽出的名称与事项名或别名完全相同。
+    /// </summary>
+    public static bool IsExactName(string? nameHint, string? name, IEnumerable<string>? aliases)
+    {
+        var key = Compact(nameHint);
+        if (key.Length < 2)
+            return false;
+        if (Compact(name) == key)
+            return true;
+        if (aliases == null)
+            return false;
+        foreach (var alias in aliases)
+        {
+            if (Compact(alias) == key)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 名称或别名整段出现在这句话里才算。泛词和两个字的局部重叠记 0。
     /// </summary>
     public static int Score(string utterance, string? name, string? location, IEnumerable<string>? aliases)
     {
@@ -87,9 +116,9 @@ internal static partial class HouseholdChatPhrase
                 best = Math.Max(best, FieldScore(text, alias));
         }
 
-        var combined = Compact(location) + Compact(name);
-        if (combined.Length >= 2 && text.Contains(combined, StringComparison.Ordinal))
-            best = Math.Max(best, combined.Length);
+        var place = Compact(location);
+        if (place.Length > 2 && !GenericWords.Contains(place))
+            best = Math.Max(best, FieldScore(text, place));
         return best;
     }
 
@@ -121,14 +150,70 @@ internal static partial class HouseholdChatPhrase
         return compact.Length == 0 ? null : compact;
     }
 
+    /// <summary>动词前的时间或体貌副词。长的在前，避免「刚刚」被拆成「刚」。</summary>
+    private static readonly string[] TimeAspectAdverbs =
+    [
+        "刚刚", "刚才", "今天", "昨天", "前天", "已经", "刚", "又", "才"
+    ];
+
+    private static readonly string[] RecordVerbs = ["更换了", "更换", "换了", "做了", "完成了", "洗了", "花了"];
+
     private static string ExtractRecordName(string text)
     {
         var value = CostPattern().Replace(text, "");
         value = DatePattern().Replace(value, "");
-        foreach (var word in new[] { "更换了", "更换", "换了", "做了", "完成了", "洗了", "花了", "给" })
+        value = StripTimeAspectAdverbs(value);
+        foreach (var word in RecordVerbs)
             value = value.Replace(word, "", StringComparison.Ordinal);
+        value = value.Replace("给", "", StringComparison.Ordinal);
         value = Punctuation().Replace(value, "");
         return value.Trim();
+    }
+
+    /// <summary>
+    /// 只去掉句首、或紧挨在动词前面的副词。名称中间的「刚」不动。
+    /// </summary>
+    private static string StripTimeAspectAdverbs(string value)
+    {
+        while (true)
+        {
+            var next = StripOneLeadingAdverb(value);
+            if (next == value)
+                next = StripOneAdverbBeforeVerb(value);
+            if (next == value)
+                return value;
+            value = next;
+        }
+    }
+
+    private static string StripOneLeadingAdverb(string value)
+    {
+        foreach (var adverb in TimeAspectAdverbs)
+        {
+            if (value.StartsWith(adverb, StringComparison.Ordinal))
+                return value[adverb.Length..];
+        }
+
+        return value;
+    }
+
+    private static string StripOneAdverbBeforeVerb(string value)
+    {
+        foreach (var verb in RecordVerbs)
+        {
+            var index = value.IndexOf(verb, StringComparison.Ordinal);
+            if (index <= 0)
+                continue;
+            var prefix = value[..index];
+            foreach (var adverb in TimeAspectAdverbs)
+            {
+                if (!prefix.EndsWith(adverb, StringComparison.Ordinal))
+                    continue;
+                return string.Concat(prefix.AsSpan(0, prefix.Length - adverb.Length), value.AsSpan(index));
+            }
+        }
+
+        return value;
     }
 
     private readonly record struct CostRead(decimal? Amount, bool Invalid);
@@ -248,19 +333,26 @@ internal static partial class HouseholdChatPhrase
     private static int FieldScore(string text, string? field)
     {
         var value = Compact(field);
-        if (value.Length < 2)
+        if (value.Length < 2 || GenericWords.Contains(value))
             return 0;
-        for (var len = value.Length; len >= 2; len--)
+        if (text.Contains(value, StringComparison.Ordinal))
+            return value.Length;
+
+        var best = 0;
+        for (var len = value.Length - 1; len >= 3; len--)
         {
             for (var i = 0; i <= value.Length - len; i++)
             {
                 var slice = value.Substring(i, len);
-                if (StopFragments.Contains(slice))
+                if (StopFragments.Contains(slice) || GenericWords.Contains(slice))
                     continue;
                 if (text.Contains(slice, StringComparison.Ordinal))
-                    return len;
+                    best = Math.Max(best, len);
             }
+            if (best > 0)
+                return best;
         }
+
         return 0;
     }
 
