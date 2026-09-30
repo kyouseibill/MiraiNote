@@ -39,14 +39,6 @@ public class HouseholdController : ControllerBase
         return Ok(ApiResponse<List<HouseholdMemberDto>>.Ok(result));
     }
 
-    [HttpPost("members")]
-    public async Task<ActionResult<ApiResponse<HouseholdMemberDto>>> AddMember(
-        [FromBody] AddHouseholdMemberRequest request, CancellationToken ct)
-    {
-        var result = await _service.AddMemberAsync(_currentUser.UserId, request, ct);
-        return Ok(ApiResponse<HouseholdMemberDto>.Ok(result, "已添加"));
-    }
-
     [HttpPut("members/{memberId:int}/role")]
     public async Task<ActionResult<ApiResponse<HouseholdMemberDto>>> ChangeRole(
         int memberId, [FromBody] ChangeHouseholdMemberRoleRequest request, CancellationToken ct)

@@ -74,7 +74,7 @@ public class HouseholdSharingTests
         var foreignReject = await Assert.ThrowsAsync<BusinessException>(() =>
             lab.Invitations.RejectAsync(stranger, created.Id));
         var memberId = await lab.AddUserAsync("housemate");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "housemate" });
+        await lab.JoinAsync(lab.OwnerId, "housemate");
         var memberRevoke = await Assert.ThrowsAsync<BusinessException>(() =>
             lab.Invitations.RevokeAsync(memberId, created.Id));
         var otherAdmin = await lab.AddUserAsync("other-admin");
@@ -227,7 +227,7 @@ public class HouseholdSharingTests
 
         var withRoommate = await InviteThenAttachAsync(lab, "had-roommate");
         var roommate = await lab.AddUserAsync("roommate");
-        await lab.Household.AddMemberAsync(withRoommate.UserId, new AddHouseholdMemberRequest { UserIdentifier = "roommate" });
+        await lab.JoinAsync(withRoommate.UserId, "roommate");
 
         var rejected = new[]
         {
@@ -278,7 +278,7 @@ public class HouseholdSharingTests
         await using var lab = await SharingLab.CreateAsync(Morning);
         var home = await lab.Household.GetMineAsync(lab.OwnerId);
         var helperId = await lab.AddUserAsync("helper");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "helper" });
+        await lab.JoinAsync(lab.OwnerId, "helper");
         var helper = (await lab.Household.ListMembersAsync(lab.OwnerId)).Single(m => m.UserId == helperId);
         var item = await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
         {
@@ -330,11 +330,7 @@ public class HouseholdSharingTests
         Assert.NotEqual(home.Id, restarted.Id);
 
         var secondId = await lab.AddUserAsync("second-admin");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest
-        {
-            UserIdentifier = "second-admin",
-            Role = HouseholdRole.Admin
-        });
+        await lab.JoinAsync(lab.OwnerId, "second-admin", HouseholdRole.Admin);
         var ownerMember = (await lab.Household.ListMembersAsync(lab.OwnerId)).Single(m => m.UserId == lab.OwnerId);
         await lab.Household.RemoveMemberAsync(secondId, ownerMember.Id);
         var ownerRestarted = await lab.Household.GetMineAsync(lab.OwnerId);
@@ -351,7 +347,7 @@ public class HouseholdSharingTests
     {
         await using var lab = await SharingLab.CreateAsync(Morning);
         var memberId = await lab.AddUserAsync("member");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await lab.JoinAsync(lab.OwnerId, "member");
         var item = await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
         {
             Name = "滤网",
@@ -512,6 +508,28 @@ public class HouseholdSharingTests
             Db.Users.Add(user);
             await Db.SaveChangesAsync();
             return user.Id;
+        }
+
+        public async Task<HouseholdMemberDto> JoinAsync(int householdUserId, string username, HouseholdRole role = HouseholdRole.Member)
+        {
+            var home = await Household.GetMineAsync(householdUserId);
+            var user = await Db.Users.SingleAsync(u => u.Username == username);
+            var member = new HouseholdMember
+            {
+                HouseholdId = home.Id,
+                UserId = user.Id,
+                Role = role
+            };
+            Db.HouseholdMembers.Add(member);
+            await Db.SaveChangesAsync();
+            return new HouseholdMemberDto
+            {
+                Id = member.Id,
+                UserId = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = role
+            };
         }
 
         public async ValueTask DisposeAsync()
