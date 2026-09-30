@@ -74,7 +74,7 @@ internal static class HouseholdModelConfiguration
     {
         var entity = modelBuilder.Entity<HouseholdCompletionRecord>();
         entity.Property(r => r.Cost).HasPrecision(18, 2);
-        entity.Property(r => r.IdempotencyKey).HasMaxLength(100);
+        entity.Property(r => r.IdempotencyKey).HasMaxLength(HouseholdIdempotency.KeyMaxLength);
         entity.Property(r => r.RequestBodyHash).HasMaxLength(64);
         entity.Property(r => r.SubmissionFingerprint).HasMaxLength(64);
         entity.HasIndex(r => new { r.HouseholdItemId, r.CompletedOn });
@@ -189,6 +189,7 @@ internal static class HouseholdModelConfiguration
     private static void ConfigureChatDraft(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<HouseholdChatDraft>();
+        entity.Property(d => d.IdempotencyKey).HasMaxLength(HouseholdIdempotency.KeyMaxLength);
         entity.Property(d => d.Cost).HasPrecision(18, 2);
         entity.Property(d => d.StoredCost).HasPrecision(18, 2);
         entity.HasIndex(d => new { d.UserId, d.ExpiresAt });

@@ -107,8 +107,7 @@ public sealed class HouseholdChatService : IHouseholdChatService
     public async Task<CompleteHouseholdItemResult> ConfirmAsync(
         int userId, ConfirmHouseholdChatRequest request, string? idempotencyKey, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(idempotencyKey))
-            throw new BusinessException(MissingKeyMessage, 400);
+        var key = RequireIdempotencyKey(idempotencyKey);
 
         var access = await _access.GetOrCreateAsync(userId, ct);
         var now = UtcNow();
@@ -140,7 +139,6 @@ public sealed class HouseholdChatService : IHouseholdChatService
         if (cost > 999999999.99m)
             throw new BusinessException("费用超出范围", 400);
         var skip = request.DeductConsumable == false;
-        var key = idempotencyKey.Trim();
         var householdId = access.Household.Id;
         var draftId = draft.Id;
 
@@ -177,6 +175,16 @@ public sealed class HouseholdChatService : IHouseholdChatService
                 SkipConsumableDeduction = skip
             }, key, ct);
         });
+    }
+
+    private static string RequireIdempotencyKey(string? idempotencyKey)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            throw new BusinessException(MissingKeyMessage, 400);
+        var key = idempotencyKey.Trim();
+        if (key.Length > HouseholdIdempotency.KeyMaxLength)
+            throw new BusinessException(HouseholdIdempotency.KeyTooLongMessage, 400);
+        return key;
     }
 
     public async Task PurgeExpiredDraftsAsync(CancellationToken ct = default)

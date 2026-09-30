@@ -336,6 +336,41 @@ public class HouseholdChatTests
     }
 
     [Fact]
+    public async Task Confirm_RejectsOverlongIdempotencyKey_AndKeepsTheDraftPending()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var item = await lab.CreateAsync("厨房净水器 PP 棉");
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉");
+        var tooLong = new string('k', HouseholdIdempotency.KeyMaxLength + 1);
+
+        var rejected = await Assert.ThrowsAsync<BusinessException>(() =>
+            lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(draft, item.Id), tooLong));
+        Assert.Equal(400, rejected.StatusCode);
+        Assert.Equal(HouseholdIdempotency.KeyTooLongMessage, rejected.Message);
+        var pending = await lab.Db.HouseholdChatDrafts.SingleAsync(d => d.Id == draft.DraftId);
+        Assert.Null(pending.IdempotencyKey);
+        Assert.Null(pending.StoredItemId);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+
+        var direct = await Assert.ThrowsAsync<BusinessException>(() => lab.Items.CompleteAsync(
+            lab.OwnerId,
+            item.Id,
+            new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 10, 8) },
+            tooLong));
+        Assert.Equal(400, direct.StatusCode);
+        Assert.Equal(HouseholdIdempotency.KeyTooLongMessage, direct.Message);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+
+        var exact = new string('k', HouseholdIdempotency.KeyMaxLength);
+        var done = await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(draft, item.Id), exact);
+        Assert.True(done.Record.Id > 0);
+        var confirmed = await lab.Db.HouseholdChatDrafts.SingleAsync(d => d.Id == draft.DraftId);
+        Assert.Equal(exact, confirmed.IdempotencyKey);
+        Assert.Equal(item.Id, confirmed.StoredItemId);
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.IdempotencyKey == exact));
+    }
+
+    [Fact]
     public async Task ParallelConfirm_WritesExactlyOneCompletion()
     {
         await using var lab = await ChatLab.CreateAsync(Morning);

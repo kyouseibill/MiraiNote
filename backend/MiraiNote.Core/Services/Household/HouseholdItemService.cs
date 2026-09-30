@@ -744,8 +744,8 @@ public sealed class HouseholdItemService : IHouseholdItemService
         if (string.IsNullOrWhiteSpace(key))
             return null;
         var trimmed = key.Trim();
-        if (trimmed.Length > 100)
-            throw new BusinessException("Idempotency-Key 最长 100 个字符", 400);
+        if (trimmed.Length > HouseholdIdempotency.KeyMaxLength)
+            throw new BusinessException(HouseholdIdempotency.KeyTooLongMessage, 400);
         return trimmed;
     }
 
