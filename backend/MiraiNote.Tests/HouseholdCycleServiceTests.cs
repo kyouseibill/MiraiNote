@@ -51,31 +51,40 @@ public class HouseholdCycleServiceTests
         var outsiderHome = await fx.Household.GetMineAsync(outsiderId);
         Assert.NotEqual(ownerHome.Id, outsiderHome.Id);
 
-        var occupied = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" }));
-        Assert.Equal(400, occupied.StatusCode);
+        var invitedEmpty = await fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" });
+        Assert.Equal(HouseholdInvitationStatus.Pending, invitedEmpty.Status);
+        Assert.Equal(outsiderHome.Id, (await fx.Household.GetMineAsync(outsiderId)).Id);
+        Assert.DoesNotContain(outsiderId, (await fx.Household.ListMembersAsync(fx.OwnerId)).Select(m => m.UserId));
+        Assert.Equal(1, await fx.Db.HouseholdInvitations.CountAsync(i =>
+            i.InviteeUserId == outsiderId && i.Status == HouseholdInvitationStatus.Pending));
 
         var memberId = await fx.AddUserAsync("member");
-        var added = await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest
+        var invited = await fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest
         {
             UserIdentifier = "MEMBER",
             Role = HouseholdRole.Member
         });
-        Assert.Equal(memberId, added.UserId);
+        Assert.Equal(HouseholdInvitationStatus.Pending, invited.Status);
+        Assert.Equal(HouseholdRole.Member, invited.Role);
+        Assert.Equal(1, await fx.Db.HouseholdInvitations.CountAsync(i =>
+            i.InviteeUserId == memberId && i.Status == HouseholdInvitationStatus.Pending));
+        Assert.Equal(0, await fx.Db.HouseholdMembers.CountAsync(m => m.UserId == memberId));
+        var waiting = await fx.Household.GetMineAsync(memberId);
+        Assert.False(waiting.HasHousehold);
+        Assert.True(waiting.HasPendingInvitations);
 
-        var shared = await fx.Household.GetMineAsync(memberId);
-        Assert.Equal(ownerHome.Id, shared.Id);
-        Assert.Equal(HouseholdRole.Member, shared.MyRole);
-
-        var strangerId = await fx.AddUserAsync("stranger");
+        var housemateId = await fx.AddUserAsync("housemate");
+        await fx.JoinAsync(fx.OwnerId, "housemate");
         var denied = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.AddMemberAsync(memberId, new AddHouseholdMemberRequest { UserIdentifier = "stranger" }));
+            fx.Invitations.CreateAsync(housemateId, new AddHouseholdMemberRequest { UserIdentifier = "stranger" }));
         Assert.Equal(403, denied.StatusCode);
+        var strangerId = await fx.AddUserAsync("stranger");
         Assert.NotEqual(ownerHome.Id, (await fx.Household.GetMineAsync(strangerId)).Id);
 
         var cross = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.RemoveMemberAsync(memberId, ownerHome.MyMemberId));
+            fx.Household.RemoveMemberAsync(housemateId, ownerHome.MyMemberId));
         Assert.Equal(403, cross.StatusCode);
+        Assert.Null(typeof(HouseholdController).GetMethod("AddMember"));
     }
 
     [Fact]
@@ -84,11 +93,7 @@ public class HouseholdCycleServiceTests
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var otherId = await fx.AddUserAsync("other");
         var owner = await fx.Household.GetMineAsync(fx.OwnerId);
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest
-        {
-            UserIdentifier = "other",
-            Role = HouseholdRole.Member
-        });
+        await fx.JoinAsync(fx.OwnerId, "other");
 
         var stuck = await Assert.ThrowsAsync<BusinessException>(() =>
             fx.Household.RemoveMemberAsync(fx.OwnerId, owner.MyMemberId));
@@ -112,7 +117,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var extra = await fx.CreateRecurringAsync(fx.OwnerId, "可删", new DateOnly(2026, 9, 1));
         await fx.Items.DeleteAsync(fx.OwnerId, extra.Id);
 
@@ -419,11 +424,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var helperId = await fx.AddUserAsync("helper");
-        var helper = await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest
-        {
-            UserIdentifier = "helper",
-            Role = HouseholdRole.Admin
-        });
+        var helper = await fx.JoinAsync(fx.OwnerId, "helper", HouseholdRole.Admin);
         var item = await fx.Items.CreateAsync(fx.OwnerId, new CreateHouseholdItemRequest
         {
             Name = "油烟机清洗",
@@ -454,7 +455,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
 
         var asAdmin = await fx.Household.ListMembersAsync(fx.OwnerId);
         Assert.Contains(asAdmin, m => m.UserId == memberId && m.Email == "member@example.com");
@@ -465,23 +466,36 @@ public class HouseholdCycleServiceTests
         Assert.Contains(asMember, m => m.Username == "member");
 
         var missing = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "nobody" }));
+            fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "nobody" }));
         var outsiderId = await fx.AddUserAsync("outsider");
-        await fx.Household.GetMineAsync(outsiderId);
+        var outsiderHome = await fx.Household.GetMineAsync(outsiderId);
+        await fx.Items.CreateAsync(outsiderId, new CreateHouseholdItemRequest
+        {
+            Name = "已有事项",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1)
+        });
         var occupied = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" }));
+            fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" }));
         Assert.Equal(400, missing.StatusCode);
         Assert.Equal(400, occupied.StatusCode);
         Assert.Equal(HouseholdService.AddMemberRejectedMessage, missing.Message);
         Assert.Equal(missing.Message, occupied.Message);
+        Assert.Equal(outsiderHome.Id, (await fx.Household.GetMineAsync(outsiderId)).Id);
+        Assert.DoesNotContain(outsiderId, (await fx.Household.ListMembersAsync(fx.OwnerId)).Select(m => m.UserId));
 
         var inactiveId = await fx.AddUserAsync("inactive");
         var inactive = await fx.Db.Users.SingleAsync(u => u.Id == inactiveId);
         inactive.IsActive = false;
         await fx.Db.SaveChangesAsync();
         var disabled = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "inactive" }));
+            fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "inactive" }));
+        Assert.Equal(missing.StatusCode, disabled.StatusCode);
         Assert.Equal(missing.Message, disabled.Message);
+        Assert.Equal(0, await fx.Db.HouseholdInvitations.CountAsync(i =>
+            i.InviteeUserId == outsiderId || i.InviteeUserId == inactiveId));
     }
 
     [Fact]
@@ -489,7 +503,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var created = await fx.CreateRecurringAsync(memberId, "成员新建", new DateOnly(2026, 9, 1));
         var done = await fx.Items.CompleteAsync(memberId, created.Id, new CompleteHouseholdItemRequest
         {
@@ -860,7 +874,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var consumable = await fx.Consumables.CreateAsync(fx.OwnerId, new SaveHouseholdConsumableRequest
         {
             Name = "滤芯",
@@ -899,7 +913,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var item = await fx.CreateOneOffAsync("护照", new DateOnly(2026, 9, 1));
 
         var archived = await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
@@ -1072,7 +1086,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var created = await fx.Consumables.CreateAsync(memberId, new SaveHouseholdConsumableRequest
         {
             Name = "PP 棉",
@@ -1106,7 +1120,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var denied = await Assert.ThrowsAsync<BusinessException>(() => fx.Items.CreateAsync(memberId, new CreateHouseholdItemRequest
         {
             Name = "成员暂停",
@@ -1204,7 +1218,7 @@ public class HouseholdCycleServiceTests
     {
         await using var fx = new HouseholdFixture(Utc(2026, 10, 1, 2, 0));
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var item = await fx.CreateOneOffAsync("护照", new DateOnly(2026, 9, 1));
         await fx.Items.CompleteAsync(fx.OwnerId, item.Id, new CompleteHouseholdItemRequest
         {
@@ -1302,7 +1316,7 @@ public class HouseholdCycleServiceTests
         var clock = new MutableTimeProvider(Utc(2026, 10, 1, 2, 0));
         await using var fx = new HouseholdFixture(clock);
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var item = await fx.CreateRecurringAsync(fx.OwnerId, "滤网", new DateOnly(2026, 8, 1));
         var request = new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 1) };
 
@@ -1356,7 +1370,7 @@ public class HouseholdCycleServiceTests
         var clock = new MutableTimeProvider(Utc(2026, 10, 1, 2, 0));
         await using var fx = new HouseholdFixture(clock);
         var memberId = await fx.AddUserAsync("member");
-        await fx.Household.AddMemberAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "member" });
+        await fx.JoinAsync(fx.OwnerId, "member");
         var item = await fx.CreateRecurringAsync(fx.OwnerId, "滤网", new DateOnly(2026, 8, 1));
         var request = new CompleteHouseholdItemRequest { CompletedOn = new DateOnly(2026, 9, 1) };
 
@@ -1392,11 +1406,13 @@ public class HouseholdCycleServiceTests
     private sealed class HouseholdFixture : IAsyncDisposable
     {
         private readonly MiraiTestFixture _fx;
+        private readonly IHouseholdClock _clock;
         private readonly HouseholdCycleRules _rules;
         private readonly HouseholdAccessPolicy _policy = HouseholdAccessPolicy.Default;
 
         public MiraiNoteDbContext Db { get; }
         public HouseholdService Household { get; }
+        public HouseholdInvitationService Invitations { get; }
         public HouseholdItemService Items { get; }
         public HouseholdConsumableService Consumables { get; }
         public int OwnerId { get; }
@@ -1437,15 +1453,17 @@ public class HouseholdCycleServiceTests
 
             Db = new MiraiNoteDbContext(builder.Options);
             OwnerId = Db.Users.Single().Id;
-            _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(clock));
-            var access = new HouseholdAccessService(Db);
+            _clock = new DelegatingHouseholdClock(clock);
+            _rules = new HouseholdCycleRules(_clock);
+            var access = new HouseholdAccessService(Db, _clock);
             Household = new HouseholdService(Db, access);
+            Invitations = new HouseholdInvitationService(Db, access, _rules);
             Items = new HouseholdItemService(Db, access, _rules, _policy);
             Consumables = new HouseholdConsumableService(Db, access, _policy);
         }
 
         public HouseholdItemService ItemsWith(HouseholdAccessPolicy policy) =>
-            new(Db, new HouseholdAccessService(Db), _rules, policy);
+            new(Db, new HouseholdAccessService(Db, _clock), _rules, policy);
 
         public async Task<int> AddUserAsync(string username)
         {
@@ -1459,6 +1477,29 @@ public class HouseholdCycleServiceTests
             Db.Users.Add(user);
             await Db.SaveChangesAsync();
             return user.Id;
+        }
+
+        /// <summary>测试夹具直接写入成员，不经过邀请接口。</summary>
+        public async Task<HouseholdMemberDto> JoinAsync(int householdUserId, string username, HouseholdRole role = HouseholdRole.Member)
+        {
+            var home = await Household.GetMineAsync(householdUserId);
+            var user = await Db.Users.SingleAsync(u => u.Username == username);
+            var member = new HouseholdMember
+            {
+                HouseholdId = home.Id,
+                UserId = user.Id,
+                Role = role
+            };
+            Db.HouseholdMembers.Add(member);
+            await Db.SaveChangesAsync();
+            return new HouseholdMemberDto
+            {
+                Id = member.Id,
+                UserId = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = role
+            };
         }
 
         public Task<HouseholdItemDto> CreateRecurringAsync(

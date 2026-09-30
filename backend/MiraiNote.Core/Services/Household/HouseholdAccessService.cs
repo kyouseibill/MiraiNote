@@ -16,17 +16,44 @@ public sealed class HouseholdContext
 
 public interface IHouseholdAccessService
 {
-    /// <summary>取得当前用户的家庭。还没有家庭时自动创建一个，并把该用户设为管理员。</summary>
+    /// <summary>当前成员关系。没有家庭时返回 null，不创建。</summary>
+    Task<HouseholdContext?> FindAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>有未过期、未撤回的待处理邀请。这种用户不能自动建家庭。</summary>
+    Task<bool> HasActionableInvitationAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 取得当前用户的家庭。还没有家庭、且没有待处理邀请时自动创建一个，并把该用户设为管理员。
+    /// 有待处理邀请时不创建，调用方应先让用户接受或拒绝。
+    /// </summary>
     Task<HouseholdContext> GetOrCreateAsync(int userId, CancellationToken ct = default);
 }
 
 public sealed class HouseholdAccessService : IHouseholdAccessService
 {
-    private readonly MiraiNoteDbContext _db;
+    public const string PendingInvitationMessage = "请先处理家庭邀请";
 
-    public HouseholdAccessService(MiraiNoteDbContext db)
+    private readonly MiraiNoteDbContext _db;
+    private readonly IHouseholdClock _clock;
+
+    public HouseholdAccessService(MiraiNoteDbContext db, IHouseholdClock clock)
     {
         _db = db;
+        _clock = clock;
+    }
+
+    public Task<HouseholdContext?> FindAsync(int userId, CancellationToken ct = default) =>
+        FindExistingAsync(userId, ct);
+
+    public async Task<bool> HasActionableInvitationAsync(int userId, CancellationToken ct = default)
+    {
+        var now = UtcNow();
+        var liveHouseholdIds = _db.Households.AsNoTracking().Select(h => h.Id);
+        return await _db.HouseholdInvitations.AsNoTracking().AnyAsync(i =>
+            i.InviteeUserId == userId
+            && i.Status == HouseholdInvitationStatus.Pending
+            && i.ExpiresAt > now
+            && liveHouseholdIds.Contains(i.HouseholdId), ct);
     }
 
     public async Task<HouseholdContext> GetOrCreateAsync(int userId, CancellationToken ct = default)
@@ -34,9 +61,12 @@ public sealed class HouseholdAccessService : IHouseholdAccessService
         if (userId <= 0)
             throw new BusinessException("未登录", 401);
 
-        var existing = await FindAsync(userId, ct);
+        var existing = await FindExistingAsync(userId, ct);
         if (existing != null)
             return existing;
+
+        if (await HasActionableInvitationAsync(userId, ct))
+            throw new BusinessException(PendingInvitationMessage, 409);
 
         var household = new HouseholdEntity { Name = HouseholdEntity.DefaultName };
         var member = new HouseholdMember
@@ -65,7 +95,7 @@ public sealed class HouseholdAccessService : IHouseholdAccessService
         return new HouseholdContext { Household = household, Member = member };
     }
 
-    private async Task<HouseholdContext?> FindAsync(int userId, CancellationToken ct)
+    private async Task<HouseholdContext?> FindExistingAsync(int userId, CancellationToken ct)
     {
         var member = await _db.HouseholdMembers
             .Include(m => m.Household)
@@ -76,4 +106,6 @@ public sealed class HouseholdAccessService : IHouseholdAccessService
 
         return new HouseholdContext { Household = member.Household, Member = member };
     }
+
+    private DateTime UtcNow() => DateTime.SpecifyKind(_clock.UtcNow.UtcDateTime, DateTimeKind.Utc);
 }

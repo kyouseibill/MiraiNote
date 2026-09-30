@@ -325,8 +325,14 @@ public sealed class HouseholdItemService : IHouseholdItemService
     public async Task<HouseholdUpcomingDto> UpcomingAsync(int userId, HouseholdUpcomingQuery? query, CancellationToken ct = default)
     {
         query ??= new HouseholdUpcomingQuery();
-        var ctx = await _access.GetOrCreateAsync(userId, ct);
         var today = _rules.Today();
+        var ctx = await _access.FindAsync(userId, ct);
+        if (ctx == null)
+        {
+            if (await _access.HasActionableInvitationAsync(userId, ct))
+                return new HouseholdUpcomingDto { Today = today };
+            ctx = await _access.GetOrCreateAsync(userId, ct);
+        }
         var horizon = today.AddDays(HouseholdCycleRules.Within30DayWindow);
         var items = _db.HouseholdItems.AsNoTracking()
             .Where(i => i.HouseholdId == ctx.Household.Id

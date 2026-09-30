@@ -93,7 +93,7 @@ public class HouseholdNotificationTests
         Assert.DoesNotContain("device-key-test", stored.BarkAddressProtected);
 
         var otherId = await lab.AddUserAsync("linxia");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        await lab.JoinAsync(lab.OwnerId, "linxia");
         var other = await lab.Settings.GetAsync(otherId);
         Assert.Equal("linxia@example.com", other.Email);
         Assert.False(other.BarkConfigured);
@@ -222,7 +222,7 @@ public class HouseholdNotificationTests
     {
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
         var otherId = await lab.AddUserAsync("linxia");
-        var member = await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        var member = await lab.JoinAsync(lab.OwnerId, "linxia");
         var item = await lab.CreateDueTodayAsync("滤网");
         await lab.Items.UpdateAsync(lab.OwnerId, item.Id, new UpdateHouseholdItemRequest
         {
@@ -571,7 +571,7 @@ public class HouseholdNotificationTests
     {
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
         var otherId = await lab.AddUserAsync("linxia");
-        var member = await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        var member = await lab.JoinAsync(lab.OwnerId, "linxia");
         var item = await lab.CreateDueTodayAsync("滤网");
         await lab.Items.UpdateAsync(lab.OwnerId, item.Id, new UpdateHouseholdItemRequest
         {
@@ -624,7 +624,7 @@ public class HouseholdNotificationTests
     {
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
         var otherId = await lab.AddUserAsync("linxia");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        await lab.JoinAsync(lab.OwnerId, "linxia");
         await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(hour: 9, due: HouseholdNotificationChannel.Email));
         await lab.Settings.UpdateAsync(otherId, SettingsWith(hour: 10, due: HouseholdNotificationChannel.Email));
         await lab.Consumables.CreateAsync(lab.OwnerId, new SaveHouseholdConsumableRequest
@@ -832,7 +832,7 @@ public class HouseholdNotificationTests
     {
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
         var otherId = await lab.AddUserAsync("linxia");
-        await lab.Household.AddMemberAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "linxia" });
+        await lab.JoinAsync(lab.OwnerId, "linxia");
         await lab.CreateDueTodayAsync("滤网");
         await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
         lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
@@ -1036,7 +1036,7 @@ public class HouseholdNotificationTests
             var db = interceptor == null ? fx.CreateContext() : fx.CreateContextWithInterceptor(interceptor);
             var clock = new MutableTimeProvider(utcNow);
             var rules = new HouseholdCycleRules(new DelegatingHouseholdClock(clock));
-            var access = new HouseholdAccessService(db);
+            var access = new HouseholdAccessService(db, clock);
             var policy = HouseholdAccessPolicy.Default;
             var items = new HouseholdItemService(db, access, rules, policy);
             var consumables = new HouseholdConsumableService(db, access, policy);
@@ -1122,6 +1122,28 @@ public class HouseholdNotificationTests
             Db.Users.Add(user);
             await Db.SaveChangesAsync();
             return user.Id;
+        }
+
+        public async Task<HouseholdMemberDto> JoinAsync(int householdUserId, string username, HouseholdRole role = HouseholdRole.Member)
+        {
+            var home = await Household.GetMineAsync(householdUserId);
+            var user = await Db.Users.SingleAsync(u => u.Username == username);
+            var member = new HouseholdMember
+            {
+                HouseholdId = home.Id,
+                UserId = user.Id,
+                Role = role
+            };
+            Db.HouseholdMembers.Add(member);
+            await Db.SaveChangesAsync();
+            return new HouseholdMemberDto
+            {
+                Id = member.Id,
+                UserId = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = role
+            };
         }
 
         public async ValueTask DisposeAsync()

@@ -17,6 +17,7 @@ import type {
   HouseholdItem,
   HouseholdItemQuery,
   HouseholdItemTemplate,
+  HouseholdInvitation,
   HouseholdMember,
   HouseholdNotificationSettings,
   HouseholdUpcoming,
@@ -51,6 +52,8 @@ function cloneUpcoming(source: HouseholdUpcoming, category?: HouseholdCategory):
 export const useHouseholdStore = defineStore('household', () => {
   const household = ref<Household | null>(null)
   const members = ref<HouseholdMember[]>([])
+  const outgoingInvitations = ref<HouseholdInvitation[]>([])
+  const incomingInvitations = ref<HouseholdInvitation[]>([])
   const items = ref<HouseholdItem[]>([])
   const templates = ref<HouseholdItemTemplate[]>([])
   const consumables = ref<HouseholdConsumable[]>([])
@@ -68,8 +71,13 @@ export const useHouseholdStore = defineStore('household', () => {
   const serverToday = ref<string | null>(null)
   const serverTodayUnavailable = ref(false)
   const notificationSettings = ref<HouseholdNotificationSettings | null>(null)
+  const invitationRedirect = ref(false)
 
-  const isAdmin = computed(() => household.value?.myRole === 'Admin')
+  const isAdmin = computed(() => household.value?.hasHousehold !== false && household.value?.myRole === 'Admin')
+  const awaitingInvitation = computed(() =>
+    invitationRedirect.value
+    || household.value?.hasHousehold === false
+    || incomingInvitations.value.length > 0)
   const calendarToday = computed(() => serverToday.value ?? shanghaiToday())
 
   function assertAdmin(message: string) {
@@ -148,6 +156,12 @@ export const useHouseholdStore = defineStore('household', () => {
   async function fetchHousehold() {
     if (previewMode.value) return household.value
     household.value = await householdApi.getMine()
+    if (household.value?.hasHousehold === false) {
+      members.value = []
+      items.value = []
+      consumables.value = []
+      outgoingInvitations.value = []
+    }
     return household.value
   }
 
@@ -155,6 +169,103 @@ export const useHouseholdStore = defineStore('household', () => {
     if (previewMode.value) return members.value
     members.value = await householdApi.listMembers()
     return members.value
+  }
+
+  async function fetchInvitations() {
+    incomingInvitations.value = previewMode.value ? [] : await householdApi.listIncomingInvitations()
+    if (!isAdmin.value) {
+      outgoingInvitations.value = []
+      return { incoming: incomingInvitations.value, outgoing: outgoingInvitations.value }
+    }
+    outgoingInvitations.value = previewMode.value ? [] : await householdApi.listOutgoingInvitations()
+    return { incoming: incomingInvitations.value, outgoing: outgoingInvitations.value }
+  }
+
+  async function createInvitation(userIdentifier: string) {
+    assertAdmin('只有管理员可以邀请成员')
+    if (previewMode.value) return
+    await householdApi.createInvitation(userIdentifier)
+    await fetchInvitations()
+  }
+
+  async function revokeInvitation(id: number) {
+    assertAdmin('只有管理员可以撤回邀请')
+    if (previewMode.value) {
+      outgoingInvitations.value = outgoingInvitations.value.filter((item) => item.id !== id)
+      return
+    }
+    await householdApi.revokeInvitation(id)
+    await fetchInvitations()
+  }
+
+  async function showInvitationGate() {
+    invitationRedirect.value = true
+    if (household.value) {
+      household.value = { ...household.value, hasHousehold: false, hasPendingInvitations: true }
+    }
+    members.value = []
+    items.value = []
+    consumables.value = []
+    outgoingInvitations.value = []
+    try {
+      incomingInvitations.value = previewMode.value ? [] : await householdApi.listIncomingInvitations()
+    } catch {
+      // 列表失败时仍停在邀请页，避免把 409 原文留在家务页上。
+    }
+  }
+
+  async function refreshAfterInvitation() {
+    await fetchHousehold()
+    invitationRedirect.value = false
+    await fetchInvitations()
+    if (awaitingInvitation.value) {
+      members.value = []
+      items.value = []
+      consumables.value = []
+      return
+    }
+    await Promise.all([
+      fetchMembers(),
+      fetchItems(lastQuery.value),
+      fetchConsumables(),
+      fetchTemplates(),
+    ])
+  }
+
+  async function acceptInvitation(id: number, idempotencyKey: string) {
+    if (previewMode.value) return
+    await householdApi.acceptInvitation(id, idempotencyKey)
+    await refreshAfterInvitation()
+  }
+
+  async function rejectInvitation(id: number) {
+    if (previewMode.value) {
+      incomingInvitations.value = incomingInvitations.value.filter((item) => item.id !== id)
+      invitationRedirect.value = incomingInvitations.value.length > 0
+      return
+    }
+    await householdApi.rejectInvitation(id)
+    await refreshAfterInvitation()
+  }
+
+  async function removeMember(memberId: number) {
+    assertAdmin('只有管理员可以移除成员')
+    if (previewMode.value) {
+      members.value = members.value.filter((member) => member.id !== memberId)
+      return
+    }
+    await householdApi.removeMember(memberId)
+    await fetchMembers()
+    await fetchItems(lastQuery.value)
+  }
+
+  async function leaveHousehold() {
+    if (previewMode.value) return
+    await householdApi.leaveHousehold()
+    await fetchHousehold()
+    await fetchMembers()
+    await fetchItems(lastQuery.value)
+    await fetchInvitations()
   }
 
   async function fetchItems(query: HouseholdItemQuery = {}) {
@@ -221,8 +332,16 @@ export const useHouseholdStore = defineStore('household', () => {
         return
       }
       previewMode.value = false
+      invitationRedirect.value = false
       await fetchServerToday()
       await fetchHousehold()
+      await fetchInvitations()
+      if (awaitingInvitation.value) {
+        members.value = []
+        items.value = []
+        consumables.value = []
+        return
+      }
       await Promise.all([
         fetchMembers(),
         fetchItems(lastQuery.value),
@@ -599,6 +718,8 @@ export const useHouseholdStore = defineStore('household', () => {
   return {
     household,
     members,
+    outgoingInvitations,
+    incomingInvitations,
     items,
     templates,
     consumables,
@@ -608,10 +729,19 @@ export const useHouseholdStore = defineStore('household', () => {
     loading,
     previewMode,
     isAdmin,
+    awaitingInvitation,
     calendarToday,
     fetchServerToday,
     fetchHousehold,
     fetchMembers,
+    fetchInvitations,
+    showInvitationGate,
+    createInvitation,
+    revokeInvitation,
+    acceptInvitation,
+    rejectInvitation,
+    removeMember,
+    leaveHousehold,
     fetchItems,
     fetchTemplates,
     fetchConsumables,

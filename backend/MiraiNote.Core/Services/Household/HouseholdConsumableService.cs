@@ -39,14 +39,16 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
             .OrderBy(c => c.Name)
             .ThenBy(c => c.Id)
             .ToListAsync(ct);
-        return items.Select(ToDto).ToList();
+        var links = await LoadLinksAsync(ctx.Household.Id, items.Select(c => c.Id).ToArray(), ct);
+        return items.Select(item => ToDto(item, links.GetValueOrDefault(item.Id))).ToList();
     }
 
     public async Task<HouseholdConsumableDto> GetAsync(int userId, int id, CancellationToken ct = default)
     {
         var ctx = await _access.GetOrCreateAsync(userId, ct);
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: false, ct);
-        return ToDto(entity);
+        var links = await LoadLinksAsync(ctx.Household.Id, [entity.Id], ct);
+        return ToDto(entity, links.GetValueOrDefault(entity.Id));
     }
 
     public async Task<HouseholdConsumableDto> CreateAsync(int userId, SaveHouseholdConsumableRequest request, CancellationToken ct = default)
@@ -56,7 +58,7 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         Apply(entity, request, previousStock: 0);
         _db.HouseholdConsumables.Add(entity);
         await _db.SaveChangesAsync(ct);
-        return ToDto(entity);
+        return ToDto(entity, null);
     }
 
     public async Task<HouseholdConsumableDto> UpdateAsync(int userId, int id, SaveHouseholdConsumableRequest request, CancellationToken ct = default)
@@ -65,7 +67,8 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         var entity = await LoadAsync(ctx.Household.Id, id, tracking: true, ct);
         ApplyFields(entity, request);
         await _db.SaveChangesAsync(ct);
-        return ToDto(entity);
+        var links = await LoadLinksAsync(ctx.Household.Id, [entity.Id], ct);
+        return ToDto(entity, links.GetValueOrDefault(entity.Id));
     }
 
     public async Task DeleteAsync(int userId, int id, CancellationToken ct = default)
@@ -101,7 +104,8 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         entity.LowStockReminderSent = false;
         await ClearConsumableRemindersAsync(entity.Id, ct);
         await _db.SaveChangesAsync(ct);
-        return ToDto(entity);
+        var links = await LoadLinksAsync(ctx.Household.Id, [entity.Id], ct);
+        return ToDto(entity, links.GetValueOrDefault(entity.Id));
     }
 
     private async Task ClearConsumableRemindersAsync(int consumableId, CancellationToken ct)
@@ -146,7 +150,30 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         entity.Note = HouseholdText.Clean(request.Note, HouseholdFieldLimits.Note, "备注");
     }
 
-    private static HouseholdConsumableDto ToDto(HouseholdConsumable entity) => new()
+    private async Task<Dictionary<int, List<HouseholdConsumableLinkDto>>> LoadLinksAsync(
+        int householdId, int[] consumableIds, CancellationToken ct)
+    {
+        if (consumableIds.Length == 0)
+            return [];
+        var rows = await _db.HouseholdItems.AsNoTracking()
+            .Where(i => i.HouseholdId == householdId && i.ConsumableId != null && consumableIds.Contains(i.ConsumableId.Value))
+            .OrderBy(i => i.Name)
+            .ThenBy(i => i.Id)
+            .Select(i => new { i.Id, i.Name, i.IsArchived, ConsumableId = i.ConsumableId!.Value })
+            .ToListAsync(ct);
+        return rows
+            .GroupBy(row => row.ConsumableId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(row => new HouseholdConsumableLinkDto
+                {
+                    Id = row.Id,
+                    Name = row.Name,
+                    IsArchived = row.IsArchived
+                }).ToList());
+    }
+
+    private static HouseholdConsumableDto ToDto(HouseholdConsumable entity, List<HouseholdConsumableLinkDto>? links) => new()
     {
         Id = entity.Id,
         HouseholdId = entity.HouseholdId,
@@ -159,6 +186,7 @@ public sealed class HouseholdConsumableService : IHouseholdConsumableService
         Unit = entity.Unit,
         PurchaseLink = entity.PurchaseLink,
         Note = entity.Note,
+        LinkedItems = links ?? [],
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt
     };

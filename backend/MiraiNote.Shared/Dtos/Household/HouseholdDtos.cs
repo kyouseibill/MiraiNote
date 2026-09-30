@@ -62,13 +62,29 @@ public enum HouseholdRole
     Member = 2
 }
 
-/// <summary>当前用户所在家庭。</summary>
+/// <summary>家庭邀请状态。待处理同一人同一家庭只保留一条。</summary>
+[JsonConverter(typeof(CaseInsensitiveEnumConverter<HouseholdInvitationStatus>))]
+public enum HouseholdInvitationStatus
+{
+    Pending = 1,
+    Accepted = 2,
+    Rejected = 3,
+    Revoked = 4
+}
+
+/// <summary>当前用户所在家庭。没有家庭时 <see cref="HasHousehold"/> 为 false，Id 为 0。</summary>
 public class HouseholdDto
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public int MyMemberId { get; set; }
     public HouseholdRole MyRole { get; set; }
+
+    /// <summary>false 表示还没有家庭。有待处理邀请时不会自动创建。</summary>
+    public bool HasHousehold { get; set; }
+
+    /// <summary>有未过期、未撤回的待处理邀请。和 <see cref="HasHousehold"/> 为 false 一起出现时，先接受或拒绝。</summary>
+    public bool HasPendingInvitations { get; set; }
 }
 
 public class HouseholdMemberDto
@@ -93,6 +109,31 @@ public class AddHouseholdMemberRequest
 public class ChangeHouseholdMemberRoleRequest
 {
     public HouseholdRole Role { get; set; }
+}
+
+public class HouseholdInvitationDto
+{
+    public int Id { get; set; }
+    public int HouseholdId { get; set; }
+    public string HouseholdName { get; set; } = string.Empty;
+    public int InviteeUserId { get; set; }
+    public string InviteeUsername { get; set; } = string.Empty;
+
+    /// <summary>只在本家庭管理员查看待发出的邀请时返回。</summary>
+    public string? InviteeEmail { get; set; }
+
+    public string InviterUsername { get; set; } = string.Empty;
+    public HouseholdRole Role { get; set; }
+    public HouseholdInvitationStatus Status { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public bool IsExpired { get; set; }
+}
+
+public class HouseholdConsumableLinkDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsArchived { get; set; }
 }
 
 public class HouseholdItemListQuery
@@ -323,6 +364,7 @@ public class HouseholdConsumableDto
     public string? Unit { get; set; }
     public string? PurchaseLink { get; set; }
     public string? Note { get; set; }
+    public List<HouseholdConsumableLinkDto> LinkedItems { get; set; } = [];
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

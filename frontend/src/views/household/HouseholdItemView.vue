@@ -10,6 +10,7 @@ import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import { staticUrl } from '@/composables/useStaticUrl'
+import { isPendingInvitationConflict } from '@/utils/apiError'
 import { formatAccountDateTime } from '@/utils/accountTime'
 import {
   categoryLabel,
@@ -75,6 +76,10 @@ async function load() {
       store.consumables.length ? Promise.resolve() : store.fetchConsumables(),
     ])
   } catch (cause) {
+    if (isPendingInvitationConflict(cause)) {
+      await router.replace({ name: 'household' })
+      return
+    }
     error.value = (await report(cause)).message
   } finally {
     loading.value = false

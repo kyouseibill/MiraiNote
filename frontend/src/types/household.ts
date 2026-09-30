@@ -10,6 +10,10 @@ export interface Household {
   name: string
   myMemberId: number
   myRole: HouseholdRole
+  /** false 表示还没有家庭。缺省按已有家庭处理，设计预览不带这个字段。 */
+  hasHousehold?: boolean
+  /** 有待处理的家庭邀请。页面先接受或拒绝，再进入家庭。 */
+  hasPendingInvitations?: boolean
 }
 
 export interface HouseholdMember {
@@ -19,6 +23,28 @@ export interface HouseholdMember {
   /** 只对管理员返回；成员侧为 null，即使后端尚未收口也不要展示。 */
   email: string | null
   role: HouseholdRole
+}
+
+export type HouseholdInvitationStatus = 'Pending' | 'Accepted' | 'Rejected' | 'Revoked'
+
+export interface HouseholdInvitation {
+  id: number
+  householdId: number
+  householdName: string
+  inviteeUserId: number
+  inviteeUsername: string
+  inviteeEmail: string | null
+  inviterUsername: string
+  role: HouseholdRole
+  status: HouseholdInvitationStatus
+  expiresAt: string
+  isExpired: boolean
+}
+
+export interface HouseholdConsumableLink {
+  id: number
+  name: string
+  isArchived: boolean
 }
 
 export interface HouseholdItem {
@@ -206,6 +232,7 @@ export interface HouseholdConsumable {
   unit: string | null
   purchaseLink: string | null
   note: string | null
+  linkedItems?: HouseholdConsumableLink[]
   createdAt: string
   updatedAt: string
 }
