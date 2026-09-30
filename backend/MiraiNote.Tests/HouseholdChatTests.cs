@@ -200,6 +200,51 @@ public class HouseholdChatTests
     }
 
     [Fact]
+    public async Task Interpret_ExactRetiredNameBeatsSharedFragments_AndExactActiveNameWins()
+    {
+        await using var archivedFirst = await ChatLab.CreateAsync(Morning);
+        var retiredNet = await archivedFirst.CreateAsync("卧室空调滤网");
+        await archivedFirst.CreateAsync("卧室空调清洗");
+        var archivedRow = await archivedFirst.Db.HouseholdItems.SingleAsync(i => i.Id == retiredNet.Id);
+        archivedRow.IsArchived = true;
+        await archivedFirst.Db.SaveChangesAsync();
+
+        var hidden = await archivedFirst.Chat.InterpretAsync(archivedFirst.OwnerId, "今天换了卧室 空调滤网");
+        Assert.Equal("rejected", hidden.Kind);
+        Assert.Equal(HouseholdChatService.RetiredMessage, hidden.Message);
+        Assert.Null(hidden.DraftId);
+        Assert.Empty(hidden.Candidates);
+
+        var deletedNet = await archivedFirst.CreateAsync("卧室空调滤网");
+        await archivedFirst.Items.DeleteAsync(archivedFirst.OwnerId, deletedNet.Id);
+        var deleted = await archivedFirst.Chat.InterpretAsync(archivedFirst.OwnerId, "今天换了卧室空调滤网");
+        Assert.Equal("rejected", deleted.Kind);
+        Assert.Equal(HouseholdChatService.RetiredMessage, deleted.Message);
+        Assert.Null(deleted.DraftId);
+
+        await using var activeFirst = await ChatLab.CreateAsync(Morning);
+        var live = await activeFirst.CreateAsync("卧室空调滤网");
+        var oldClean = await activeFirst.CreateAsync("卧室空调清洗");
+        var oldRow = await activeFirst.Db.HouseholdItems.SingleAsync(i => i.Id == oldClean.Id);
+        oldRow.IsArchived = true;
+        await activeFirst.Db.SaveChangesAsync();
+
+        var shown = await activeFirst.Chat.InterpretAsync(activeFirst.OwnerId, "今天换了卧室空调滤网");
+        Assert.Equal("confirm", shown.Kind);
+        Assert.Equal(live.Id, shown.Item!.Id);
+        Assert.DoesNotContain(shown.Candidates, item => item.Id == oldClean.Id);
+
+        var twin = await activeFirst.CreateAsync("卧室空调滤网");
+        var twinRow = await activeFirst.Db.HouseholdItems.SingleAsync(i => i.Id == twin.Id);
+        twinRow.IsArchived = true;
+        await activeFirst.Db.SaveChangesAsync();
+        var stillLive = await activeFirst.Chat.InterpretAsync(activeFirst.OwnerId, "今天换了卧室空调滤网");
+        Assert.Equal("confirm", stillLive.Kind);
+        Assert.Equal(live.Id, stillLive.Item!.Id);
+        Assert.DoesNotContain(stillLive.Candidates, item => item.Id == twin.Id);
+    }
+
+    [Fact]
     public async Task Confirm_WritesOnce_AndRejectsFutureExpiredForeignAndRepeat()
     {
         await using var lab = await ChatLab.CreateAsync(Morning);

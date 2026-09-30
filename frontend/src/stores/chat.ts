@@ -175,14 +175,17 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const rows = await householdApi.listChatDrafts(sessionId)
       if (requestVersion !== selectionVersion) return
+      if (currentSession.value?.id !== sessionId || isTemporary.value) return
       sessionHouseholdDrafts.value = rows
         .map((row) => parseHouseholdChatDraft(row))
         .filter((draft): draft is HouseholdChatDraft => {
           if (!draft) return false
           return draft.kind === 'confirm' || draft.kind === 'choose' || draft.kind === 'create'
         })
+        .map((draft) => ({ ...draft, sessionId }))
     } catch {
-      if (requestVersion === selectionVersion) sessionHouseholdDrafts.value = []
+      if (requestVersion === selectionVersion && currentSession.value?.id === sessionId)
+        sessionHouseholdDrafts.value = []
     }
   }
 
@@ -239,6 +242,7 @@ export const useChatStore = defineStore('chat', () => {
     const detachedAttachments = startedWithoutSession ? [...pendingAttachments.value] : []
     savePendingAttachments()
     const requestVersion = ++selectionVersion
+    sessionHouseholdDrafts.value = []
     loading.value = false
     isTemporary.value = false
     const session = await chatApi.createSession({ title, projectId: selectedProjectId.value, modelKey })

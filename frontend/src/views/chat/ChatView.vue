@@ -28,6 +28,7 @@ import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
 import HouseholdChatConfirmCard from '@/components/household/HouseholdChatConfirmCard.vue'
+import { visibleRestoredDrafts } from '@/utils/householdChat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -310,10 +311,8 @@ const restoredHouseholdDrafts = computed(() => {
       if (typeof id === 'number') live.add(id)
     }
   }
-  return store.sessionHouseholdDrafts.filter((draft) => {
-    if (draft.kind !== 'confirm' && draft.kind !== 'choose' && draft.kind !== 'create') return false
-    return draft.draftId == null || !live.has(draft.draftId)
-  })
+  if (store.isTemporary) return []
+  return visibleRestoredDrafts(store.sessionHouseholdDrafts, store.currentSession?.id, live)
 })
 const starters = [
   {

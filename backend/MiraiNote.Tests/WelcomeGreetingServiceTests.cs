@@ -1,9 +1,12 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared.Common;
 using Xunit;
 
 namespace MiraiNote.Tests;
@@ -228,6 +231,24 @@ public class WelcomeGreetingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetGreeting_IgnoresClientDate_SoOneShanghaiDayCallsTheModelOnce()
+    {
+        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ =>
+            Task.FromResult("今天，把重要的一件事做好。"));
+        var service = CreateService("test-key", factory);
+        var controller = new WelcomeController(service, new FixedUser(3));
+
+        var first = await controller.GetGreeting("2001-01-01", null, CancellationToken.None);
+        var second = await controller.GetGreeting("2099-06-06", null, CancellationToken.None);
+
+        Assert.Single(captured);
+        var body1 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(first.Result).Value);
+        var body2 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(second.Result).Value);
+        Assert.Equal("今天，把重要的一件事做好。", body1.Data!.Content);
+        Assert.Equal(body1.Data.Content, body2.Data!.Content);
+    }
+
+    [Fact]
     public async Task GetGreeting_Failure_UsesThePoolAndDoesNotRetryThatDay()
     {
         var calls = 0;
@@ -245,6 +266,12 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.Equal(1, calls);
         Assert.Equal(first, second);
         Assert.Contains(first, WelcomeGreetingService.GreetingPool);
+    }
+
+    private sealed class FixedUser(int userId) : ICurrentUserService
+    {
+        public int UserId => userId;
+        public bool IsAuthenticated => true;
     }
 
     public void Dispose()

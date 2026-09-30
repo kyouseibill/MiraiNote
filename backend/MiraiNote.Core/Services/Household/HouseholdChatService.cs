@@ -66,21 +66,35 @@ public sealed class HouseholdChatService : IHouseholdChatService
             return Explain("rejected", "完成日期不能晚于今天");
 
         var items = await LoadItemsAsync(access.Household.Id, includeArchived: false, ct);
-        var matched = BestMatches(items, text);
-        if (matched.Count == 0)
+        var activeExact = items
+            .Where(item => HouseholdChatPhrase.IsExactName(parsed.NameHint, item.Name, item.Aliases))
+            .ToList();
+        List<MatchableItem> matched;
+        if (activeExact.Count > 0)
+        {
+            matched = activeExact;
+        }
+        else
         {
             var retired = await LoadRetiredAsync(access.Household.Id, ct);
-            if (BestMatches(retired, text).Count > 0)
+            if (retired.Any(item => HouseholdChatPhrase.IsExactName(parsed.NameHint, item.Name, item.Aliases)))
                 return Explain("rejected", RetiredMessage);
 
-            return new HouseholdChatInterpretationDto
+            matched = BestMatches(items, text);
+            if (matched.Count == 0)
             {
-                Kind = "create",
-                Message = "没有匹配到事项。可以新建一个，名称已经预填。",
-                SuggestedName = parsed.NameHint,
-                CompletedOn = parsed.CompletedOn,
-                Cost = parsed.Cost
-            };
+                if (BestMatches(retired, text).Count > 0)
+                    return Explain("rejected", RetiredMessage);
+
+                return new HouseholdChatInterpretationDto
+                {
+                    Kind = "create",
+                    Message = "没有匹配到事项。可以新建一个，名称已经预填。",
+                    SuggestedName = parsed.NameHint,
+                    CompletedOn = parsed.CompletedOn,
+                    Cost = parsed.Cost
+                };
+            }
         }
 
         var capped = matched.Take(MaxCandidates).ToList();

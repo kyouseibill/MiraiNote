@@ -81,6 +81,27 @@ internal static partial class HouseholdChatPhrase
         Score(utterance, name, location, aliases) >= 2;
 
     /// <summary>
+    /// 去掉空白并忽略大小写后，这句话抽出的名称与事项名或别名完全相同。
+    /// </summary>
+    public static bool IsExactName(string? nameHint, string? name, IEnumerable<string>? aliases)
+    {
+        var key = Compact(nameHint);
+        if (key.Length < 2)
+            return false;
+        if (Compact(name) == key)
+            return true;
+        if (aliases == null)
+            return false;
+        foreach (var alias in aliases)
+        {
+            if (Compact(alias) == key)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 名称或别名整段出现在这句话里才算。泛词和两个字的局部重叠记 0。
     /// </summary>
     public static int Score(string utterance, string? name, string? location, IEnumerable<string>? aliases)

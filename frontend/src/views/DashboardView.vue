@@ -12,7 +12,6 @@ import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi } from '@/api/welcome'
-import { useAuthStore } from '@/stores/auth'
 import HouseholdUpcomingCard from '@/components/household/HouseholdUpcomingCard.vue'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
@@ -20,14 +19,12 @@ import type { WorkLog } from '@/types/workLog'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
-const auth = useAuthStore()
 
 const loading = ref(true)
 /** 初始必须为空：禁止把默认句「今天，安静地推进」当首屏 UI */
 const greeting = ref('')
 /** 欢迎语所在区域始终占据固定高度，避免异步返回和逐字显示推动下面内容。 */
 const greetingRevealing = ref(false)
-const LAST_GREETING_KEY_PREFIX = 'mirainote:welcome:lastGreeting:'
 let welcomeAbort: AbortController | null = null
 const quickCapture = ref('')
 const capturing = ref(false)
@@ -128,32 +125,6 @@ function focusTime(item: Memo): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前`
 }
 
-function lastGreetingStorageKey(): string | null {
-  const id = auth.user?.id
-  return id != null ? `${LAST_GREETING_KEY_PREFIX}${id}` : null
-}
-
-function readLastGreeting(): string | undefined {
-  const key = lastGreetingStorageKey()
-  if (!key) return undefined
-  try {
-    const value = localStorage.getItem(key)
-    return value || undefined
-  } catch {
-    return undefined
-  }
-}
-
-function saveLastGreeting(content: string) {
-  const key = lastGreetingStorageKey()
-  if (!key || !content) return
-  try {
-    localStorage.setItem(key, content)
-  } catch {
-    // ignore quota / private mode
-  }
-}
-
 function cancelWelcomeTypewriter() {
   welcomeAbort?.abort()
   welcomeAbort = null
@@ -199,7 +170,6 @@ async function applyWelcomeContent(content: string | null | undefined, signal: A
     return
   }
   await typewriterReveal(text, signal)
-  if (!signal.aborted) saveLastGreeting(text)
 }
 
 async function load() {
@@ -221,12 +191,11 @@ async function load() {
   }
 
   try {
-    const exclude = readLastGreeting()
     const [wm, lm, wl, welcome] = await Promise.all([
       memoApi.list({ section: 'work', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       memoApi.list({ section: 'life', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       workLogApi.list({ page: 1, pageSize: 5, dateFrom: weekStart(), dateTo: todayStr }),
-      welcomeApi.getGreeting({ exclude }).catch(() => null),
+      welcomeApi.getGreeting().catch(() => null),
     ])
     if (signal.aborted) return
     workMemos.value = wm.items

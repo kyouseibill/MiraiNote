@@ -21,6 +21,8 @@ export interface HouseholdChatDraft {
   candidates: HouseholdChatCandidate[]
   suggestedName: string | null
   confirmed?: boolean
+  /** 这份草稿属于哪次对话。只在对应会话里恢复卡片。 */
+  sessionId?: number
 }
 
 const KINDS = new Set(['confirm', 'choose', 'create', 'query', 'unrecognized', 'rejected'])
@@ -77,6 +79,20 @@ export function parseHouseholdChatDraft(result: unknown): HouseholdChatDraft | n
     suggestedName: text(row.suggestedName),
     confirmed: row.confirmed === true,
   }
+}
+
+/** 只渲染属于当前会话、且没有被本页工具卡占用的草稿。 */
+export function visibleRestoredDrafts(
+  drafts: HouseholdChatDraft[],
+  sessionId: number | null | undefined,
+  liveDraftIds: ReadonlySet<number>,
+): HouseholdChatDraft[] {
+  if (sessionId == null || sessionId <= 0) return []
+  return drafts.filter((draft) => {
+    if (draft.sessionId !== sessionId) return false
+    if (draft.kind !== 'confirm' && draft.kind !== 'choose' && draft.kind !== 'create') return false
+    return draft.draftId == null || !liveDraftIds.has(draft.draftId)
+  })
 }
 
 export function householdCreateHref(name: string | null | undefined): string {
