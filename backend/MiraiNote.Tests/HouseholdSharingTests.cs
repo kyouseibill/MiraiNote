@@ -17,6 +17,27 @@ public class HouseholdSharingTests
     private static readonly DateTimeOffset Morning = new(2026, 10, 8, 1, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Invite_IgnoresRequestedRole_AndAcceptStampsNotifyFrom()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var invitee = await lab.AddUserAsync("newcomer");
+        var created = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest
+        {
+            UserIdentifier = "newcomer",
+            Role = HouseholdRole.Admin
+        });
+        Assert.Equal(HouseholdRole.Member, created.Role);
+
+        var joined = await lab.Invitations.AcceptAsync(invitee, created.Id, "join-as-member");
+        Assert.Equal(HouseholdRole.Member, joined.Role);
+        var row = await lab.Db.HouseholdMembers.SingleAsync(m => m.Id == joined.Id);
+        Assert.Equal(DateTime.SpecifyKind(Morning.UtcDateTime, DateTimeKind.Utc), row.NotifyFromUtc);
+
+        var owner = await lab.Db.HouseholdMembers.SingleAsync(m => m.UserId == lab.OwnerId);
+        Assert.Equal(owner.CreatedAt, owner.NotifyFromUtc);
+    }
+
+    [Fact]
     public async Task InvitationFailures_UseTheSameResponse_AndRepeatRefreshesExpiry()
     {
         await using var lab = await SharingLab.CreateAsync(Morning);

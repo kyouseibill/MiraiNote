@@ -34,6 +34,21 @@ public class HouseholdChatTests
     }
 
     [Fact]
+    public void RecordName_StripsLeadingTimeAspectAdverbs_ButKeepsThemInsideTheName()
+    {
+        var today = new DateOnly(2026, 10, 8);
+        Assert.Equal("净水器滤芯", HouseholdChatPhrase.Parse("刚换了净水器滤芯", today).NameHint);
+        Assert.Equal("滤网", HouseholdChatPhrase.Parse("刚刚换了滤网", today).NameHint);
+        Assert.Equal("PP棉", HouseholdChatPhrase.Parse("已经换了PP棉", today).NameHint);
+        Assert.Equal("滤网", HouseholdChatPhrase.Parse("昨天又换了滤网", today).NameHint);
+
+        var spent = HouseholdChatPhrase.Parse("刚换了净水器滤芯，花了128元", today);
+        Assert.Equal("净水器滤芯", spent.NameHint);
+        Assert.Equal(128m, spent.Cost);
+        Assert.Equal("净水器刚滤芯", HouseholdChatPhrase.Parse("换了净水器刚滤芯", today).NameHint);
+    }
+
+    [Fact]
     public void MonthDay_UsesThisYear_UntilItWouldBeAfterToday()
     {
         var newYear = new DateOnly(2026, 1, 3);
@@ -127,7 +142,61 @@ public class HouseholdChatTests
         var tool = new ServerHouseholdChatTool(lab.Chat);
         var json = await tool.ExecuteAsync(lab.OwnerId, """{"utterance":"今天换了护照"}""", CancellationToken.None);
         Assert.Contains("\"kind\":\"confirm\"", json);
+        Assert.Contains("\"draftId\":", json);
+        var modelJson = ServerHouseholdChatTool.ForModel(json);
+        Assert.DoesNotContain("draftId", modelJson);
+        Assert.DoesNotContain("expiresAt", modelJson);
+        Assert.Contains("\"confirmBy\":\"2026-10-08 09:10\"", modelJson);
         Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task Interpret_GenericOverlapIsNotAMatch_CapsCandidates_AndRejectsRetiredNames()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        await lab.CreateAsync("净水器PP棉", location: "厨房");
+        await lab.CreateAsync("空调滤网");
+
+        var fish = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房鱼缸过滤棉");
+        Assert.Equal("create", fish.Kind);
+        Assert.Equal("厨房鱼缸过滤棉", fish.SuggestedName);
+        Assert.Null(fish.DraftId);
+        Assert.Empty(fish.Candidates);
+
+        var cloth = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房抹布");
+        Assert.Equal("create", cloth.Kind);
+        Assert.Equal("厨房抹布", cloth.SuggestedName);
+        Assert.Null(cloth.DraftId);
+        Assert.DoesNotContain(cloth.Candidates, item => item.Name is "净水器PP棉" or "空调滤网");
+
+        var tank = await lab.CreateAsync("鱼缸过滤棉");
+        var genuine = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了鱼缸过滤棉");
+        Assert.Equal("confirm", genuine.Kind);
+        Assert.Equal(tank.Id, genuine.Item!.Id);
+        Assert.Single(genuine.Candidates);
+
+        var names = new List<string>();
+        for (var i = 1; i <= 6; i++)
+        {
+            var item = await lab.CreateAsync($"季度巡检{i}");
+            names.Add(item.Name);
+        }
+        var capped = await lab.Chat.InterpretAsync(lab.OwnerId, "今天做了季度巡检");
+        Assert.Equal("choose", capped.Kind);
+        Assert.Equal(HouseholdChatService.MaxCandidates, capped.Candidates.Count);
+        Assert.Null(capped.Item);
+        Assert.False(capped.DeductConsumable);
+        Assert.Equal(names.Take(HouseholdChatService.MaxCandidates), capped.Candidates.Select(item => item.Name));
+
+        var row = await lab.Db.HouseholdItems.SingleAsync(i => i.Id == tank.Id);
+        row.IsArchived = true;
+        await lab.Db.SaveChangesAsync();
+        var retired = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了鱼缸过滤棉");
+        Assert.Equal("rejected", retired.Kind);
+        Assert.Equal(HouseholdChatService.RetiredMessage, retired.Message);
+        Assert.Null(retired.DraftId);
+        Assert.Null(retired.Item);
+        Assert.DoesNotContain(retired.Candidates, item => item.Name == "净水器PP棉");
     }
 
     [Fact]
@@ -237,7 +306,9 @@ public class HouseholdChatTests
         Assert.Equal(HouseholdItemService.ArchivedReadOnlyMessage, denied.Message);
         Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == archived.Id));
         var hidden = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
-        Assert.Equal("create", hidden.Kind);
+        Assert.Equal("rejected", hidden.Kind);
+        Assert.Equal(HouseholdChatService.RetiredMessage, hidden.Message);
+        Assert.Null(hidden.DraftId);
 
         var deleted = await lab.CreateAsync("要删的纱窗");
         var deletedDraft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了要删的纱窗");
@@ -342,7 +413,9 @@ public class HouseholdChatTests
         Assert.True(await lab.Db.HouseholdItems.IgnoreQueryFilters().AnyAsync(i => i.Id == deleted.Id && i.IsDeleted));
 
         var named = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
-        Assert.Equal("create", named.Kind);
+        Assert.Equal("rejected", named.Kind);
+        Assert.Equal(HouseholdChatService.RetiredMessage, named.Message);
+        Assert.Null(named.DraftId);
         Assert.DoesNotContain(named.Candidates, candidate => candidate.Id == deleted.Id);
 
         var shared = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了纱窗");
@@ -447,6 +520,68 @@ public class HouseholdChatTests
         Assert.DoesNotContain(draft.DraftId, await lab.Db.HouseholdChatDrafts.Select(d => (int?)d.Id).ToListAsync());
     }
 
+    [Fact]
+    public async Task ListForSession_RestoresOwnDrafts_IncludingPurged_AndDoesNotLeak()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var session = new ChatSession { UserId = lab.OwnerId, Title = "家务" };
+        lab.Db.ChatSessions.Add(session);
+        await lab.Db.SaveChangesAsync();
+
+        HouseholdChatInterpretationDto draft;
+        using (HouseholdChatAmbient.Push(session.Id))
+        {
+            var item = await lab.CreateAsync("护照");
+            draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了护照");
+            Assert.Equal(session.Id, await lab.Db.HouseholdChatDrafts.Where(d => d.Id == draft.DraftId).Select(d => d.ChatSessionId).SingleAsync());
+
+            var listed = await lab.Chat.ListForSessionAsync(lab.OwnerId, session.Id);
+            var card = Assert.Single(listed);
+            Assert.Equal(draft.DraftId, card.DraftId);
+            Assert.False(card.Confirmed);
+            Assert.Equal("护照", card.Item!.Name);
+
+            await lab.Chat.ConfirmAsync(lab.OwnerId, Confirm(draft, item.Id), "listed-once");
+        }
+
+        var confirmed = Assert.Single(await lab.Chat.ListForSessionAsync(lab.OwnerId, session.Id));
+        Assert.True(confirmed.Confirmed);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.Add(HouseholdChatService.DraftLifetime).AddSeconds(1);
+        await lab.Chat.PurgeExpiredDraftsAsync();
+        Assert.True(await lab.Db.HouseholdChatDrafts.IgnoreQueryFilters().AnyAsync(d => d.Id == draft.DraftId && d.IsDeleted));
+        var afterPurge = Assert.Single(await lab.Chat.ListForSessionAsync(lab.OwnerId, session.Id));
+        Assert.True(afterPurge.Confirmed);
+        Assert.Equal(draft.DraftId, afterPurge.DraftId);
+
+        lab.Db.HouseholdChatDrafts.Add(new HouseholdChatDraft
+        {
+            UserId = lab.OwnerId,
+            HouseholdId = session.Id + 9000,
+            ChatSessionId = session.Id,
+            CompletedOn = new DateOnly(2026, 10, 8),
+            CandidateItemIds = "[]",
+            ExpiresAt = DateTime.SpecifyKind(Morning.AddMinutes(10).UtcDateTime, DateTimeKind.Utc)
+        });
+        await lab.Db.SaveChangesAsync();
+        Assert.Single(await lab.Chat.ListForSessionAsync(lab.OwnerId, session.Id));
+
+        var other = await lab.AddUserAsync("outsider");
+        var denied = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ListForSessionAsync(other, session.Id));
+        Assert.Equal(404, denied.StatusCode);
+        Assert.Equal("对话不存在", denied.Message);
+
+        var otherSession = new ChatSession { UserId = other, Title = "空" };
+        lab.Db.ChatSessions.Add(otherSession);
+        await lab.Db.SaveChangesAsync();
+        var households = await lab.Db.Households.CountAsync();
+        Assert.Empty(await lab.Chat.ListForSessionAsync(other, otherSession.Id));
+        Assert.Equal(households, await lab.Db.Households.CountAsync());
+
+        var missing = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ListForSessionAsync(lab.OwnerId, 99999));
+        Assert.Equal(404, missing.StatusCode);
+    }
+
     private static async Task<Exception?> ConfirmQuietly(
         HouseholdChatService chat, int userId, ConfirmHouseholdChatRequest request, string key)
     {
@@ -516,7 +651,8 @@ public class HouseholdChatTests
             int? userId = null,
             DateOnly? lastDone = null,
             int? consumableId = null,
-            IEnumerable<string>? aliases = null) =>
+            IEnumerable<string>? aliases = null,
+            string? location = null) =>
             Items.CreateAsync(userId ?? OwnerId, new CreateHouseholdItemRequest
             {
                 Name = name,
@@ -525,7 +661,8 @@ public class HouseholdChatTests
                 CycleUnit = HouseholdCycleUnit.Month,
                 LastDoneDate = lastDone ?? new DateOnly(2026, 9, 8),
                 ConsumableId = consumableId,
-                Aliases = aliases?.ToList()
+                Aliases = aliases?.ToList(),
+                Location = location
             });
 
         public HouseholdChatService OpenChat()

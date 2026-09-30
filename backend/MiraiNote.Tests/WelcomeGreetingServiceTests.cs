@@ -11,15 +11,18 @@ namespace MiraiNote.Tests;
 public class WelcomeGreetingServiceTests : IDisposable
 {
     private readonly MiraiTestFixture _fx = new();
-    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
+    private readonly List<IMemoryCache> _caches = [];
 
     private WelcomeGreetingService CreateService(
         string? apiKey,
         IHttpClientFactory factory,
-        MiraiNoteDbContext? db = null) =>
-        new(
+        MiraiNoteDbContext? db = null)
+    {
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        _caches.Add(cache);
+        return new(
             db ?? _fx.CreateContext(),
-            _cache,
+            cache,
             Options.Create(new DeepSeekOptions
             {
                 ApiKey = apiKey ?? "",
@@ -28,6 +31,7 @@ public class WelcomeGreetingServiceTests : IDisposable
             }),
             factory,
             NullLogger<WelcomeGreetingService>.Instance);
+    }
 
     [Fact]
     public async Task GetGreeting_ReturnsOriginalGreetingFromAiResponse()
@@ -192,9 +196,61 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
     }
 
+    [Fact]
+    public async Task GetGreeting_SameDate_CallsTheModelOnceAcrossUsers()
+    {
+        var (factory, captured) = MiraiTestFixture.MockDeepSeek(async _ =>
+        {
+            await Task.Delay(40);
+            return "今天，把重要的一件事做好。";
+        });
+        var service = CreateService("test-key", factory);
+        var day = new DateOnly(2026, 9, 3);
+
+        var results = await Task.WhenAll(Enumerable.Range(1, 8).Select(id => service.GetGreetingAsync(id, day)));
+
+        Assert.Single(captured);
+        Assert.All(results, greeting => Assert.Equal("今天，把重要的一件事做好。", greeting));
+    }
+
+    [Fact]
+    public async Task GetGreeting_Exclude_DoesNotCallTheModel()
+    {
+        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("模型不该被叫到"));
+        var service = CreateService("test-key", factory);
+        var exclude = WelcomeGreetingService.GreetingPool[0];
+
+        var greeting = await service.GetGreetingAsync(7, new DateOnly(2026, 9, 3), exclude);
+
+        Assert.Empty(captured);
+        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
+        Assert.NotEqual(exclude, greeting);
+    }
+
+    [Fact]
+    public async Task GetGreeting_Failure_UsesThePoolAndDoesNotRetryThatDay()
+    {
+        var calls = 0;
+        var factory = MiraiTestFixture.MockDeepSeekFactory(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            return MiraiTestFixture.DeepSeekError();
+        });
+        var service = CreateService("test-key", factory);
+        var day = new DateOnly(2026, 9, 3);
+
+        var first = await service.GetGreetingAsync(1, day);
+        var second = await service.GetGreetingAsync(2, day);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(first, second);
+        Assert.Contains(first, WelcomeGreetingService.GreetingPool);
+    }
+
     public void Dispose()
     {
-        _cache.Dispose();
+        foreach (var cache in _caches)
+            cache.Dispose();
         _fx.Dispose();
     }
 }

@@ -102,7 +102,7 @@ public class AddHouseholdMemberRequest
     /// <summary>已有账号的用户名或邮箱。</summary>
     public string UserIdentifier { get; set; } = string.Empty;
 
-    /// <summary>缺省为成员。</summary>
+    /// <summary>服务端忽略此字段，邀请一律以成员身份加入。</summary>
     public HouseholdRole? Role { get; set; }
 }
 
@@ -534,6 +534,10 @@ public class HouseholdChatInterpretationDto
     public HouseholdChatCandidateDto? Item { get; set; }
     public List<HouseholdChatCandidateDto> Candidates { get; set; } = [];
     public string? SuggestedName { get; set; }
+
+    /// <summary>这条草稿已经确认写入。刷新后仍展示，但不再给确认按钮。</summary>
+    public bool Confirmed { get; set; }
+
     public List<HouseholdChatHistoryLineDto> History { get; set; } = [];
     public List<HouseholdChatUpcomingLineDto> Upcoming { get; set; } = [];
 }

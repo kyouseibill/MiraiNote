@@ -193,6 +193,7 @@ internal static class HouseholdModelConfiguration
         entity.Property(d => d.Cost).HasPrecision(18, 2);
         entity.Property(d => d.StoredCost).HasPrecision(18, 2);
         entity.HasIndex(d => new { d.UserId, d.ExpiresAt });
+        entity.HasIndex(d => new { d.UserId, d.HouseholdId, d.ChatSessionId });
     }
 
     private static void ConfigureInvitation(ModelBuilder modelBuilder)

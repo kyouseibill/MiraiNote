@@ -12,17 +12,21 @@ const props = defineProps<{
   draft: HouseholdChatDraft
 }>()
 
-const selectedId = ref<number | null>(props.draft.item?.id ?? props.draft.candidates[0]?.id ?? null)
-const deduct = ref(props.draft.deductConsumable)
+const multiple = props.draft.candidates.length > 1
+const selectedId = ref<number | null>(multiple ? null : (props.draft.item?.id ?? props.draft.candidates[0]?.id ?? null))
+const deductTouched = ref(false)
+const deduct = ref(multiple ? false : props.draft.deductConsumable)
 const submitting = ref(false)
 const done = ref(false)
 const error = ref('')
 const idempotencyKey = createIdempotencyKey()
 
 const selected = computed(() =>
-  props.draft.candidates.find((item) => item.id === selectedId.value) ?? props.draft.item)
+  props.draft.candidates.find((item) => item.id === selectedId.value) ?? (multiple ? null : props.draft.item))
 const showDeduct = computed(() => selected.value?.consumableId != null)
+const confirmed = computed(() => done.value || props.draft.confirmed === true)
 const expired = computed(() => {
+  if (confirmed.value) return false
   if (!props.draft.expiresAt) return false
   const at = Date.parse(props.draft.expiresAt)
   return Number.isFinite(at) && at <= Date.now()
@@ -33,12 +37,20 @@ const costLabel = computed(() => formatCost(props.draft.cost))
 const createHref = computed(() => householdCreateHref(props.draft.suggestedName))
 
 function choose(id: number) {
-  if (done.value || submitting.value) return
+  if (confirmed.value || submitting.value) return
   selectedId.value = id
+  if (!deductTouched.value) {
+    const item = props.draft.candidates.find((candidate) => candidate.id === id)
+    deduct.value = item?.consumableId != null
+  }
+}
+
+function markDeductTouched() {
+  deductTouched.value = true
 }
 
 async function confirm() {
-  if (submitting.value || done.value || expired.value) return
+  if (submitting.value || confirmed.value || expired.value) return
   if (props.draft.draftId == null || selectedId.value == null) return
   submitting.value = true
   error.value = ''
@@ -81,11 +93,16 @@ async function confirm() {
           class="household-chat-card-choice"
           :data-candidate-id="item.id"
           :aria-selected="selectedId === item.id"
-          :disabled="done || submitting"
+          :disabled="confirmed || submitting"
           @click="choose(item.id)"
         >
           {{ item.name }}<span v-if="item.location"> · {{ item.location }}</span>
         </button>
+        <RouterLink
+          class="household-chat-card-choice"
+          data-testid="household-chat-neither"
+          :to="createHref"
+        >都不是，新建事项</RouterLink>
       </div>
 
       <dl v-if="selected" class="household-chat-card-facts">
@@ -103,23 +120,30 @@ async function confirm() {
         </div>
       </dl>
 
-      <p v-if="expiryLabel" class="household-chat-card-expiry" data-testid="household-chat-expiry">
-        {{ expired ? '确认已过期，请重新说一次' : `请在 ${expiryLabel} 前确认` }}
+      <p v-if="expired" class="household-chat-card-expiry" data-testid="household-chat-expiry">已过期，请重新说一遍</p>
+      <p v-else-if="!confirmed && expiryLabel" class="household-chat-card-expiry" data-testid="household-chat-expiry">
+        请在 {{ expiryLabel }} 前确认
       </p>
 
-      <label v-if="showDeduct" class="household-chat-card-deduct">
-        <input v-model="deduct" type="checkbox" data-testid="household-chat-deduct" :disabled="done || submitting || expired" />
+      <label v-if="showDeduct && !confirmed" class="household-chat-card-deduct">
+        <input
+          v-model="deduct"
+          type="checkbox"
+          data-testid="household-chat-deduct"
+          :disabled="submitting || expired"
+          @change="markDeductTouched"
+        />
         扣减耗材<span v-if="selected?.consumableName">（{{ selected.consumableName }}）</span>
       </label>
 
       <p v-if="error" class="household-chat-card-error" role="alert">{{ error }}</p>
-      <p v-if="done" class="household-chat-card-done" role="status">已记下</p>
+      <p v-if="confirmed" class="household-chat-card-done" role="status">已记下</p>
       <button
-        v-else
+        v-else-if="!expired"
         type="button"
         class="household-chat-card-submit"
         data-testid="household-chat-confirm"
-        :disabled="submitting || expired || selectedId == null"
+        :disabled="submitting || selectedId == null"
         @click="confirm"
       >{{ submitting ? '正在记下…' : '确认记下' }}</button>
     </template>

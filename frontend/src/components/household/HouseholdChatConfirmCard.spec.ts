@@ -39,8 +39,8 @@ function draft(overrides: Partial<HouseholdChatDraft> = {}): HouseholdChatDraft 
       consumableName: 'PP 棉',
       consumableStock: 3,
     }],
-    suggestedName: null,
-    ...overrides,
+      suggestedName: '厨房抹布',
+      ...overrides,
   }
 }
 
@@ -116,8 +116,14 @@ describe('HouseholdChatConfirmCard', () => {
       ],
     }))
 
+    const confirm = wrapper.get('[data-testid="household-chat-confirm"]')
+    expect(confirm.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[aria-selected="true"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="household-chat-deduct"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="household-chat-neither"]').text()).toContain('都不是，新建事项')
+
     await wrapper.get('[data-candidate-id="8"]').trigger('click')
-    await wrapper.get('[data-testid="household-chat-confirm"]').trigger('click')
+    await confirm.trigger('click')
     await flushPromises()
 
     expect(wrapper.get('[data-testid="household-chat-item"]').text()).toContain('客厅净水器 PP 棉')
@@ -125,17 +131,6 @@ describe('HouseholdChatConfirmCard', () => {
       expect.objectContaining({ itemId: 8, deductConsumable: null }),
       expect.any(String),
     )
-  })
-
-  it('过期后按钮不可用，重复点击也不提交', async () => {
-    vi.mocked(householdApi.confirmChatDraft).mockReset()
-    const wrapper = mountCard(draft({ expiresAt: '2000-01-01T00:00:00Z' }))
-    const button = wrapper.get('[data-testid="household-chat-confirm"]')
-    expect(button.attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="household-chat-expiry"]').text()).toContain('确认已过期')
-    await button.trigger('click')
-    await button.trigger('click')
-    expect(householdApi.confirmChatDraft).not.toHaveBeenCalled()
   })
 
   it('没有匹配时给出预填名称的新建入口', () => {
@@ -151,5 +146,54 @@ describe('HouseholdChatConfirmCard', () => {
     expect(wrapper.get('[data-testid="household-chat-create"]').attributes('href')).toBe(
       '/household?prefill=%E9%98%B3%E5%8F%B0%E7%BA%B1%E7%AA%97',
     )
+  })
+
+  it('过期后只提示重新说一遍，没有确认按钮', async () => {
+    vi.mocked(householdApi.confirmChatDraft).mockReset()
+    const wrapper = mountCard(draft({ expiresAt: '2000-01-01T00:00:00Z' }))
+    expect(wrapper.find('[data-testid="household-chat-confirm"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="household-chat-expiry"]').text()).toBe('已过期，请重新说一遍')
+    expect(householdApi.confirmChatDraft).not.toHaveBeenCalled()
+  })
+
+  it('已确认的草稿不再给确认按钮', () => {
+    const wrapper = mountCard(draft({ confirmed: true, expiresAt: '2000-01-01T00:00:00Z' }))
+    expect(wrapper.find('[data-testid="household-chat-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="household-chat-expiry"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已记下')
+  })
+
+  it('多项里选中有耗材的事项后才勾上扣减', async () => {
+    const wrapper = mountCard(draft({
+      kind: 'choose',
+      item: null,
+      deductConsumable: true,
+      candidates: [
+        {
+          id: 3,
+          name: '厨房净水器 PP 棉',
+          location: '厨房',
+          isPaused: false,
+          nextDueDate: null,
+          consumableId: 9,
+          consumableName: 'PP 棉',
+          consumableStock: 3,
+        },
+        {
+          id: 8,
+          name: '客厅净水器 PP 棉',
+          location: '客厅',
+          isPaused: false,
+          nextDueDate: null,
+          consumableId: null,
+          consumableName: null,
+          consumableStock: null,
+        },
+      ],
+    }))
+
+    expect(wrapper.find('[data-testid="household-chat-deduct"]').exists()).toBe(false)
+    await wrapper.get('[data-candidate-id="3"]').trigger('click')
+    expect((wrapper.get('[data-testid="household-chat-deduct"]').element as HTMLInputElement).checked).toBe(true)
   })
 })

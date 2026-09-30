@@ -20,6 +20,7 @@ export interface HouseholdChatDraft {
   item: HouseholdChatCandidate | null
   candidates: HouseholdChatCandidate[]
   suggestedName: string | null
+  confirmed?: boolean
 }
 
 const KINDS = new Set(['confirm', 'choose', 'create', 'query', 'unrecognized', 'rejected'])
@@ -74,6 +75,7 @@ export function parseHouseholdChatDraft(result: unknown): HouseholdChatDraft | n
     item: parseCandidate(row.item),
     candidates,
     suggestedName: text(row.suggestedName),
+    confirmed: row.confirmed === true,
   }
 }
 

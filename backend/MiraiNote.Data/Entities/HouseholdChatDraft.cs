@@ -16,6 +16,9 @@ public class HouseholdChatDraft : BaseEntity
 
     public int HouseholdId { get; set; }
 
+    /// <summary>产生这条草稿的对话。临时聊天不记。为空的旧草稿无法在刷新后恢复。</summary>
+    public int? ChatSessionId { get; set; }
+
     public DateOnly CompletedOn { get; set; }
 
     [Column(TypeName = "decimal(18,2)")]

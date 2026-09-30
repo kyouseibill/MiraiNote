@@ -14,6 +14,7 @@ import type {
   HouseholdItemTemplate,
   HouseholdInvitation,
   HouseholdMember,
+  HouseholdRole,
   HouseholdServerToday,
   HouseholdNotificationSettings,
   HouseholdUpcoming,
@@ -37,6 +38,9 @@ export const householdApi = {
   listMembers: () => unwrap<HouseholdMember[]>(http.get('/household/members')),
 
   removeMember: (memberId: number) => unwrap<null>(http.delete(`/household/members/${memberId}`)),
+
+  changeMemberRole: (memberId: number, role: HouseholdRole) =>
+    unwrap<HouseholdMember>(http.put(`/household/members/${memberId}/role`, { role })),
 
   leaveHousehold: () => unwrap<null>(http.post('/household/leave')),
 
@@ -91,6 +95,9 @@ export const householdApi = {
       headers: { 'Idempotency-Key': idempotencyKey },
       skipErrorToastStatuses: [400, 404, 409],
     })),
+
+  listChatDrafts: (sessionId: number) =>
+    unwrap<unknown[]>(http.get('/household/chat/drafts', { params: { sessionId } })),
 
   history: (id: number) => unwrap<HouseholdCompletion[]>(http.get(`/household/items/${id}/history`)),
 

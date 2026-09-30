@@ -21,6 +21,7 @@ import type {
   HouseholdInvitation,
   HouseholdMember,
   HouseholdNotificationSettings,
+  HouseholdRole,
   HouseholdUpcoming,
   SaveHouseholdConsumablePayload,
   UpdateHouseholdConsumablePayload,
@@ -258,6 +259,16 @@ export const useHouseholdStore = defineStore('household', () => {
     await householdApi.removeMember(memberId)
     await fetchMembers()
     await fetchItems(lastQuery.value)
+  }
+
+  async function changeMemberRole(memberId: number, role: HouseholdRole) {
+    assertAdmin('只有管理员可以调整角色')
+    if (previewMode.value) {
+      members.value = members.value.map((member) => member.id === memberId ? { ...member, role } : member)
+      return
+    }
+    await householdApi.changeMemberRole(memberId, role)
+    await fetchMembers()
   }
 
   async function leaveHousehold() {
@@ -742,6 +753,7 @@ export const useHouseholdStore = defineStore('household', () => {
     acceptInvitation,
     rejectInvitation,
     removeMember,
+    changeMemberRole,
     leaveHousehold,
     fetchItems,
     fetchTemplates,

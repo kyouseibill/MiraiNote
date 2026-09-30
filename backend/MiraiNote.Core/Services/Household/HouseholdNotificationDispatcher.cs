@@ -76,7 +76,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
     {
         var members = await _db.HouseholdMembers.AsNoTracking()
             .Where(m => m.HouseholdId == householdId)
-            .Select(m => new MemberRow(m.Id, m.UserId))
+            .Select(m => new MemberRow(m.Id, m.UserId, m.NotifyFromUtc))
             .ToListAsync(ct);
         if (members.Count == 0)
             return;
@@ -120,7 +120,9 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
                 var preference = PreferenceOf(settingByMember, member.Id, member.UserId, user.Email);
                 if (minuteOfDay < preference.PushMinuteOfDay)
                     continue;
-                await TrySendItemAsync(item, consumable, member, preference, today, user.Username, ct);
+                var notBefore = HouseholdReminderSchedule.FirstEligibleDay(
+                    member.NotifyFromUtc, preference.PushMinuteOfDay, _shanghai);
+                await TrySendItemAsync(item, consumable, member, preference, today, user.Username, notBefore, ct);
             }
         }
 
@@ -134,12 +136,13 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         NotificationPreference preference,
         DateOnly today,
         string? username,
+        DateOnly notBefore,
         CancellationToken ct)
     {
         var lastSent = await _db.HouseholdReminderLogs.AsNoTracking()
             .Where(r => r.HouseholdItemId == item.Id && r.MemberId == member.Id && r.Status == HouseholdReminderDeliveryStatus.Sent)
             .MaxAsync(r => (DateOnly?)r.ReminderDate, ct);
-        if (!HouseholdReminderSchedule.ShouldNotify(today, item.Due, item.LeadDays, preference.OverdueIntervalDays, lastSent))
+        if (!HouseholdReminderSchedule.ShouldNotify(today, item.Due, item.LeadDays, preference.OverdueIntervalDays, lastSent, notBefore))
             return;
 
         var kind = HouseholdReminderSchedule.LatestKind(today, item.Due, item.LeadDays);
@@ -165,7 +168,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             .Select(i => new { i.NextDueDate, i.LeadDays, i.Name, i.PurchaseLink, i.ConsumableId })
             .FirstOrDefaultAsync(ct);
         if (fresh?.NextDueDate is not DateOnly due
-            || !HouseholdReminderSchedule.ShouldNotify(today, due, fresh.LeadDays, preference.OverdueIntervalDays, lastSent))
+            || !HouseholdReminderSchedule.ShouldNotify(today, due, fresh.LeadDays, preference.OverdueIntervalDays, lastSent, notBefore))
         {
             await FinishItemLogAsync(claim.LogId, HouseholdReminderDeliveryStatus.Skipped, null, ct);
             return;
@@ -509,7 +512,7 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         string PreviousKind,
         int NextAttempts);
 
-    private readonly record struct MemberRow(int Id, int UserId);
+    private readonly record struct MemberRow(int Id, int UserId, DateTime NotifyFromUtc);
 
     private readonly record struct UserRow(string? Username, string? Email);
 

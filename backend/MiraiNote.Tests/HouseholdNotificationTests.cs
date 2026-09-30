@@ -37,6 +37,25 @@ public class HouseholdNotificationTests
     }
 
     [Fact]
+    public void Schedule_JoinBaseline_SkipsEarlierDays_AndSendsTheNextExactDay()
+    {
+        var due = new DateOnly(2026, 10, 8);
+        var joined = new DateOnly(2026, 10, 2);
+        Assert.False(HouseholdReminderSchedule.ShouldNotify(joined, due, 7, 3, null, joined));
+        Assert.True(HouseholdReminderSchedule.ShouldNotify(due, due, 7, 3, null, joined));
+
+        var afterDue = new DateOnly(2026, 10, 9);
+        Assert.False(HouseholdReminderSchedule.ShouldNotify(afterDue, due, 7, 3, null, afterDue));
+        Assert.False(HouseholdReminderSchedule.ShouldNotify(new DateOnly(2026, 10, 10), due, 7, 3, null, afterDue));
+        Assert.True(HouseholdReminderSchedule.ShouldNotify(new DateOnly(2026, 10, 11), due, 7, 3, null, afterDue));
+
+        var zone = ShanghaiClock.Resolve();
+        Assert.Equal(new DateOnly(2026, 10, 2), HouseholdReminderSchedule.FirstEligibleDay(new DateTime(2026, 10, 2, 0, 30, 0, DateTimeKind.Utc), 9 * 60, zone));
+        Assert.Equal(new DateOnly(2026, 10, 2), HouseholdReminderSchedule.FirstEligibleDay(new DateTime(2026, 10, 2, 1, 0, 0, DateTimeKind.Utc), 9 * 60, zone));
+        Assert.Equal(new DateOnly(2026, 10, 3), HouseholdReminderSchedule.FirstEligibleDay(new DateTime(2026, 10, 2, 1, 1, 0, DateTimeKind.Utc), 9 * 60, zone));
+    }
+
+    [Fact]
     public void EmailHtml_EncodesTextAndOnlyUsesNormalizedLinks()
     {
         var html = HouseholdNotificationComposer.BuildEmailHtml(new HouseholdNotificationMessage(
@@ -154,6 +173,120 @@ public class HouseholdNotificationTests
         Assert.Single(lab.Bark.Bodies);
         Assert.DoesNotContain(lab.Logs.Messages, message => message.Contains(BarkAddress, StringComparison.Ordinal));
         Assert.DoesNotContain(lab.Logs.Messages, message => message.Contains(ProtectionKey, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Join_SkipsRemindersThatWereDueBeforeJoin_AndExistingMemberStillCatchesUp()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 2, 9, 0));
+        await lab.CreateDueInSevenDaysAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress));
+        var joinerId = await lab.AddUserAsync("joiner");
+        var joiner = await lab.JoinAtAsync(lab.OwnerId, "joiner", lab.Clock.UtcNow);
+        await lab.Settings.UpdateAsync(joinerId, SettingsWith(bark: BarkAddress));
+
+        await lab.DispatchAsync();
+
+        Assert.Single(lab.Email.Sent);
+        Assert.Equal("tester@example.com", lab.Email.Sent[0].To);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(0, await lab.Db.HouseholdReminderLogs.CountAsync(r => r.MemberId == joiner.Id));
+    }
+
+    [Fact]
+    public async Task Join_SendsWhenTheItemBecomesDueAfterTheBaseline()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 2, 9, 0));
+        var joinerId = await lab.AddUserAsync("joiner");
+        var joiner = await lab.JoinAtAsync(lab.OwnerId, "joiner", lab.Clock.UtcNow);
+        await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
+        {
+            Name = "滤网",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 8),
+            AssigneeMemberId = joiner.Id
+        });
+        await lab.Settings.UpdateAsync(joinerId, SettingsWith(bark: BarkAddress));
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+
+        lab.Clock.UtcNow = Shanghai(2026, 10, 8, 9, 0);
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Contains("今天到期", lab.Bark.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task Join_DoesNotSendAnOverdueReminderImmediately_UntilTheNextInterval()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 5, 9, 0));
+        var joinerId = await lab.AddUserAsync("joiner");
+        var joiner = await lab.JoinAtAsync(lab.OwnerId, "joiner", lab.Clock.UtcNow);
+        await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
+        {
+            Name = "年检",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1),
+            AssigneeMemberId = joiner.Id
+        });
+        await lab.Settings.UpdateAsync(joinerId, SettingsWith(bark: BarkAddress));
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+
+        lab.Clock.UtcNow = Shanghai(2026, 10, 7, 9, 0);
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Contains("已逾期 6 天", lab.Bark.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task Rejoin_UsesTheNewBaseline_AndDoesNotReplayThePreviousMembership()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 2, 9, 0));
+        var userId = await lab.AddUserAsync("rejoiner");
+        var first = await lab.JoinAtAsync(lab.OwnerId, "rejoiner", Shanghai(2026, 9, 1, 9, 0));
+        var item = await lab.Items.CreateAsync(lab.OwnerId, new CreateHouseholdItemRequest
+        {
+            Name = "滤网",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 8),
+            AssigneeMemberId = first.Id
+        });
+        await lab.Settings.UpdateAsync(userId, SettingsWith(bark: BarkAddress));
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+
+        await lab.Household.LeaveAsync(userId);
+        lab.Email.Sent.Clear();
+        var second = await lab.JoinAtAsync(lab.OwnerId, "rejoiner", lab.Clock.UtcNow);
+        Assert.NotEqual(first.Id, second.Id);
+        var stored = await lab.Db.HouseholdItems.SingleAsync(i => i.Id == item.Id);
+        stored.AssigneeMemberId = second.Id;
+        await lab.Db.SaveChangesAsync();
+        await lab.Settings.UpdateAsync(userId, SettingsWith(bark: BarkAddress));
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+
+        lab.Clock.UtcNow = Shanghai(2026, 10, 8, 9, 0);
+        await lab.DispatchAsync();
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Contains("今天到期", lab.Bark.Bodies[0]);
+        Assert.Equal(1, await lab.Db.HouseholdReminderLogs.CountAsync(r =>
+            r.MemberId == second.Id && r.Status == HouseholdReminderDeliveryStatus.Sent));
     }
 
     [Fact]
@@ -1124,7 +1257,14 @@ public class HouseholdNotificationTests
             return user.Id;
         }
 
-        public async Task<HouseholdMemberDto> JoinAsync(int householdUserId, string username, HouseholdRole role = HouseholdRole.Member)
+        public Task<HouseholdMemberDto> JoinAsync(int householdUserId, string username, HouseholdRole role = HouseholdRole.Member) =>
+            JoinAtAsync(householdUserId, username, null, role);
+
+        public async Task<HouseholdMemberDto> JoinAtAsync(
+            int householdUserId,
+            string username,
+            DateTimeOffset? notifyFrom,
+            HouseholdRole role = HouseholdRole.Member)
         {
             var home = await Household.GetMineAsync(householdUserId);
             var user = await Db.Users.SingleAsync(u => u.Username == username);
@@ -1132,7 +1272,10 @@ public class HouseholdNotificationTests
             {
                 HouseholdId = home.Id,
                 UserId = user.Id,
-                Role = role
+                Role = role,
+                NotifyFromUtc = notifyFrom.HasValue
+                    ? DateTime.SpecifyKind(notifyFrom.Value.UtcDateTime, DateTimeKind.Utc)
+                    : default
             };
             Db.HouseholdMembers.Add(member);
             await Db.SaveChangesAsync();

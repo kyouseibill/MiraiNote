@@ -302,6 +302,19 @@ const displayMessages = computed(() => [
       ]
     : []),
 ])
+const restoredHouseholdDrafts = computed(() => {
+  const live = new Set<number>()
+  for (const msg of displayMessages.value) {
+    for (const event of toolEventsForMessage(msg)) {
+      const id = event.householdDraft?.draftId
+      if (typeof id === 'number') live.add(id)
+    }
+  }
+  return store.sessionHouseholdDrafts.filter((draft) => {
+    if (draft.kind !== 'confirm' && draft.kind !== 'choose' && draft.kind !== 'create') return false
+    return draft.draftId == null || !live.has(draft.draftId)
+  })
+})
 const starters = [
   {
     title: '整理工作，写一份周报',
@@ -1736,6 +1749,13 @@ async function reloadConversations() {
                   </template>
                 </div>
               </article>
+              <div v-if="restoredHouseholdDrafts.length" data-testid="household-draft-restore">
+                <HouseholdChatConfirmCard
+                  v-for="draft in restoredHouseholdDrafts"
+                  :key="`restored-${draft.draftId ?? draft.suggestedName}`"
+                  :draft="draft"
+                />
+              </div>
             </template>
           </div>
         </div>

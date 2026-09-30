@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
 using MiraiNote.Core.Services.ChatModels;
+using MiraiNote.Core.Services.Household;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Agent;
@@ -602,6 +603,7 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct = default)
     {
+        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -740,6 +742,7 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
+        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -1075,6 +1078,11 @@ public class ChatService : IChatService
         return result.Length > 500 ? result[..500] + "..." : result;
     }
 
+    private static string ModelToolContent(string toolName, string result) =>
+        string.Equals(toolName, ServerHouseholdChatTool.ToolName, StringComparison.Ordinal)
+            ? ServerHouseholdChatTool.ForModel(result)
+            : result;
+
     private async Task<string> EnsureRequestedExportAsync(
         int userId,
         SendMessageRequest request,
@@ -1391,7 +1399,7 @@ public class ChatService : IChatService
                         result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
-                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = ModelToolContent(tc.FunctionName, result) });
                 }
             }
         }
@@ -1685,7 +1693,7 @@ public class ChatService : IChatService
                     name = toolCall.FunctionName,
                     result = PrepareToolResultForClient(toolCall.FunctionName, result)
                 }));
-                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = result });
+                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = ModelToolContent(toolCall.FunctionName, result) });
             }
         }
     }
@@ -1799,7 +1807,7 @@ public class ChatService : IChatService
                         result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
-                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = ModelToolContent(tc.FunctionName, result) });
                 }
             }
         }
@@ -2026,6 +2034,7 @@ public class ChatService : IChatService
 
     public async Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default)
     {
+        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
             throw new BusinessException("消息内容不能为空", 400);
 
@@ -2173,7 +2182,7 @@ public class ChatService : IChatService
                     var result = await ExecuteToolAsync(userId, funcName, argsJson, request, ct);
                     CollectExportedFileLink(funcName, result, exportedFiles);
                     supervisor.ObserveTool(funcName, argsJson, result);
-                    messages.Add(new { role = "tool", tool_call_id = toolCallId, content = result });
+                    messages.Add(new { role = "tool", tool_call_id = toolCallId, content = ModelToolContent(funcName, result) });
                 }
             }
         }
