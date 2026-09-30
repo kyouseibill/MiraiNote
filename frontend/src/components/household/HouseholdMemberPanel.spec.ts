@@ -183,6 +183,11 @@ describe('HouseholdMemberPanel', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
+    expect(wrapper.text()).toContain('周周 邀请你加入『南边的家』，接受后加入这个家庭。')
+    expect(wrapper.get('[data-testid="accept-invitation"]').text()).toBe('接受')
+    expect(wrapper.get('[data-testid="reject-invitation"]').text()).toBe('拒绝')
+    expect(wrapper.text()).not.toContain('@')
+
     await wrapper.get('[data-testid="accept-invitation"]').trigger('click')
     await wrapper.get('[data-testid="accept-invitation"]').trigger('click')
     await flushPromises()

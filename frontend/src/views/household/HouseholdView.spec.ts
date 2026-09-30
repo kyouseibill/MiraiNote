@@ -171,7 +171,8 @@ describe('HouseholdView', () => {
     const wrapper = await mountView(false)
 
     expect(wrapper.get('[data-testid="invitation-gate"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('你收到了『南边的家』的邀请，接受后加入这个家庭。')
+    expect(wrapper.text()).toContain('周周 邀请你加入『南边的家』，接受后加入这个家庭。')
+    expect(wrapper.text()).not.toContain('@')
     expect(wrapper.get('[data-testid="accept-invitation"]').text()).toBe('接受')
     expect(wrapper.get('[data-testid="reject-invitation"]').text()).toBe('拒绝')
     expect(wrapper.text()).not.toContain(pendingInvitationConflictMessage)

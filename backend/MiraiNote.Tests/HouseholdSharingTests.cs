@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Core.Services.Household;
 using MiraiNote.Data.Context;
@@ -170,6 +171,12 @@ public class HouseholdSharingTests
         var listed = Assert.Single(inbox);
         Assert.Equal(created.Id, listed.Id);
         Assert.Equal(created.HouseholdName, listed.HouseholdName);
+        Assert.Equal("tester", listed.InviterUsername);
+        Assert.Null(listed.InviteeEmail);
+        Assert.Null(typeof(HouseholdInvitationDto).GetProperty("InviterEmail"));
+        var incomingJson = JsonSerializer.Serialize(listed);
+        Assert.DoesNotContain("tester@example.com", incomingJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("opened@example.com", incomingJson, StringComparison.OrdinalIgnoreCase);
         var waiting = await lab.Household.GetMineAsync(invitee);
         Assert.Equal(empty.Id, waiting.Id);
         Assert.True(waiting.HasPendingInvitations);
@@ -394,6 +401,42 @@ public class HouseholdSharingTests
     }
 
     [Fact]
+    public async Task ConcurrentLeave_KeepsExactlyOneAdmin()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var home = await lab.Household.GetMineAsync(lab.OwnerId);
+        var secondId = await lab.AddUserAsync("co-admin");
+        await lab.JoinAsync(lab.OwnerId, "co-admin", HouseholdRole.Admin);
+
+        var first = lab.OpenHousehold();
+        var second = lab.OpenHousehold();
+        var outcomes = await Task.WhenAll(
+            LeaveQuietly(first, lab.OwnerId),
+            LeaveQuietly(second, secondId));
+
+        Assert.Equal(1, outcomes.Count(error => error == null));
+        var blocked = Assert.Single(outcomes, error => error != null);
+        var business = Assert.IsType<BusinessException>(blocked);
+        Assert.Equal(400, business.StatusCode);
+        Assert.Equal(HouseholdService.LastAdminMessage, business.Message);
+        Assert.Equal(1, await lab.Db.HouseholdMembers.CountAsync(m =>
+            m.HouseholdId == home.Id && m.Role == HouseholdRole.Admin));
+    }
+
+    private static async Task<Exception?> LeaveQuietly(HouseholdService household, int userId)
+    {
+        try
+        {
+            await household.LeaveAsync(userId);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    [Fact]
     public async Task Member_CannotEditPauseDeleteOrRemoveOthers_AndForeignItemIs404()
     {
         await using var lab = await SharingLab.CreateAsync(Morning);
@@ -502,6 +545,7 @@ public class HouseholdSharingTests
         public HouseholdConsumableService Consumables { get; }
         public HouseholdChatService Chat { get; }
         public int OwnerId { get; }
+        private readonly List<MiraiNoteDbContext> _extra = new();
 
         private SharingLab(
             MiraiTestFixture fx,
@@ -583,8 +627,20 @@ public class HouseholdSharingTests
             };
         }
 
+        public HouseholdService OpenHousehold()
+        {
+            var db = _fx.CreateContext();
+            db.Database.OpenConnection();
+            db.Database.ExecuteSqlRaw("PRAGMA busy_timeout = 5000");
+            _extra.Add(db);
+            var access = new HouseholdAccessService(db, Clock);
+            return new HouseholdService(db, access);
+        }
+
         public async ValueTask DisposeAsync()
         {
+            foreach (var extra in _extra)
+                await extra.DisposeAsync();
             await Db.DisposeAsync();
             _fx.Dispose();
         }

@@ -12,6 +12,7 @@ import type {
   ToolCallEvent,
 } from '@/types/chat'
 import { chatApi } from '@/api/chat'
+import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import { agentApi } from '@/api/agent'
 import { useToast } from '@/composables/useToast'
 import { parseHouseholdChatDraft } from '@/utils/householdChat'
@@ -1242,9 +1243,7 @@ export const useChatStore = defineStore('chat', () => {
 })
 
 function createTemporaryId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return createIdempotencyKey()
 }
 
 interface ExportedFileLink {

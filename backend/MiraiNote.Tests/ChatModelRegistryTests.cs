@@ -30,6 +30,19 @@ public class ChatModelRegistryTests
     }
 
     [Fact]
+    public void ResolveForNewSession_when_no_model_is_available_asks_the_admin()
+    {
+        var registry = new ChatModelRegistry(
+            Options.Create(new AiOptions()),
+            Options.Create(new DeepSeekOptions { ApiKey = "", Model = "deepseek-v4-flash" }));
+
+        var error = Assert.Throws<ChatModelUnavailableException>(() => registry.ResolveForNewSession(null));
+
+        Assert.Equal(ChatModelRegistry.NoneAvailableMessage, error.Message);
+        Assert.Empty(registry.GetPublicCatalog());
+    }
+
+    [Fact]
     public void ResolveForNewSession_rejects_a_disabled_or_unknown_model_key()
     {
         var registry = CreateRegistry(deepSeekApiKey: "test-deepseek-key", miniMaxApiKey: string.Empty);

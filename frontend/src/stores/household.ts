@@ -5,6 +5,7 @@ import { lifeLogApi } from '@/api/lifeLog'
 import { householdApi } from '@/api/household'
 import { buildHouseholdPreview } from '@/household/previewData'
 import { shanghaiToday } from '@/utils/householdFormat'
+import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import type {
   CompleteHouseholdItemPayload,
   CompleteHouseholdItemResult,
@@ -535,7 +536,7 @@ export const useHouseholdStore = defineStore('household', () => {
       if (currentItem.value?.id === id) history.value = historySource.value[id] ?? []
       return { item: next, record, consumableQuantityDeducted: 0, consumableStockAfter: null, needsRestock: false }
     }
-    const result = await householdApi.completeItem(id, payload, idempotencyKey || crypto.randomUUID())
+    const result = await householdApi.completeItem(id, payload, idempotencyKey || createIdempotencyKey())
     replaceItem(result.item)
     if (currentItem.value?.id === id) {
       history.value = [result.record, ...history.value.filter((record) => record.id !== result.record.id)]

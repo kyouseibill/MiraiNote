@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
 using MiraiNote.Core.Services.AgentRuns;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Chat;
@@ -562,6 +563,12 @@ public class ChatController : ControllerBase
         catch (BusinessException ex)
         {
             _logger.LogWarning("聊天流业务异常 ({StatusCode}): {Message}", ex.StatusCode, ex.Message);
+            if (Volatile.Read(ref terminalSent) == 0)
+                await TryWriteStreamErrorAsync(callback, ex.Message, streamCts.Token);
+        }
+        catch (ChatModelUnavailableException ex)
+        {
+            _logger.LogWarning("聊天流模型不可用: {Message}", ex.Message);
             if (Volatile.Read(ref terminalSent) == 0)
                 await TryWriteStreamErrorAsync(callback, ex.Message, streamCts.Token);
         }

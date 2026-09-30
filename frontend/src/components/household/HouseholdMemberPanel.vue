@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import AppDialog from '@/components/AppDialog.vue'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import { formatAccountDateTime } from '@/utils/accountTime'
-import { roleLabel } from '@/utils/householdFormat'
+import { invitationSentence, roleLabel } from '@/utils/householdFormat'
 import { createIdempotencyKey } from '@/utils/idempotencyKey'
 
 const { toast, store, report } = useHouseholdFeedback()
@@ -125,7 +125,7 @@ async function confirmLeave() {
       <ul class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
         <li v-for="invite in store.incomingInvitations" :key="invite.id" class="flex flex-wrap items-center gap-3 py-4">
           <div class="min-w-0 flex-1">
-            <p class="text-[14px] text-[var(--mn-ink)]">你收到了『{{ invite.householdName }}』的邀请，接受后加入这个家庭。</p>
+            <p class="text-[14px] text-[var(--mn-ink)]">{{ invitationSentence(invite.inviterUsername, invite.householdName) }}</p>
             <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
               {{ invite.inviterUsername }} 邀请你担任{{ roleLabel(invite.role) }}
               · 有效至 {{ formatAccountDateTime(invite.expiresAt) }}

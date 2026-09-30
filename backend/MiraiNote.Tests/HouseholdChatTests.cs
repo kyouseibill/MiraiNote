@@ -34,6 +34,49 @@ public class HouseholdChatTests
     }
 
     [Fact]
+    public void MonthDay_UsesThisYear_UntilItWouldBeAfterToday()
+    {
+        var newYear = new DateOnly(2026, 1, 3);
+        var lastDecember = HouseholdChatPhrase.Parse("12月28日换了滤网", newYear);
+        Assert.False(lastDecember.InvalidInput);
+        Assert.False(lastDecember.FutureDate);
+        Assert.Equal(new DateOnly(2025, 12, 28), lastDecember.CompletedOn);
+
+        var october = new DateOnly(2026, 10, 8);
+        var earlierThisYear = HouseholdChatPhrase.Parse("10月1日换了滤网", october);
+        Assert.Equal(new DateOnly(2026, 10, 1), earlierThisYear.CompletedOn);
+
+        var laterThisYear = HouseholdChatPhrase.Parse("12月28日换了滤网", october);
+        Assert.Equal(new DateOnly(2025, 12, 28), laterThisYear.CompletedOn);
+
+        var boundary = HouseholdChatPhrase.Parse("1月1日换了滤网", new DateOnly(2026, 1, 1));
+        Assert.Equal(new DateOnly(2026, 1, 1), boundary.CompletedOn);
+
+        var nextDay = HouseholdChatPhrase.Parse("1月2日换了滤网", new DateOnly(2026, 1, 1));
+        Assert.Equal(new DateOnly(2025, 1, 2), nextDay.CompletedOn);
+    }
+
+    [Fact]
+    public void InvalidDateOrHugeCost_DoesNotThrow_AndAsksToRephrase()
+    {
+        var today = new DateOnly(2026, 10, 8);
+        foreach (var text in new[]
+        {
+            "2月30日换了滤网",
+            "13月1日换了滤网",
+            "2026年2月30日换了滤网",
+            "2026-02-30换了滤网",
+            "今天换了滤网，花了 1000001",
+            "今天换了滤网，花了 999999999999999999999"
+        })
+        {
+            var parsed = HouseholdChatPhrase.Parse(text, today);
+            Assert.True(parsed.InvalidInput);
+            Assert.NotEqual(HouseholdChatIntent.Record, parsed.Intent);
+        }
+    }
+
+    [Fact]
     public async Task Interpret_MatchesUniqueMultipleOrNone_WithoutWriting()
     {
         await using var lab = await ChatLab.CreateAsync(Morning);
@@ -230,6 +273,11 @@ public class HouseholdChatTests
         Assert.Contains(upcoming.Upcoming, item => item.ItemId == mine.Id);
         Assert.DoesNotContain(upcoming.Upcoming, item => item.ItemId == theirs.Id);
 
+        var invalid = await lab.Chat.InterpretAsync(lab.OwnerId, "2月30日换了厨房净水器 PP 棉");
+        Assert.Equal("rejected", invalid.Kind);
+        Assert.Equal(HouseholdChatPhrase.RephraseMessage, invalid.Message);
+        Assert.Null(invalid.DraftId);
+
         var unknown = await lab.Chat.InterpretAsync(lab.OwnerId, "你好呀");
         Assert.Equal("unrecognized", unknown.Kind);
         Assert.Equal(HouseholdChatPhrase.UnrecognizedMessage, unknown.Message);
@@ -287,6 +335,55 @@ public class HouseholdChatTests
         Assert.DoesNotContain(upcoming.Upcoming, line => line.ItemId == deleted.Id);
     }
 
+    [Fact]
+    public async Task ParallelConfirm_WritesExactlyOneCompletion()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var item = await lab.CreateAsync("厨房净水器 PP 棉");
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉");
+        var request = Confirm(draft, item.Id);
+        var first = lab.OpenChat();
+        var second = lab.OpenChat();
+
+        var outcomes = await Task.WhenAll(
+            ConfirmQuietly(first, lab.OwnerId, request, "parallel-a"),
+            ConfirmQuietly(second, lab.OwnerId, request, "parallel-b"));
+
+        Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.HouseholdItemId == item.Id));
+        Assert.Contains(outcomes, error => error == null);
+    }
+
+    [Fact]
+    public async Task Interpret_PurgesExpiredDrafts()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        await lab.CreateAsync("厨房净水器 PP 棉");
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉");
+        var row = await lab.Db.HouseholdChatDrafts.SingleAsync(d => d.Id == draft.DraftId);
+        row.ExpiresAt = Morning.UtcDateTime.AddMinutes(-1);
+        await lab.Db.SaveChangesAsync();
+
+        lab.Clock.UtcNow = Morning.AddMinutes(1);
+        await lab.Chat.InterpretAsync(lab.OwnerId, "昨天换了厨房净水器 PP 棉");
+
+        Assert.True(await lab.Db.HouseholdChatDrafts.IgnoreQueryFilters().AnyAsync(d => d.Id == draft.DraftId && d.IsDeleted));
+        Assert.DoesNotContain(draft.DraftId, await lab.Db.HouseholdChatDrafts.Select(d => (int?)d.Id).ToListAsync());
+    }
+
+    private static async Task<Exception?> ConfirmQuietly(
+        HouseholdChatService chat, int userId, ConfirmHouseholdChatRequest request, string key)
+    {
+        try
+        {
+            await chat.ConfirmAsync(userId, request, key);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
     private static ConfirmHouseholdChatRequest Confirm(HouseholdChatInterpretationDto draft, int itemId, bool? deduct = null) => new()
     {
         DraftId = draft.DraftId!.Value,
@@ -303,6 +400,7 @@ public class HouseholdChatTests
         public HouseholdConsumableService Consumables { get; }
         public HouseholdChatService Chat { get; }
         public int OwnerId { get; }
+        private readonly List<MiraiNoteDbContext> _extra = new();
 
         private ChatLab(
             MiraiTestFixture fx,
@@ -353,6 +451,17 @@ public class HouseholdChatTests
                 Aliases = aliases?.ToList()
             });
 
+        public HouseholdChatService OpenChat()
+        {
+            var db = _fx.CreateContext();
+            db.Database.ExecuteSqlRaw("PRAGMA busy_timeout = 5000");
+            _extra.Add(db);
+            var rules = new HouseholdCycleRules(Clock);
+            var access = new HouseholdAccessService(db, Clock);
+            var items = new HouseholdItemService(db, access, rules, HouseholdAccessPolicy.Default);
+            return new HouseholdChatService(db, access, items, rules);
+        }
+
         public async Task<int> AddUserAsync(string username)
         {
             var user = new User
@@ -369,6 +478,8 @@ public class HouseholdChatTests
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var extra in _extra)
+                await extra.DisposeAsync();
             await Db.DisposeAsync();
             _fx.Dispose();
         }

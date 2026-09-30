@@ -281,6 +281,11 @@ export function safeHttpUrl(raw: string | null | undefined): string | null {
   return canonical
 }
 
+/** 邀请人没有单独昵称时用用户名。收件箱不展示邀请人邮箱。 */
+export function invitationSentence(inviterName: string, householdName: string) {
+  return `${inviterName} 邀请你加入『${householdName}』，接受后加入这个家庭。`
+}
+
 export function parseAliases(raw: string): string[] {
   return raw
     .split(/[,，\n]/)

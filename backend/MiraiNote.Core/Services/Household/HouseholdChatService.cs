@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
@@ -13,6 +12,7 @@ public interface IHouseholdChatService
     Task<HouseholdChatInterpretationDto> InterpretAsync(int userId, string? utterance, CancellationToken ct = default);
     Task<CompleteHouseholdItemResult> ConfirmAsync(
         int userId, ConfirmHouseholdChatRequest request, string? idempotencyKey, CancellationToken ct = default);
+    Task PurgeExpiredDraftsAsync(CancellationToken ct = default);
 }
 
 public sealed class HouseholdChatService : IHouseholdChatService
@@ -21,8 +21,6 @@ public sealed class HouseholdChatService : IHouseholdChatService
     public const string ExpiredMessage = "确认已过期，请重新说一次";
     public const string MissingKeyMessage = "缺少 Idempotency-Key";
     public const string NotCandidateMessage = "只能确认这次匹配到的事项";
-
-    private static readonly ConcurrentDictionary<int, SemaphoreSlim> DraftGates = new();
 
     private readonly MiraiNoteDbContext _db;
     private readonly IHouseholdAccessService _access;
@@ -44,9 +42,13 @@ public sealed class HouseholdChatService : IHouseholdChatService
     public async Task<HouseholdChatInterpretationDto> InterpretAsync(int userId, string? utterance, CancellationToken ct = default)
     {
         var access = await _access.GetOrCreateAsync(userId, ct);
+        await PurgeExpiredDraftsAsync(ct);
         var today = _rules.Today();
         var parsed = HouseholdChatPhrase.Parse(utterance, today);
         var text = utterance?.Trim() ?? "";
+
+        if (parsed.InvalidInput)
+            return Explain("rejected", HouseholdChatPhrase.RephraseMessage);
 
         if (parsed.Intent == HouseholdChatIntent.Unrecognized)
             return Explain("unrecognized", HouseholdChatPhrase.UnrecognizedMessage);
@@ -109,58 +111,91 @@ public sealed class HouseholdChatService : IHouseholdChatService
             throw new BusinessException(MissingKeyMessage, 400);
 
         var access = await _access.GetOrCreateAsync(userId, ct);
-        var draft = await _db.HouseholdChatDrafts
+        var now = UtcNow();
+        var draft = await _db.HouseholdChatDrafts.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == request.DraftId && d.UserId == userId && d.HouseholdId == access.Household.Id, ct);
         if (draft == null)
             throw new BusinessException("确认不存在", 404);
 
-        var gate = DraftGates.GetOrAdd(draft.Id, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try
+        if (IsConfirmed(draft))
+            return await ReplayConfirmedAsync(userId, draft, ct);
+
+        if (now >= DateTime.SpecifyKind(draft.ExpiresAt, DateTimeKind.Utc))
+            throw new BusinessException(ExpiredMessage, 400);
+
+        var item = await _db.HouseholdItems.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == request.ItemId && i.HouseholdId == access.Household.Id, ct);
+        if (item == null)
+            throw new BusinessException("事项不存在", 404);
+        if (!CandidateIds(draft).Contains(item.Id))
+            throw new BusinessException(NotCandidateMessage, 400);
+        if (item.IsArchived)
+            throw new BusinessException(HouseholdItemService.ArchivedReadOnlyMessage, 400);
+
+        // 完成写入之前先拦住晚于今天的日期和非法费用。失败不能把草稿标成已确认。
+        var completedOn = _rules.ResolveCompletionDate(request.CompletedOn ?? draft.CompletedOn);
+        var cost = request.Cost ?? draft.Cost;
+        if (cost < 0)
+            throw new BusinessException("费用不能为负", 400);
+        if (cost > 999999999.99m)
+            throw new BusinessException("费用超出范围", 400);
+        var skip = request.DeductConsumable == false;
+        var key = idempotencyKey.Trim();
+        var householdId = access.Household.Id;
+        var draftId = draft.Id;
+
+        // 待确认 = IdempotencyKey 为空。条件更新抢到的那一次才写入完成记录，不依赖进程内锁。
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            await _db.Entry(draft).ReloadAsync(ct);
-            if (!string.IsNullOrEmpty(draft.IdempotencyKey) && draft.StoredItemId is int storedId && draft.StoredCompletedOn is DateOnly storedOn)
+            _db.ChangeTracker.Clear();
+            var claimed = await _db.HouseholdChatDrafts
+                .Where(d => d.Id == draftId
+                    && d.UserId == userId
+                    && d.HouseholdId == householdId
+                    && d.IdempotencyKey == null
+                    && d.ExpiresAt > now)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(d => d.IdempotencyKey, key)
+                    .SetProperty(d => d.StoredItemId, item.Id)
+                    .SetProperty(d => d.StoredCompletedOn, completedOn)
+                    .SetProperty(d => d.StoredCost, cost)
+                    .SetProperty(d => d.StoredSkipDeduction, skip), ct);
+            if (claimed == 0)
             {
-                return await _items.CompleteAsync(userId, storedId, StoredRequest(draft, storedOn), draft.IdempotencyKey, ct);
+                var again = await _db.HouseholdChatDrafts.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Id == draftId && d.UserId == userId && d.HouseholdId == householdId, ct);
+                if (again != null && IsConfirmed(again))
+                    return await ReplayConfirmedAsync(userId, again, ct);
+                throw new BusinessException(again == null ? "确认不存在" : ExpiredMessage, again == null ? 404 : 400);
             }
 
-            if (UtcNow() >= DateTime.SpecifyKind(draft.ExpiresAt, DateTimeKind.Utc))
-                throw new BusinessException(ExpiredMessage, 400);
-
-            var item = await _db.HouseholdItems.AsNoTracking()
-                .FirstOrDefaultAsync(i => i.Id == request.ItemId && i.HouseholdId == access.Household.Id, ct);
-            if (item == null)
-                throw new BusinessException("事项不存在", 404);
-            if (!CandidateIds(draft).Contains(item.Id))
-                throw new BusinessException(NotCandidateMessage, 400);
-            if (item.IsArchived)
-                throw new BusinessException(HouseholdItemService.ArchivedReadOnlyMessage, 400);
-
-            var completedOn = request.CompletedOn ?? draft.CompletedOn;
-            var cost = request.Cost ?? draft.Cost;
-            var skip = request.DeductConsumable == false;
-            var complete = new CompleteHouseholdItemRequest
+            return await _items.CompleteAsync(userId, item.Id, new CompleteHouseholdItemRequest
             {
                 CompletedOn = completedOn,
                 Cost = cost,
                 SkipConsumableDeduction = skip
-            };
-            var result = await _items.CompleteAsync(userId, item.Id, complete, idempotencyKey, ct);
-
-            var saved = await _db.HouseholdChatDrafts.FirstAsync(d => d.Id == draft.Id, ct);
-            saved.IdempotencyKey = idempotencyKey.Trim();
-            saved.StoredItemId = item.Id;
-            saved.StoredCompletedOn = completedOn;
-            saved.StoredCost = cost;
-            saved.StoredSkipDeduction = skip;
-            await _db.SaveChangesAsync(ct);
-            return result;
-        }
-        finally
-        {
-            gate.Release();
-        }
+            }, key, ct);
+        });
     }
+
+    public async Task PurgeExpiredDraftsAsync(CancellationToken ct = default)
+    {
+        var now = UtcNow();
+        await _db.HouseholdChatDrafts
+            .Where(d => d.ExpiresAt <= now)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(d => d.IsDeleted, true), ct);
+    }
+
+    private Task<CompleteHouseholdItemResult> ReplayConfirmedAsync(int userId, HouseholdChatDraft draft, CancellationToken ct)
+    {
+        var storedId = draft.StoredItemId!.Value;
+        var storedOn = draft.StoredCompletedOn!.Value;
+        return _items.CompleteAsync(userId, storedId, StoredRequest(draft, storedOn), draft.IdempotencyKey, ct);
+    }
+
+    private static bool IsConfirmed(HouseholdChatDraft draft) =>
+        !string.IsNullOrEmpty(draft.IdempotencyKey) && draft.StoredItemId is not null && draft.StoredCompletedOn is not null;
 
     private async Task<HouseholdChatInterpretationDto> QueryUpcomingAsync(int userId, CancellationToken ct)
     {

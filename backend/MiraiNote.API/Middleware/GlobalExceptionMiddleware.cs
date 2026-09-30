@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Shared.Common;
 
 namespace MiraiNote.API.Middleware;
@@ -34,6 +35,11 @@ public class GlobalExceptionMiddleware
         {
             _logger.LogWarning("业务异常 ({Status}): {Message}", ex.StatusCode, ex.Message);
             await WriteAsync(context, ex.StatusCode, ex.Message);
+        }
+        catch (ChatModelUnavailableException ex)
+        {
+            _logger.LogWarning("聊天模型不可用: {Message}", ex.Message);
+            await WriteAsync(context, 400, ex.Message);
         }
         catch (OperationCanceledException)
         {
