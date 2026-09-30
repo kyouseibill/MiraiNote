@@ -53,7 +53,8 @@ public sealed class HouseholdService : IHouseholdService
             Name = ctx.Household.Name,
             MyMemberId = ctx.Member.Id,
             MyRole = ctx.Member.Role,
-            HasHousehold = true
+            HasHousehold = true,
+            HasPendingInvitations = await _access.HasActionableInvitationAsync(userId, ct)
         };
     }
 

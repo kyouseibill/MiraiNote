@@ -48,10 +48,12 @@ public sealed class HouseholdAccessService : IHouseholdAccessService
     public async Task<bool> HasActionableInvitationAsync(int userId, CancellationToken ct = default)
     {
         var now = UtcNow();
+        var liveHouseholdIds = _db.Households.AsNoTracking().Select(h => h.Id);
         return await _db.HouseholdInvitations.AsNoTracking().AnyAsync(i =>
             i.InviteeUserId == userId
             && i.Status == HouseholdInvitationStatus.Pending
-            && i.ExpiresAt > now, ct);
+            && i.ExpiresAt > now
+            && liveHouseholdIds.Contains(i.HouseholdId), ct);
     }
 
     public async Task<HouseholdContext> GetOrCreateAsync(int userId, CancellationToken ct = default)

@@ -12,7 +12,7 @@ export interface Household {
   myRole: HouseholdRole
   /** false 表示还没有家庭。缺省按已有家庭处理，设计预览不带这个字段。 */
   hasHousehold?: boolean
-  /** 有待处理邀请，且还没有家庭时先接受或拒绝。 */
+  /** 有待处理的家庭邀请。页面先接受或拒绝，再进入家庭。 */
   hasPendingInvitations?: boolean
 }
 

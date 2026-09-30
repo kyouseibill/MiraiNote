@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { IconLoader2, IconPlus } from '@tabler/icons-vue'
 import AppDialog from '@/components/AppDialog.vue'
@@ -13,6 +13,7 @@ import HouseholdStatusPill from '@/components/household/HouseholdStatusPill.vue'
 import { useDesignPreview } from '@/composables/useDesignPreview'
 import { useHouseholdFeedback } from '@/composables/useHouseholdFeedback'
 import type { HouseholdCategory, HouseholdItem } from '@/types/household'
+import { isPendingInvitationConflict } from '@/utils/apiError'
 import {
   HOUSEHOLD_CATEGORIES,
   categoryLabel,
@@ -41,6 +42,12 @@ const completeId = ref<number | null>(null)
 const deleting = ref<HouseholdItem | null>(null)
 const busy = ref(false)
 const ready = ref(false)
+const invitationHouseholdName = computed(() => store.incomingInvitations?.[0]?.householdName ?? '')
+
+async function enterInvitationView() {
+  pageError.value = ''
+  await store.showInvitationGate()
+}
 
 function query() {
   return {
@@ -75,6 +82,10 @@ async function load() {
     await store.loadWorkspace(active.value, asMember.value)
     if (!store.awaitingInvitation) await store.fetchItems(query())
   } catch (error) {
+    if (isPendingInvitationConflict(error)) {
+      await enterInvitationView()
+      return
+    }
     pageError.value = (await report(error)).message
   } finally {
     ready.value = true
@@ -87,6 +98,10 @@ async function reloadItems() {
     await store.fetchItems(query())
     pageError.value = ''
   } catch (error) {
+    if (isPendingInvitationConflict(error)) {
+      await enterInvitationView()
+      return
+    }
     pageError.value = (await report(error)).message
   }
 }
@@ -176,7 +191,7 @@ function statusOf(item: HouseholdItem) {
         <p class="mb-2 text-[11px] font-medium tracking-[0.17em] text-[var(--mn-muted)]">MIRAI / HOUSEHOLD</p>
         <h1 class="font-serif text-2xl text-[var(--mn-ink)] sm:text-[28px]">家务周期</h1>
         <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">
-          <template v-if="store.awaitingInvitation">你收到了家庭邀请。接受之后才会加入，这里不会先建一个空家庭。</template>
+          <template v-if="store.awaitingInvitation">你收到了『{{ invitationHouseholdName }}』的邀请，接受后加入这个家庭。</template>
           <template v-else>{{ store.household?.name || '我的家庭' }}<span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>。下次到期日由服务器计算，日期按北京时间展示。</template>
         </p>
       </div>

@@ -51,12 +51,11 @@ public class HouseholdCycleServiceTests
         var outsiderHome = await fx.Household.GetMineAsync(outsiderId);
         Assert.NotEqual(ownerHome.Id, outsiderHome.Id);
 
-        var occupied = await Assert.ThrowsAsync<BusinessException>(() =>
-            fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" }));
-        Assert.Equal(400, occupied.StatusCode);
-        Assert.Equal(HouseholdService.AddMemberRejectedMessage, occupied.Message);
+        var invitedEmpty = await fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" });
+        Assert.Equal(HouseholdInvitationStatus.Pending, invitedEmpty.Status);
         Assert.Equal(outsiderHome.Id, (await fx.Household.GetMineAsync(outsiderId)).Id);
-        Assert.Equal(0, await fx.Db.HouseholdInvitations.CountAsync(i =>
+        Assert.DoesNotContain(outsiderId, (await fx.Household.ListMembersAsync(fx.OwnerId)).Select(m => m.UserId));
+        Assert.Equal(1, await fx.Db.HouseholdInvitations.CountAsync(i =>
             i.InviteeUserId == outsiderId && i.Status == HouseholdInvitationStatus.Pending));
 
         var memberId = await fx.AddUserAsync("member");
@@ -470,6 +469,14 @@ public class HouseholdCycleServiceTests
             fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "nobody" }));
         var outsiderId = await fx.AddUserAsync("outsider");
         var outsiderHome = await fx.Household.GetMineAsync(outsiderId);
+        await fx.Items.CreateAsync(outsiderId, new CreateHouseholdItemRequest
+        {
+            Name = "已有事项",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1)
+        });
         var occupied = await Assert.ThrowsAsync<BusinessException>(() =>
             fx.Invitations.CreateAsync(fx.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "outsider" }));
         Assert.Equal(400, missing.StatusCode);

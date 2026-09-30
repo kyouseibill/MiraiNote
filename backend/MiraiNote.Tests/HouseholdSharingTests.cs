@@ -18,6 +18,14 @@ public class HouseholdSharingTests
         await using var lab = await SharingLab.CreateAsync(Morning);
         var outsider = await lab.AddUserAsync("outsider");
         await lab.Household.GetMineAsync(outsider);
+        await lab.Items.CreateAsync(outsider, new CreateHouseholdItemRequest
+        {
+            Name = "已有滤芯",
+            ItemType = HouseholdItemType.Recurring,
+            CycleValue = 1,
+            CycleUnit = HouseholdCycleUnit.Month,
+            LastDoneDate = new DateOnly(2026, 9, 1)
+        });
         var inactive = await lab.AddUserAsync("inactive");
         var inactiveUser = await lab.Db.Users.SingleAsync(u => u.Id == inactive);
         inactiveUser.IsActive = false;
@@ -149,12 +157,24 @@ public class HouseholdSharingTests
     }
 
     [Fact]
-    public async Task Accept_DissolvesEmptyHousehold_ClearsDrafts_AndRejectsHistoryOrRoommates()
+    public async Task OpenPage_ThenInvite_AcceptDissolvesEmptyHousehold()
     {
         await using var lab = await SharingLab.CreateAsync(Morning);
-        var emptyId = await lab.AddUserAsync("empty-home");
-        var emptyInvite = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "empty-home" });
-        var emptyMember = await AttachEmptyHouseholdAsync(lab, emptyId);
+        var invitee = await lab.AddUserAsync("opened");
+        var empty = await lab.Household.GetMineAsync(invitee);
+        Assert.True(empty.HasHousehold);
+
+        var created = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "opened" });
+        Assert.Equal(HouseholdInvitationStatus.Pending, created.Status);
+        var inbox = await lab.Invitations.ListIncomingAsync(invitee);
+        var listed = Assert.Single(inbox);
+        Assert.Equal(created.Id, listed.Id);
+        Assert.Equal(created.HouseholdName, listed.HouseholdName);
+        var waiting = await lab.Household.GetMineAsync(invitee);
+        Assert.Equal(empty.Id, waiting.Id);
+        Assert.True(waiting.HasPendingInvitations);
+
+        var emptyMember = await lab.Db.HouseholdMembers.SingleAsync(m => m.UserId == invitee && m.HouseholdId == empty.Id);
         lab.Db.HouseholdNotificationSettings.Add(new HouseholdNotificationSetting
         {
             MemberId = emptyMember.Id,
@@ -162,8 +182,8 @@ public class HouseholdSharingTests
         });
         var draft = new HouseholdChatDraft
         {
-            UserId = emptyId,
-            HouseholdId = emptyMember.HouseholdId,
+            UserId = invitee,
+            HouseholdId = empty.Id,
             CompletedOn = new DateOnly(2026, 10, 1),
             CandidateItemIds = "[]",
             ExpiresAt = Morning.UtcDateTime.AddMinutes(10)
@@ -171,36 +191,35 @@ public class HouseholdSharingTests
         lab.Db.HouseholdChatDrafts.Add(draft);
         await lab.Db.SaveChangesAsync();
 
-        var joined = await lab.Invitations.AcceptAsync(emptyId, emptyInvite.Id, "dissolve");
-        Assert.Equal(emptyId, joined.UserId);
-        Assert.Equal(emptyInvite.HouseholdId, (await lab.Household.GetMineAsync(emptyId)).Id);
-        Assert.True(await lab.Db.Households.IgnoreQueryFilters().AnyAsync(h => h.Id == emptyMember.HouseholdId && h.IsDeleted));
+        var joined = await lab.Invitations.AcceptAsync(invitee, created.Id, "dissolve");
+        Assert.Equal(invitee, joined.UserId);
+        Assert.Equal(created.HouseholdId, (await lab.Household.GetMineAsync(invitee)).Id);
+        Assert.True(await lab.Db.Households.IgnoreQueryFilters().AnyAsync(h => h.Id == empty.Id && h.IsDeleted));
         Assert.True(await lab.Db.HouseholdMembers.IgnoreQueryFilters().AnyAsync(m => m.Id == emptyMember.Id && m.IsDeleted));
         Assert.True(await lab.Db.HouseholdNotificationSettings.IgnoreQueryFilters()
             .AnyAsync(s => s.MemberId == emptyMember.Id && s.IsDeleted));
         Assert.Empty(await lab.Db.HouseholdNotificationSettings.Where(s => s.MemberId == emptyMember.Id).ToListAsync());
         Assert.True(await lab.Db.HouseholdChatDrafts.IgnoreQueryFilters().AnyAsync(d => d.Id == draft.Id && d.IsDeleted));
         var gone = await Assert.ThrowsAsync<BusinessException>(() => lab.Chat.ConfirmAsync(
-            emptyId,
+            invitee,
             new ConfirmHouseholdChatRequest { DraftId = draft.Id, ItemId = 1 },
             "old-draft"));
         Assert.Equal(404, gone.StatusCode);
-        Assert.Equal(1, await lab.Db.HouseholdMembers.CountAsync(m => m.UserId == emptyId && m.HouseholdId == emptyInvite.HouseholdId));
+        Assert.Equal(1, await lab.Db.HouseholdMembers.CountAsync(m => m.UserId == invitee && m.HouseholdId == created.HouseholdId));
+    }
 
-        var withItem = await InviteThenAttachAsync(lab, "had-item");
-        var item = await lab.Items.CreateAsync(withItem.UserId, new CreateHouseholdItemRequest
-        {
-            Name = "旧滤芯",
-            ItemType = HouseholdItemType.Recurring,
-            CycleValue = 1,
-            CycleUnit = HouseholdCycleUnit.Month,
-            LastDoneDate = new DateOnly(2026, 9, 1)
-        });
-        (await lab.Db.HouseholdItems.SingleAsync(i => i.Id == item.Id)).IsDeleted = true;
+    [Fact]
+    public async Task Invite_AfterHouseholdHasData_UsesTheUnifiedRejection()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+
+        var withItem = await OpenThenRecordItemAsync(lab, "had-item");
+        (await lab.Db.HouseholdItems.SingleAsync(i => i.Id == withItem.ItemId)).IsDeleted = true;
         await lab.Db.SaveChangesAsync();
 
-        var withConsumable = await InviteThenAttachAsync(lab, "had-stock");
-        var consumable = await lab.Consumables.CreateAsync(withConsumable.UserId, new SaveHouseholdConsumableRequest
+        var withConsumable = await lab.AddUserAsync("had-stock");
+        await lab.Household.GetMineAsync(withConsumable);
+        var consumable = await lab.Consumables.CreateAsync(withConsumable, new SaveHouseholdConsumableRequest
         {
             Name = "旧棉芯",
             CurrentStock = 1
@@ -208,68 +227,100 @@ public class HouseholdSharingTests
         (await lab.Db.HouseholdConsumables.SingleAsync(c => c.Id == consumable.Id)).IsDeleted = true;
         await lab.Db.SaveChangesAsync();
 
-        var withHistory = await InviteThenAttachAsync(lab, "had-history");
-        var historyItem = await lab.Items.CreateAsync(withHistory.UserId, new CreateHouseholdItemRequest
+        var withHistory = await OpenThenRecordItemAsync(lab, "had-history");
+        await lab.Items.CompleteAsync(withHistory.UserId, withHistory.ItemId, new CompleteHouseholdItemRequest
         {
-            Name = "旧纱窗",
+            CompletedOn = new DateOnly(2026, 9, 20)
+        });
+        (await lab.Db.HouseholdItems.SingleAsync(i => i.Id == withHistory.ItemId)).IsDeleted = true;
+        (await lab.Db.HouseholdCompletionRecords.SingleAsync(r => r.HouseholdItemId == withHistory.ItemId)).IsDeleted = true;
+        await lab.Db.SaveChangesAsync();
+
+        var withRoommateId = await lab.AddUserAsync("had-roommate");
+        var roommateHome = await lab.Household.GetMineAsync(withRoommateId);
+        await lab.AddUserAsync("roommate");
+        await lab.JoinAsync(withRoommateId, "roommate");
+
+        var rejected = new[]
+        {
+            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "had-item" })),
+            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "had-stock" })),
+            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "had-history" })),
+            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "had-roommate" }))
+        };
+        Assert.All(rejected, error =>
+        {
+            Assert.Equal(400, error.StatusCode);
+            Assert.Equal(HouseholdService.AddMemberRejectedMessage, error.Message);
+        });
+        Assert.Equal(rejected[0].Message, rejected[1].Message);
+        Assert.Equal(rejected[0].Message, rejected[2].Message);
+        Assert.Equal(rejected[0].Message, rejected[3].Message);
+        Assert.Equal(0, await lab.Db.HouseholdInvitations.CountAsync(i =>
+            i.Status == HouseholdInvitationStatus.Pending
+            && (i.InviteeUserId == withItem.UserId || i.InviteeUserId == withConsumable || i.InviteeUserId == withHistory.UserId || i.InviteeUserId == withRoommateId)));
+        Assert.Equal(withItem.HouseholdId, (await lab.Household.GetMineAsync(withItem.UserId)).Id);
+        Assert.Equal(roommateHome.Id, (await lab.Household.GetMineAsync(withRoommateId)).Id);
+        Assert.Equal(2, await lab.Db.HouseholdMembers.CountAsync(m => m.HouseholdId == roommateHome.Id));
+    }
+
+    [Fact]
+    public async Task Accept_RevokesOutgoingInvites_FromDissolvedEmptyHousehold()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var hostA = await lab.AddUserAsync("host-a");
+        var empty = await lab.Household.GetMineAsync(hostA);
+        var guest = await lab.AddUserAsync("guest-c");
+        var outgoing = await lab.Invitations.CreateAsync(hostA, new AddHouseholdMemberRequest { UserIdentifier = "guest-c" });
+        var incoming = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "host-a" });
+
+        await lab.Invitations.AcceptAsync(hostA, incoming.Id, "join-b");
+
+        Assert.True(await lab.Db.Households.IgnoreQueryFilters().AnyAsync(h => h.Id == empty.Id && h.IsDeleted));
+        Assert.Equal(HouseholdInvitationStatus.Revoked, (await lab.Db.HouseholdInvitations.SingleAsync(i => i.Id == outgoing.Id)).Status);
+        Assert.Empty(await lab.Invitations.ListIncomingAsync(guest));
+        var failed = await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(guest, outgoing.Id, null));
+        Assert.Equal(400, failed.StatusCode);
+        Assert.Equal(HouseholdInvitationService.HandledMessage, failed.Message);
+        Assert.Equal(0, await lab.Db.HouseholdMembers.CountAsync(m => m.UserId == guest && m.HouseholdId == empty.Id));
+        Assert.Equal(incoming.HouseholdId, (await lab.Household.GetMineAsync(hostA)).Id);
+    }
+
+    [Fact]
+    public async Task Accept_AndInbox_SkipInvitationWhoseHouseholdWasDeleted()
+    {
+        await using var lab = await SharingLab.CreateAsync(Morning);
+        var invitee = await lab.AddUserAsync("late");
+        var created = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = "late" });
+        var household = await lab.Db.Households.SingleAsync(h => h.Id == created.HouseholdId);
+        household.IsDeleted = true;
+        await lab.Db.SaveChangesAsync();
+
+        Assert.Empty(await lab.Invitations.ListIncomingAsync(invitee));
+        var failed = await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(invitee, created.Id, null));
+        Assert.Equal(404, failed.StatusCode);
+        Assert.Equal(HouseholdInvitationService.NotFoundMessage, failed.Message);
+        Assert.Equal(0, await lab.Db.HouseholdMembers.CountAsync(m => m.UserId == invitee && m.HouseholdId == created.HouseholdId));
+        Assert.Equal(HouseholdInvitationStatus.Pending, (await lab.Db.HouseholdInvitations.IgnoreQueryFilters().SingleAsync(i => i.Id == created.Id)).Status);
+
+        var restarted = await lab.Household.GetMineAsync(invitee);
+        Assert.True(restarted.HasHousehold);
+        Assert.NotEqual(created.HouseholdId, restarted.Id);
+    }
+
+    private static async Task<(int UserId, int HouseholdId, int ItemId)> OpenThenRecordItemAsync(SharingLab lab, string username)
+    {
+        var userId = await lab.AddUserAsync(username);
+        var home = await lab.Household.GetMineAsync(userId);
+        var item = await lab.Items.CreateAsync(userId, new CreateHouseholdItemRequest
+        {
+            Name = "旧滤芯",
             ItemType = HouseholdItemType.Recurring,
             CycleValue = 1,
             CycleUnit = HouseholdCycleUnit.Month,
             LastDoneDate = new DateOnly(2026, 9, 1)
         });
-        await lab.Items.CompleteAsync(withHistory.UserId, historyItem.Id, new CompleteHouseholdItemRequest
-        {
-            CompletedOn = new DateOnly(2026, 9, 20)
-        });
-        (await lab.Db.HouseholdItems.SingleAsync(i => i.Id == historyItem.Id)).IsDeleted = true;
-        (await lab.Db.HouseholdCompletionRecords.SingleAsync(r => r.HouseholdItemId == historyItem.Id)).IsDeleted = true;
-        await lab.Db.SaveChangesAsync();
-
-        var withRoommate = await InviteThenAttachAsync(lab, "had-roommate");
-        var roommate = await lab.AddUserAsync("roommate");
-        await lab.JoinAsync(withRoommate.UserId, "roommate");
-
-        var rejected = new[]
-        {
-            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(withItem.UserId, withItem.InviteId, null)),
-            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(withConsumable.UserId, withConsumable.InviteId, null)),
-            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(withHistory.UserId, withHistory.InviteId, null)),
-            await Assert.ThrowsAsync<BusinessException>(() => lab.Invitations.AcceptAsync(withRoommate.UserId, withRoommate.InviteId, null))
-        };
-        Assert.All(rejected, error =>
-        {
-            Assert.Equal(400, error.StatusCode);
-            Assert.Equal(HouseholdInvitationService.AlreadyElsewhereMessage, error.Message);
-        });
-        Assert.Equal(rejected[0].Message, rejected[1].Message);
-        Assert.Equal(rejected[0].Message, rejected[2].Message);
-        Assert.Equal(rejected[0].Message, rejected[3].Message);
-        Assert.Equal(withItem.HouseholdId, (await lab.Household.GetMineAsync(withItem.UserId)).Id);
-        Assert.Equal(withRoommate.HouseholdId, (await lab.Household.GetMineAsync(withRoommate.UserId)).Id);
-        Assert.Equal(2, await lab.Db.HouseholdMembers.CountAsync(m => m.HouseholdId == withRoommate.HouseholdId));
-    }
-
-    private static async Task<HouseholdMember> AttachEmptyHouseholdAsync(SharingLab lab, int userId)
-    {
-        var household = new Household { Name = Household.DefaultName };
-        var member = new HouseholdMember
-        {
-            Household = household,
-            UserId = userId,
-            Role = HouseholdRole.Admin
-        };
-        lab.Db.Households.Add(household);
-        lab.Db.HouseholdMembers.Add(member);
-        await lab.Db.SaveChangesAsync();
-        return member;
-    }
-
-    private static async Task<(int UserId, int InviteId, int HouseholdId)> InviteThenAttachAsync(SharingLab lab, string username)
-    {
-        var userId = await lab.AddUserAsync(username);
-        var invite = await lab.Invitations.CreateAsync(lab.OwnerId, new AddHouseholdMemberRequest { UserIdentifier = username });
-        var member = await AttachEmptyHouseholdAsync(lab, userId);
-        return (userId, invite.Id, member.HouseholdId);
+        return (userId, home.Id, item.Id);
     }
 
     [Fact]

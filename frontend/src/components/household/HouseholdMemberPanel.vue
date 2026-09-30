@@ -15,7 +15,7 @@ const leaveOpen = ref(false)
 const acceptKeys = ref<Record<number, string>>({})
 
 const soleAdmin = computed(() => store.isAdmin && store.members.filter((member) => member.role === 'Admin').length <= 1)
-const awaitingInvitation = computed(() => store.household?.hasHousehold === false)
+const awaitingInvitation = computed(() => store.awaitingInvitation === true || store.household?.hasHousehold === false)
 const removing = computed(() => store.members.find((member) => member.id === removingId.value) ?? null)
 
 onMounted(() => {
@@ -120,14 +120,12 @@ async function confirmLeave() {
     <p v-if="!awaitingInvitation" class="mb-4 text-[12px] leading-6 text-[var(--mn-muted)]">
       {{ store.household?.name || '家庭' }}目前有 {{ store.members.length }} 位成员。邀请在站内确认，7 天内有效。
     </p>
-    <p v-else class="mb-4 text-[12px] leading-6 text-[var(--mn-muted)]">接受或拒绝下面的邀请。还没处理之前，不会自动创建家庭。</p>
-
     <section v-if="store.incomingInvitations.length" class="mb-6" data-testid="incoming-invitations">
       <h2 class="mb-2 text-[13px] font-medium text-[var(--mn-ink)]">收到的邀请</h2>
       <ul class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
         <li v-for="invite in store.incomingInvitations" :key="invite.id" class="flex flex-wrap items-center gap-3 py-4">
           <div class="min-w-0 flex-1">
-            <p class="text-[14px] text-[var(--mn-ink)]">{{ invite.householdName }}</p>
+            <p class="text-[14px] text-[var(--mn-ink)]">你收到了『{{ invite.householdName }}』的邀请，接受后加入这个家庭。</p>
             <p class="mt-1 text-[12px] text-[var(--mn-muted)]">
               {{ invite.inviterUsername }} 邀请你担任{{ roleLabel(invite.role) }}
               · 有效至 {{ formatAccountDateTime(invite.expiresAt) }}

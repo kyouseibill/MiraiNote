@@ -59,9 +59,11 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             .FirstOrDefaultAsync(m => m.UserId == user.Id, ct);
         if (membership != null)
         {
-            throw new BusinessException(
-                membership.HouseholdId == ctx.Household.Id ? "该用户已是家庭成员" : HouseholdService.AddMemberRejectedMessage,
-                400);
+            if (membership.HouseholdId == ctx.Household.Id)
+                throw new BusinessException("该用户已是家庭成员", 400);
+            // 只打开过家务页、还没有任何数据的空家庭，仍可以收到邀请；接受时再解散。
+            if (!await IsDisposableEmptyHouseholdAsync(membership.HouseholdId, user.Id, ct))
+                throw new BusinessException(HouseholdService.AddMemberRejectedMessage, 400);
         }
 
         var expires = UtcNow().Add(Lifetime);
@@ -123,26 +125,22 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             .OrderBy(i => i.ExpiresAt)
             .ThenBy(i => i.Id)
             .ToListAsync(ct);
-        var result = new List<HouseholdInvitationDto>();
-        foreach (var row in rows)
-            result.Add(await MapAsync(row, includeEmail: true, ct));
-        return result;
+        return await MapLiveAsync(rows, includeEmail: true, ct);
     }
 
     public async Task<List<HouseholdInvitationDto>> ListIncomingAsync(int userId, CancellationToken ct = default)
     {
         var now = UtcNow();
+        var liveHouseholdIds = LiveHouseholdIds();
         var rows = await _db.HouseholdInvitations.AsNoTracking()
             .Where(i => i.InviteeUserId == userId
                 && i.Status == HouseholdInvitationStatus.Pending
-                && i.ExpiresAt > now)
+                && i.ExpiresAt > now
+                && liveHouseholdIds.Contains(i.HouseholdId))
             .OrderBy(i => i.ExpiresAt)
             .ThenBy(i => i.Id)
             .ToListAsync(ct);
-        var result = new List<HouseholdInvitationDto>();
-        foreach (var row in rows)
-            result.Add(await MapAsync(row, includeEmail: false, ct));
-        return result;
+        return await MapLiveAsync(rows, includeEmail: false, ct);
     }
 
     public async Task<HouseholdInvitationDto> RevokeAsync(int userId, int invitationId, CancellationToken ct = default)
@@ -223,6 +221,8 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             throw new BusinessException(HandledMessage, 400);
         if (invitation.ExpiresAt <= now)
             throw new BusinessException(ExpiredMessage, 400);
+        if (!await HouseholdIsLiveAsync(invitation.HouseholdId, ct))
+            throw new BusinessException(NotFoundMessage, 404);
 
         var membership = await _db.HouseholdMembers.AsNoTracking()
             .FirstOrDefaultAsync(m => m.UserId == userId, ct);
@@ -314,13 +314,37 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
         var drafts = await _db.HouseholdChatDrafts
             .Where(d => d.UserId == userId && d.HouseholdId == householdId)
             .ToListAsync(ct);
+        var outgoing = await _db.HouseholdInvitations
+            .Where(i => i.HouseholdId == householdId && i.Status == HouseholdInvitationStatus.Pending)
+            .ToListAsync(ct);
         foreach (var setting in settings)
             setting.IsDeleted = true;
         foreach (var draft in drafts)
             draft.IsDeleted = true;
+        foreach (var invitation in outgoing)
+            invitation.Status = HouseholdInvitationStatus.Revoked;
         member.IsDeleted = true;
         household.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
+    }
+
+    private IQueryable<int> LiveHouseholdIds() =>
+        _db.Households.AsNoTracking().Select(h => h.Id);
+
+    private Task<bool> HouseholdIsLiveAsync(int householdId, CancellationToken ct) =>
+        _db.Households.AsNoTracking().AnyAsync(h => h.Id == householdId, ct);
+
+    private async Task<List<HouseholdInvitationDto>> MapLiveAsync(
+        List<HouseholdInvitation> rows, bool includeEmail, CancellationToken ct)
+    {
+        var result = new List<HouseholdInvitationDto>();
+        foreach (var row in rows)
+        {
+            if (!await HouseholdIsLiveAsync(row.HouseholdId, ct))
+                continue;
+            result.Add(await MapAsync(row, includeEmail, ct));
+        }
+        return result;
     }
 
     private async Task<bool> IsHouseholdAdminAsync(int userId, int householdId, CancellationToken ct)
@@ -350,7 +374,9 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
         var householdName = await _db.Households.AsNoTracking()
             .Where(h => h.Id == invitation.HouseholdId)
             .Select(h => h.Name)
-            .FirstAsync(ct);
+            .FirstOrDefaultAsync(ct);
+        if (householdName == null)
+            throw new BusinessException(NotFoundMessage, 404);
         var users = await _db.Users.AsNoTracking()
             .Where(u => u.Id == invitation.InviteeUserId || u.Id == invitation.InviterUserId)
             .Select(u => new { u.Id, u.Username, u.Email })
