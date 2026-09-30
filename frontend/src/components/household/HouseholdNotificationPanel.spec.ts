@@ -20,6 +20,7 @@ const harness = vi.hoisted(() => {
       dueChannel: 'Email' | 'Bark'
       overdueIntervalDays: number
       notificationsEnabled: boolean
+      hasDeliverableChannel: boolean
       barkFailure: { failedAt: string; reason: string } | null
       emailFailure: { failedAt: string; reason: string } | null
     } | null,
@@ -43,6 +44,7 @@ function useSettings(overrides: Partial<HouseholdNotificationSettings> = {}) {
     dueChannel: 'Bark',
     overdueIntervalDays: 3,
     notificationsEnabled: false,
+    hasDeliverableChannel: true,
     barkFailure: { failedAt: '2026-10-08T01:05:00.000Z', reason: '发送失败' },
     emailFailure: null,
     ...overrides,
@@ -100,5 +102,23 @@ describe('HouseholdNotificationPanel', () => {
     expect(wrapper.text()).not.toContain('secret-key-should-not-render')
     expect(wrapper.text()).not.toContain('leak.test')
     expect(wrapper.text()).not.toContain('TimeoutException')
+  })
+
+  it('两个通道都不可用时在顶部提示提醒不会发出', async () => {
+    useSettings({ hasDeliverableChannel: false })
+    const wrapper = mount(HouseholdNotificationPanel)
+    await flushPromises()
+
+    const banner = wrapper.get('[data-testid="no-deliverable-channel"]')
+    expect(banner.text()).toBe('当前没有可送达的通道，提醒不会发出')
+    expect(wrapper.element.firstElementChild).toBe(banner.element)
+  })
+
+  it('至少有一个通道可送达时不显示该提示', async () => {
+    useSettings({ hasDeliverableChannel: true })
+    const wrapper = mount(HouseholdNotificationPanel)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="no-deliverable-channel"]').exists()).toBe(false)
   })
 })

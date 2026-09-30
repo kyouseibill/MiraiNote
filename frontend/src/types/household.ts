@@ -267,6 +267,7 @@ export interface HouseholdNotificationSettings {
   dueChannel: HouseholdNotificationChannel
   overdueIntervalDays: number
   notificationsEnabled: boolean
+  hasDeliverableChannel: boolean
   barkFailure: HouseholdNotificationDeliveryFailure | null
   emailFailure: HouseholdNotificationDeliveryFailure | null
 }

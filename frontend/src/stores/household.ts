@@ -672,6 +672,7 @@ export const useHouseholdStore = defineStore('household', () => {
       dueChannel: 'Bark',
       overdueIntervalDays: 3,
       notificationsEnabled: false,
+      hasDeliverableChannel: true,
       barkFailure: { failedAt: '2026-10-08T01:05:00.000Z', reason: '发送失败' },
       emailFailure: { failedAt: '2026-10-08T01:07:00.000Z', reason: '连接失败' },
     }
@@ -709,6 +710,8 @@ export const useHouseholdStore = defineStore('household', () => {
         next.barkAddressSuffix = payload.barkAddress.trim().slice(-4)
         next.barkAddressUnreadable = false
       }
+      next.hasDeliverableChannel =
+        (next.emailEnabled && !!next.email) || (next.barkEnabled && next.barkConfigured)
       notificationSettings.value = next
       return next
     }

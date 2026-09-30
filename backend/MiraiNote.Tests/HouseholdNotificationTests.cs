@@ -937,6 +937,7 @@ public class HouseholdNotificationTests
         AssertNoSecrets(JsonSerializer.Serialize(dto.EmailFailure));
 
         lab.Email.Failure = null;
+        await lab.CreateDueTodayAsync("Bark 超时");
         await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
         lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
         lab.Bark.WaitForTimeout = true;
@@ -966,6 +967,8 @@ public class HouseholdNotificationTests
         await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
         var otherId = await lab.AddUserAsync("linxia");
         await lab.JoinAsync(lab.OwnerId, "linxia");
+        // 另一位成员还没到推送时间，避免新成员默认邮件把这次失败记到他们自己头上。
+        await lab.Settings.UpdateAsync(otherId, SettingsWith(hour: 18));
         await lab.CreateDueTodayAsync("滤网");
         await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email));
         lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
@@ -1028,6 +1031,7 @@ public class HouseholdNotificationTests
         Assert.Equal(HouseholdDeliveryFailure.SendFailed, (await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure!.Reason);
 
         lab.Bark.Failure = new HttpRequestException("connection refused");
+        await lab.CreateDueTodayAsync("Bark 失败");
         await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Bark));
         lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
         await lab.DispatchAsync();
@@ -1075,6 +1079,303 @@ public class HouseholdNotificationTests
         await lab.Consumables.DeleteAsync(lab.OwnerId, consumable.Id);
         Assert.Null((await lab.Settings.GetAsync(lab.OwnerId)).EmailFailure);
         Assert.Equal(1, await lab.Db.HouseholdConsumableReminders.CountAsync());
+    }
+
+    [Fact]
+    public async Task Due_BarkUnavailable_FallsBackToEmail_AndSecondScanSendsNothing()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.CreateDueTodayAsync("滤网");
+        var saved = await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith());
+        Assert.Equal(HouseholdNotificationChannel.Bark, saved.DueChannel);
+        Assert.True(saved.HasDeliverableChannel);
+
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Equal("tester@example.com", lab.Email.Sent[0].To);
+        Assert.Contains("今天到期", lab.Email.Sent[0].Html);
+        Assert.Empty(lab.Bark.Bodies);
+        var log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdNotificationChannel.Email, log.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Sent, log.Status);
+
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(1, await lab.Db.HouseholdReminderLogs.CountAsync());
+        Assert.Equal(HouseholdNotificationChannel.Bark, (await lab.Db.HouseholdNotificationSettings.SingleAsync()).DueChannel);
+    }
+
+    [Fact]
+    public async Task LeadAndOverdue_UnavailableChannel_UsesTheOtherOneOnce()
+    {
+        await using var lead = await NotificationLab.CreateAsync(Shanghai(2026, 10, 1, 9, 0));
+        await lead.CreateDueInSevenDaysAsync("滤网");
+        var leadSettings = SettingsWith();
+        leadSettings.LeadChannel = HouseholdNotificationChannel.Bark;
+        await lead.Settings.UpdateAsync(lead.OwnerId, leadSettings);
+        await lead.DispatchAsync();
+        Assert.Single(lead.Email.Sent);
+        Assert.Contains("将于 2026-10-08 到期", lead.Email.Sent[0].Html);
+        Assert.Empty(lead.Bark.Bodies);
+        var leadLog = await lead.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdNotificationChannel.Email, leadLog.Channel);
+        Assert.Equal("Lead", leadLog.Kind);
+
+        await using var overdue = await NotificationLab.CreateAsync(Shanghai(2026, 10, 9, 9, 0));
+        await overdue.CreateDueTodayAsync("滤网");
+        var barkOff = SettingsWith(bark: BarkAddress);
+        barkOff.BarkEnabled = false;
+        await overdue.Settings.UpdateAsync(overdue.OwnerId, barkOff);
+        await overdue.DispatchAsync();
+        Assert.Single(overdue.Email.Sent);
+        Assert.Contains("已逾期 1 天", overdue.Email.Sent[0].Html);
+        Assert.Empty(overdue.Bark.Bodies);
+        await overdue.DispatchAsync();
+        Assert.Single(overdue.Email.Sent);
+        Assert.Equal(1, await overdue.Db.HouseholdReminderLogs.CountAsync());
+    }
+
+    [Fact]
+    public async Task Due_EmailOff_FallsBackToBark_WhenConfigured()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.CreateDueTodayAsync("滤网");
+        var emailOff = SettingsWith(bark: BarkAddress, due: HouseholdNotificationChannel.Email);
+        emailOff.EmailEnabled = false;
+        var saved = await lab.Settings.UpdateAsync(lab.OwnerId, emailOff);
+        Assert.True(saved.HasDeliverableChannel);
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Contains("今天到期", lab.Bark.Bodies[0]);
+        var log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdNotificationChannel.Bark, log.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Sent, log.Status);
+
+        await lab.DispatchAsync();
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Empty(lab.Email.Sent);
+    }
+
+    [Fact]
+    public async Task BarkPreferred_WithoutProtector_FallsBackToEmail()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0), protectionKey: null);
+        await lab.CreateDueTodayAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(due: HouseholdNotificationChannel.Bark));
+        var setting = await lab.Db.HouseholdNotificationSettings.SingleAsync();
+        setting.BarkAddressProtected = "not-a-real-payload";
+        setting.BarkEnabled = true;
+        await lab.Db.SaveChangesAsync();
+
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(HouseholdNotificationChannel.Email, (await lab.Db.HouseholdReminderLogs.SingleAsync()).Channel);
+    }
+
+    [Fact]
+    public async Task BothChannelsUnavailable_SendsNothing_AndSettingsFlagIsFalse()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.CreateDueTodayAsync("滤网");
+        var request = SettingsWith();
+        request.EmailEnabled = false;
+        request.BarkEnabled = false;
+        var saved = await lab.Settings.UpdateAsync(lab.OwnerId, request);
+        Assert.False(saved.HasDeliverableChannel);
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(0, await lab.Db.HouseholdReminderLogs.CountAsync());
+
+        request.BarkEnabled = true;
+        saved = await lab.Settings.UpdateAsync(lab.OwnerId, request);
+        Assert.False(saved.HasDeliverableChannel);
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+    }
+
+    [Fact]
+    public async Task DeliveryFailure_DoesNotFallBack_AndRetriesOnTheSameChannel()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        await lab.CreateDueTodayAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress));
+        lab.Bark.Failure = new HttpRequestException("connection refused");
+
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        var log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdNotificationChannel.Bark, log.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, log.Status);
+        Assert.Equal(1, log.AttemptCount);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddSeconds(30);
+        await lab.DispatchAsync();
+        log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(1, log.AttemptCount);
+        Assert.Empty(lab.Email.Sent);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddSeconds(30);
+        await lab.DispatchAsync();
+        log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(2, log.AttemptCount);
+        Assert.Equal(HouseholdNotificationChannel.Bark, log.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, log.Status);
+        Assert.Empty(lab.Email.Sent);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(4);
+        await lab.DispatchAsync();
+        log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(2, log.AttemptCount);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(3, log.AttemptCount);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, log.Status);
+        Assert.Empty(lab.Email.Sent);
+        Assert.Equal(3, lab.Bark.Urls.Count);
+
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddHours(2);
+        await lab.DispatchAsync();
+        log = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(3, log.AttemptCount);
+        Assert.Empty(lab.Email.Sent);
+        Assert.Equal(3, lab.Bark.Urls.Count);
+        Assert.Equal(0, await lab.Db.HouseholdReminderLogs.CountAsync(r => r.Channel == HouseholdNotificationChannel.Email));
+    }
+
+    [Fact]
+    public async Task FallbackEmail_ThenBarkConfigured_SameDaySendsNothing_NextDayUsesBark()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var item = await lab.CreateDueTodayAsync("滤网");
+        var initial = SettingsWith();
+        initial.OverdueIntervalDays = 1;
+        await lab.Settings.UpdateAsync(lab.OwnerId, initial);
+
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(HouseholdNotificationChannel.Email, (await lab.Db.HouseholdReminderLogs.SingleAsync()).Channel);
+
+        lab.Clock.UtcNow = Shanghai(2026, 10, 8, 11, 0);
+        var withBark = SettingsWith(bark: BarkAddress);
+        withBark.OverdueIntervalDays = 1;
+        await lab.Settings.UpdateAsync(lab.OwnerId, withBark);
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(1, await lab.Db.HouseholdReminderLogs.CountAsync());
+        Assert.Equal(0, RateLimitCount(lab));
+
+        var probe = SettingsWith(due: HouseholdNotificationChannel.Email);
+        probe.OverdueIntervalDays = 1;
+        await lab.Settings.UpdateAsync(lab.OwnerId, probe);
+        var probeIds = new List<int>();
+        for (var i = 0; i < 3; i++)
+            probeIds.Add((await lab.CreateDueTodayAsync("名额" + i)).Id);
+        await lab.DispatchAsync();
+        Assert.Equal(4, lab.Email.Sent.Count);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(0, RateLimitCount(lab));
+        Assert.Equal(1, await lab.Db.HouseholdReminderLogs.CountAsync(r =>
+            r.HouseholdItemId == item.Id && r.Channel == HouseholdNotificationChannel.Email));
+        foreach (var probeId in probeIds)
+            await lab.Items.DeleteAsync(lab.OwnerId, probeId);
+
+        var restore = SettingsWith(bark: BarkAddress);
+        restore.OverdueIntervalDays = 1;
+        await lab.Settings.UpdateAsync(lab.OwnerId, restore);
+        lab.Clock.UtcNow = Shanghai(2026, 10, 9, 9, 0);
+        lab.Email.Sent.Clear();
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Single(lab.Bark.Bodies);
+        Assert.Contains("已逾期 1 天", lab.Bark.Bodies[0]);
+        var next = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync(r => r.ReminderDate == new DateOnly(2026, 10, 9));
+        Assert.Equal(item.Id, next.HouseholdItemId);
+        Assert.Equal(HouseholdNotificationChannel.Bark, next.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Sent, next.Status);
+    }
+
+    [Fact]
+    public async Task BarkFinalFailure_ThenEmailResolved_SameDayDoesNotSend_NextDayUsesEmail()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var item = await lab.CreateDueTodayAsync("滤网");
+        await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(bark: BarkAddress));
+        lab.Bark.Failure = new HttpRequestException("connection refused");
+
+        await lab.DispatchAsync();
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(1);
+        await lab.DispatchAsync();
+        lab.Clock.UtcNow = lab.Clock.UtcNow.AddMinutes(5);
+        await lab.DispatchAsync();
+        var barkLog = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(HouseholdNotificationChannel.Bark, barkLog.Channel);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, barkLog.Status);
+        Assert.Equal(3, barkLog.AttemptCount);
+        Assert.Empty(lab.Email.Sent);
+
+        var emailInstead = SettingsWith(bark: BarkAddress);
+        emailInstead.BarkEnabled = false;
+        await lab.Settings.UpdateAsync(lab.OwnerId, emailInstead);
+        await lab.DispatchAsync();
+        Assert.Empty(lab.Email.Sent);
+        Assert.Equal(0, await lab.Db.HouseholdReminderLogs.CountAsync(r => r.Channel == HouseholdNotificationChannel.Email));
+        Assert.Equal(0, RateLimitCount(lab));
+
+        for (var i = 0; i < 3; i++)
+            await lab.CreateDueTodayAsync("名额" + i);
+        await lab.DispatchAsync();
+        Assert.Equal(3, lab.Email.Sent.Count);
+        Assert.Equal(0, RateLimitCount(lab));
+        Assert.Equal(0, await lab.Db.HouseholdReminderLogs.CountAsync(r =>
+            r.HouseholdItemId == item.Id && r.Channel == HouseholdNotificationChannel.Email));
+
+        lab.Bark.Failure = null;
+        lab.Email.Sent.Clear();
+        var barkUrls = lab.Bark.Urls.Count;
+        lab.Clock.UtcNow = Shanghai(2026, 10, 9, 9, 0);
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Contains("滤网", lab.Email.Sent[0].Html);
+        Assert.Contains("已逾期 1 天", lab.Email.Sent[0].Html);
+        Assert.Equal(barkUrls, lab.Bark.Urls.Count);
+        var emailLog = await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync(r =>
+            r.HouseholdItemId == item.Id && r.Channel == HouseholdNotificationChannel.Email);
+        Assert.Equal(new DateOnly(2026, 10, 9), emailLog.ReminderDate);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Sent, emailLog.Status);
+        Assert.Equal(HouseholdReminderDeliveryStatus.Failed, (await lab.Db.HouseholdReminderLogs.AsNoTracking().SingleAsync(r =>
+            r.HouseholdItemId == item.Id && r.ReminderDate == new DateOnly(2026, 10, 8))).Status);
+    }
+
+    [Fact]
+    public async Task NewMember_WithoutBark_DefaultsDueChannelToEmail_AndDoesNotRewriteSavedBark()
+    {
+        await using var lab = await NotificationLab.CreateAsync(Shanghai(2026, 10, 8, 9, 0));
+        var fresh = await lab.Settings.GetAsync(lab.OwnerId);
+        Assert.Equal(HouseholdNotificationChannel.Email, fresh.DueChannel);
+        Assert.Equal(HouseholdNotificationChannel.Email, fresh.LeadChannel);
+        Assert.True(fresh.HasDeliverableChannel);
+        Assert.False(await lab.Db.HouseholdNotificationSettings.AnyAsync());
+
+        await lab.CreateDueTodayAsync("滤网");
+        await lab.DispatchAsync();
+        Assert.Single(lab.Email.Sent);
+        Assert.Empty(lab.Bark.Bodies);
+        Assert.Equal(HouseholdNotificationChannel.Email, (await lab.Db.HouseholdReminderLogs.SingleAsync()).Channel);
+
+        var saved = await lab.Settings.UpdateAsync(lab.OwnerId, SettingsWith(due: HouseholdNotificationChannel.Bark));
+        Assert.Equal(HouseholdNotificationChannel.Bark, saved.DueChannel);
+        Assert.Equal(HouseholdNotificationChannel.Bark, (await lab.Settings.GetAsync(lab.OwnerId)).DueChannel);
     }
 
     private static void AssertNoSecrets(string json)

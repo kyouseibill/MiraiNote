@@ -174,7 +174,10 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
 
     private HouseholdNotificationSettingsDto ToDto(HouseholdNotificationSetting? setting, string accountEmail)
     {
+        var unsaved = setting == null;
         setting ??= new HouseholdNotificationSetting();
+        if (unsaved)
+            setting.DueChannel = HouseholdNotificationChannel.Email;
         var readable = TryReadBark(setting.BarkAddressProtected);
         return new HouseholdNotificationSettingsDto
         {
@@ -189,7 +192,13 @@ public sealed class HouseholdNotificationSettingsService : IHouseholdNotificatio
             LeadChannel = setting.LeadChannel,
             DueChannel = setting.DueChannel,
             OverdueIntervalDays = setting.OverdueIntervalDays,
-            NotificationsEnabled = _options.Notifications.Enabled
+            NotificationsEnabled = _options.Notifications.Enabled,
+            HasDeliverableChannel = HouseholdNotificationAvailability.HasDeliverableChannel(
+                setting.BarkEnabled,
+                setting.BarkAddressProtected,
+                setting.EmailEnabled,
+                accountEmail,
+                _protector.IsConfigured)
         };
     }
 

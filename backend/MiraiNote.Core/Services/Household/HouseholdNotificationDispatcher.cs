@@ -15,7 +15,7 @@ public interface IHouseholdNotificationDispatcher
 
 /// <summary>
 /// 按上海时间和家务时钟决定要不要发。关闭总开关时直接返回。
-/// 同一事项、成员、日期、通道只写一条日志；写入冲突视为已发。
+/// 同一事项、成员、日期、通道只写一条日志；当天别的通道已有任何记录则不再另发。写入冲突视为已发。
 /// </summary>
 public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDispatcher
 {
@@ -146,8 +146,14 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             return;
 
         var kind = HouseholdReminderSchedule.LatestKind(today, item.Due, item.LeadDays);
-        var channel = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
-        if (!preference.CanDeliver(channel, _protector.IsConfigured))
+        var preferred = kind == HouseholdReminderKind.Lead ? preference.LeadChannel : preference.DueChannel;
+        // 不可用才改走。已经能发但投递失败的，仍占用原通道日志并按 +1/+5 分钟重试。
+        var resolved = preference.Resolve(preferred, _protector.IsConfigured);
+        if (resolved == null)
+            return;
+        var channel = resolved.Value;
+        // 当天别的通道已有记录（已发送、等待、重试中或最终失败）就不再发。必须在占名额之前跳过。
+        if (await OtherChannelAlreadyRecordedAsync(item.Id, member.Id, today, channel, ct))
             return;
 
         // 先抢到日志再扣邮件名额。已发送、次数用尽或还在退避中的记录直接跳过，不能占掉本分钟的名额。
@@ -213,6 +219,18 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             error,
             ct);
     }
+
+    private Task<bool> OtherChannelAlreadyRecordedAsync(
+        int itemId,
+        int memberId,
+        DateOnly today,
+        HouseholdNotificationChannel channel,
+        CancellationToken ct) =>
+        _db.HouseholdReminderLogs.AsNoTracking().AnyAsync(r =>
+            r.HouseholdItemId == itemId
+            && r.MemberId == memberId
+            && r.ReminderDate == today
+            && r.Channel != channel, ct);
 
     private async Task<ItemClaim?> ClaimItemLogAsync(
         ItemRow item,
@@ -498,7 +516,10 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
         string? accountEmail)
     {
         if (!settings.TryGetValue(memberId, out var setting))
-            setting = new HouseholdNotificationSetting();
+        {
+            // 没保存过设置就没有 Bark 地址。到期和逾期默认走邮件，不改写已经保存的偏好。
+            setting = new HouseholdNotificationSetting { DueChannel = HouseholdNotificationChannel.Email };
+        }
         return NotificationPreference.From(setting, userId, accountEmail);
     }
 
@@ -549,12 +570,13 @@ public sealed class HouseholdNotificationDispatcher : IHouseholdNotificationDisp
             setting.DueChannel,
             setting.OverdueIntervalDays);
 
-        public bool CanDeliver(HouseholdNotificationChannel channel, bool protectorConfigured)
-        {
-            if (channel == HouseholdNotificationChannel.Bark)
-                return BarkEnabled && protectorConfigured && !string.IsNullOrEmpty(BarkAddressProtected);
-            return EmailEnabled && !string.IsNullOrWhiteSpace(Email);
-        }
+        public bool CanDeliver(HouseholdNotificationChannel channel, bool protectorConfigured) =>
+            HouseholdNotificationAvailability.CanDeliver(
+                channel, BarkEnabled, BarkAddressProtected, EmailEnabled, Email, protectorConfigured);
+
+        public HouseholdNotificationChannel? Resolve(HouseholdNotificationChannel preferred, bool protectorConfigured) =>
+            HouseholdNotificationAvailability.Resolve(
+                preferred, BarkEnabled, BarkAddressProtected, EmailEnabled, Email, protectorConfigured);
 
         public IEnumerable<HouseholdNotificationChannel> DeliverableChannels(bool protectorConfigured)
         {

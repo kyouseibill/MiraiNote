@@ -132,6 +132,14 @@ async function sendTest(kind: 'bark' | 'email') {
 
 <template>
   <div>
+    <p
+      v-if="settings && !settings.hasDeliverableChannel"
+      role="status"
+      data-testid="no-deliverable-channel"
+      class="mb-4 rounded-md border border-[#e4d3a8] bg-[#fffaf0] px-4 py-3 text-[13px] leading-6 text-[#6d5a2d]"
+    >
+      当前没有可送达的通道，提醒不会发出
+    </p>
     <p class="mb-4 max-w-2xl text-[13px] leading-6 text-[#68665f]">
       只保存你自己的通知。Bark 地址只接受 https，保存后不再显示完整内容。邮件只会发到账号邮箱，不能改成其他地址。单个事项的提前提醒天数在事项里改，默认 7 天。
     </p>
