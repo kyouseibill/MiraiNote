@@ -10,6 +10,10 @@ export interface Household {
   name: string
   myMemberId: number
   myRole: HouseholdRole
+  /** false 表示还没有家庭。缺省按已有家庭处理，设计预览不带这个字段。 */
+  hasHousehold?: boolean
+  /** 有待处理邀请，且还没有家庭时先接受或拒绝。 */
+  hasPendingInvitations?: boolean
 }
 
 export interface HouseholdMember {

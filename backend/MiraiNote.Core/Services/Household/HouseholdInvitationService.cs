@@ -226,7 +226,9 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
 
         var membership = await _db.HouseholdMembers.AsNoTracking()
             .FirstOrDefaultAsync(m => m.UserId == userId, ct);
-        if (membership != null && membership.HouseholdId != invitation.HouseholdId)
+        if (membership != null
+            && membership.HouseholdId != invitation.HouseholdId
+            && !await IsDisposableEmptyHouseholdAsync(membership.HouseholdId, userId, ct))
             throw new BusinessException(AlreadyElsewhereMessage, 400);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -246,7 +248,18 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
             throw new BusinessException(again.ExpiresAt <= UtcNow() ? ExpiredMessage : HandledMessage, 400);
         }
 
-        if (membership == null)
+        if (membership != null && membership.HouseholdId != invitation.HouseholdId)
+        {
+            if (!await IsDisposableEmptyHouseholdAsync(membership.HouseholdId, userId, ct))
+            {
+                await tx.RollbackAsync(ct);
+                throw new BusinessException(AlreadyElsewhereMessage, 400);
+            }
+
+            await DissolveEmptyHouseholdAsync(membership.Id, membership.HouseholdId, userId, ct);
+        }
+
+        if (membership == null || membership.HouseholdId != invitation.HouseholdId)
         {
             _db.HouseholdMembers.Add(new HouseholdMember
             {
@@ -267,6 +280,47 @@ public sealed class HouseholdInvitationService : IHouseholdInvitationService
 
         await tx.CommitAsync(ct);
         return await MapAcceptedMemberAsync(invitation, ct);
+    }
+
+    /// <summary>
+    /// 只有本人一名成员，且从未有过事项、耗材或完成记录（含已软删）。这种空家庭可以在接受邀请时解散。
+    /// </summary>
+    private async Task<bool> IsDisposableEmptyHouseholdAsync(int householdId, int userId, CancellationToken ct)
+    {
+        var otherMember = await _db.HouseholdMembers.AnyAsync(m =>
+            m.HouseholdId == householdId && m.UserId != userId, ct);
+        if (otherMember)
+            return false;
+
+        if (await _db.HouseholdItems.IgnoreQueryFilters().AnyAsync(i => i.HouseholdId == householdId, ct))
+            return false;
+        if (await _db.HouseholdConsumables.IgnoreQueryFilters().AnyAsync(c => c.HouseholdId == householdId, ct))
+            return false;
+
+        var itemIds = _db.HouseholdItems.IgnoreQueryFilters()
+            .Where(i => i.HouseholdId == householdId)
+            .Select(i => i.Id);
+        return !await _db.HouseholdCompletionRecords.IgnoreQueryFilters()
+            .AnyAsync(r => itemIds.Contains(r.HouseholdItemId), ct);
+    }
+
+    private async Task DissolveEmptyHouseholdAsync(int memberId, int householdId, int userId, CancellationToken ct)
+    {
+        var member = await _db.HouseholdMembers.FirstAsync(m => m.Id == memberId, ct);
+        var household = await _db.Households.FirstAsync(h => h.Id == householdId, ct);
+        var settings = await _db.HouseholdNotificationSettings
+            .Where(s => s.MemberId == memberId)
+            .ToListAsync(ct);
+        var drafts = await _db.HouseholdChatDrafts
+            .Where(d => d.UserId == userId && d.HouseholdId == householdId)
+            .ToListAsync(ct);
+        foreach (var setting in settings)
+            setting.IsDeleted = true;
+        foreach (var draft in drafts)
+            draft.IsDeleted = true;
+        member.IsDeleted = true;
+        household.IsDeleted = true;
+        await _db.SaveChangesAsync(ct);
     }
 
     private async Task<bool> IsHouseholdAdminAsync(int userId, int householdId, CancellationToken ct)

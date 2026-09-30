@@ -1036,7 +1036,7 @@ public class HouseholdNotificationTests
             var db = interceptor == null ? fx.CreateContext() : fx.CreateContextWithInterceptor(interceptor);
             var clock = new MutableTimeProvider(utcNow);
             var rules = new HouseholdCycleRules(new DelegatingHouseholdClock(clock));
-            var access = new HouseholdAccessService(db);
+            var access = new HouseholdAccessService(db, clock);
             var policy = HouseholdAccessPolicy.Default;
             var items = new HouseholdItemService(db, access, rules, policy);
             var consumables = new HouseholdConsumableService(db, access, policy);

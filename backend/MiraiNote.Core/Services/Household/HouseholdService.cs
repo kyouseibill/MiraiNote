@@ -36,13 +36,25 @@ public sealed class HouseholdService : IHouseholdService
 
     public async Task<HouseholdDto> GetMineAsync(int userId, CancellationToken ct = default)
     {
-        var ctx = await _access.GetOrCreateAsync(userId, ct);
+        var ctx = await _access.FindAsync(userId, ct);
+        if (ctx == null && await _access.HasActionableInvitationAsync(userId, ct))
+        {
+            return new HouseholdDto
+            {
+                HasHousehold = false,
+                HasPendingInvitations = true,
+                MyRole = HouseholdRole.Member
+            };
+        }
+
+        ctx ??= await _access.GetOrCreateAsync(userId, ct);
         return new HouseholdDto
         {
             Id = ctx.Household.Id,
             Name = ctx.Household.Name,
             MyMemberId = ctx.Member.Id,
-            MyRole = ctx.Member.Role
+            MyRole = ctx.Member.Role,
+            HasHousehold = true
         };
     }
 

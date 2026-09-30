@@ -73,7 +73,7 @@ async function load() {
   pageError.value = ''
   try {
     await store.loadWorkspace(active.value, asMember.value)
-    await store.fetchItems(query())
+    if (!store.awaitingInvitation) await store.fetchItems(query())
   } catch (error) {
     pageError.value = (await report(error)).message
   } finally {
@@ -119,6 +119,7 @@ onMounted(() => {
 watch(() => route.query.prefill, () => consumePrefill())
 watch([category, includePaused, listScope], () => {
   closeMenu()
+  if (store.awaitingInvitation) return
   void reloadItems()
 })
 
@@ -174,9 +175,12 @@ function statusOf(item: HouseholdItem) {
       <div>
         <p class="mb-2 text-[11px] font-medium tracking-[0.17em] text-[var(--mn-muted)]">MIRAI / HOUSEHOLD</p>
         <h1 class="font-serif text-2xl text-[var(--mn-ink)] sm:text-[28px]">家务周期</h1>
-        <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">{{ store.household?.name || '我的家庭' }}<span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>。下次到期日由服务器计算，日期按北京时间展示。</p>
+        <p class="mt-2 max-w-2xl text-[13px] leading-6 text-[#68665f]">
+          <template v-if="store.awaitingInvitation">你收到了家庭邀请。接受之后才会加入，这里不会先建一个空家庭。</template>
+          <template v-else>{{ store.household?.name || '我的家庭' }}<span v-if="store.household"> · {{ roleLabel(store.household.myRole) }}</span>。下次到期日由服务器计算，日期按北京时间展示。</template>
+        </p>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div v-if="!store.awaitingInvitation" class="flex flex-wrap gap-2">
         <button type="button" class="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--mn-indigo)] px-4 text-[13px] font-medium text-white hover:bg-[var(--mn-indigo-dark)]" @click="openCreate('template')">
           <IconPlus :size="16" />从模板新建
         </button>
@@ -184,7 +188,7 @@ function statusOf(item: HouseholdItem) {
       </div>
     </div>
 
-    <div class="mb-6 flex gap-2 text-[13px]">
+    <div v-if="!store.awaitingInvitation" class="mb-6 flex gap-2 text-[13px]">
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'items' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'items'" @click="section = 'items'">事项</button>
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'stock' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'stock'" @click="section = 'stock'">耗材</button>
       <button type="button" class="h-9 rounded-md px-3" :class="section === 'members' ? 'bg-[#edf0f2] text-[#384b60]' : 'text-[var(--mn-muted)]'" :aria-pressed="section === 'members'" @click="section = 'members'">成员</button>
@@ -199,6 +203,10 @@ function statusOf(item: HouseholdItem) {
     <div v-if="!ready" class="flex h-40 items-center justify-center text-[13px] text-[var(--mn-muted)]">
       <IconLoader2 :size="18" class="mr-2 animate-spin" />正在读取家务周期
     </div>
+
+    <section v-else-if="store.awaitingInvitation" data-testid="invitation-gate">
+      <HouseholdMemberPanel />
+    </section>
 
     <section v-else-if="section === 'items'">
       <div class="mb-4 flex flex-wrap items-center gap-3 text-[13px]">

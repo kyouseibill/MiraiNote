@@ -15,6 +15,7 @@ const leaveOpen = ref(false)
 const acceptKeys = ref<Record<number, string>>({})
 
 const soleAdmin = computed(() => store.isAdmin && store.members.filter((member) => member.role === 'Admin').length <= 1)
+const awaitingInvitation = computed(() => store.household?.hasHousehold === false)
 const removing = computed(() => store.members.find((member) => member.id === removingId.value) ?? null)
 
 onMounted(() => {
@@ -116,9 +117,10 @@ async function confirmLeave() {
 
 <template>
   <div>
-    <p class="mb-4 text-[12px] leading-6 text-[var(--mn-muted)]">
+    <p v-if="!awaitingInvitation" class="mb-4 text-[12px] leading-6 text-[var(--mn-muted)]">
       {{ store.household?.name || '家庭' }}目前有 {{ store.members.length }} 位成员。邀请在站内确认，7 天内有效。
     </p>
+    <p v-else class="mb-4 text-[12px] leading-6 text-[var(--mn-muted)]">接受或拒绝下面的邀请。还没处理之前，不会自动创建家庭。</p>
 
     <section v-if="store.incomingInvitations.length" class="mb-6" data-testid="incoming-invitations">
       <h2 class="mb-2 text-[13px] font-medium text-[var(--mn-ink)]">收到的邀请</h2>
@@ -138,7 +140,7 @@ async function confirmLeave() {
       </ul>
     </section>
 
-    <section v-if="store.isAdmin" class="mb-6">
+    <section v-if="store.isAdmin && !awaitingInvitation" class="mb-6">
       <h2 class="mb-2 text-[13px] font-medium text-[var(--mn-ink)]">邀请成员</h2>
       <p v-if="formError" role="alert" class="mb-2 text-[12px] text-[#9d3b34]">{{ formError }}</p>
       <form class="flex flex-wrap items-center gap-2" data-testid="invite-form" @submit.prevent="invite">
@@ -162,7 +164,7 @@ async function confirmLeave() {
       <p v-else class="mt-3 text-[12px] text-[var(--mn-muted)]">没有待处理的邀请。</p>
     </section>
 
-    <ul class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
+    <ul v-if="!awaitingInvitation" class="divide-y divide-[var(--mn-line)] border-y border-[var(--mn-line)]">
       <li v-for="member in store.members" :key="member.id" class="flex items-center justify-between gap-3 py-4">
         <div class="min-w-0">
           <p class="truncate text-[14px] text-[var(--mn-ink)]">{{ member.username }}</p>
@@ -183,9 +185,9 @@ async function confirmLeave() {
         </div>
       </li>
     </ul>
-    <p v-if="!store.members.length" class="py-8 text-center text-[13px] text-[var(--mn-muted)]">还没有成员。</p>
+    <p v-if="!awaitingInvitation && !store.members.length" class="py-8 text-center text-[13px] text-[var(--mn-muted)]">还没有成员。</p>
 
-    <div class="mt-6 flex flex-wrap items-center gap-3">
+    <div v-if="!awaitingInvitation" class="mt-6 flex flex-wrap items-center gap-3">
       <button type="button" class="h-9 rounded-md border border-[var(--mn-line)] px-3 text-[13px] disabled:opacity-50" data-testid="leave-household" :disabled="busy || soleAdmin" @click="leaveOpen = true">退出家庭</button>
       <p v-if="soleAdmin" class="text-[12px] text-[var(--mn-muted)]" data-testid="sole-admin-note">家庭至少需要一名管理员</p>
     </div>

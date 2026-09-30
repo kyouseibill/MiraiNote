@@ -72,13 +72,19 @@ public enum HouseholdInvitationStatus
     Revoked = 4
 }
 
-/// <summary>当前用户所在家庭。</summary>
+/// <summary>当前用户所在家庭。没有家庭时 <see cref="HasHousehold"/> 为 false，Id 为 0。</summary>
 public class HouseholdDto
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public int MyMemberId { get; set; }
     public HouseholdRole MyRole { get; set; }
+
+    /// <summary>false 表示还没有家庭。有待处理邀请时不会自动创建。</summary>
+    public bool HasHousehold { get; set; }
+
+    /// <summary>有未过期、未撤回的待处理邀请。和 <see cref="HasHousehold"/> 为 false 一起出现时，先接受或拒绝。</summary>
+    public bool HasPendingInvitations { get; set; }
 }
 
 public class HouseholdMemberDto

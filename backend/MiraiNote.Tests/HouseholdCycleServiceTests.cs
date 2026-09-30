@@ -1392,6 +1392,7 @@ public class HouseholdCycleServiceTests
     private sealed class HouseholdFixture : IAsyncDisposable
     {
         private readonly MiraiTestFixture _fx;
+        private readonly IHouseholdClock _clock;
         private readonly HouseholdCycleRules _rules;
         private readonly HouseholdAccessPolicy _policy = HouseholdAccessPolicy.Default;
 
@@ -1437,15 +1438,16 @@ public class HouseholdCycleServiceTests
 
             Db = new MiraiNoteDbContext(builder.Options);
             OwnerId = Db.Users.Single().Id;
-            _rules = new HouseholdCycleRules(new DelegatingHouseholdClock(clock));
-            var access = new HouseholdAccessService(Db);
+            _clock = new DelegatingHouseholdClock(clock);
+            _rules = new HouseholdCycleRules(_clock);
+            var access = new HouseholdAccessService(Db, _clock);
             Household = new HouseholdService(Db, access);
             Items = new HouseholdItemService(Db, access, _rules, _policy);
             Consumables = new HouseholdConsumableService(Db, access, _policy);
         }
 
         public HouseholdItemService ItemsWith(HouseholdAccessPolicy policy) =>
-            new(Db, new HouseholdAccessService(Db), _rules, policy);
+            new(Db, new HouseholdAccessService(Db, _clock), _rules, policy);
 
         public async Task<int> AddUserAsync(string username)
         {

@@ -72,7 +72,8 @@ export const useHouseholdStore = defineStore('household', () => {
   const serverTodayUnavailable = ref(false)
   const notificationSettings = ref<HouseholdNotificationSettings | null>(null)
 
-  const isAdmin = computed(() => household.value?.myRole === 'Admin')
+  const isAdmin = computed(() => household.value?.hasHousehold !== false && household.value?.myRole === 'Admin')
+  const awaitingInvitation = computed(() => household.value?.hasHousehold === false)
   const calendarToday = computed(() => serverToday.value ?? shanghaiToday())
 
   function assertAdmin(message: string) {
@@ -151,6 +152,12 @@ export const useHouseholdStore = defineStore('household', () => {
   async function fetchHousehold() {
     if (previewMode.value) return household.value
     household.value = await householdApi.getMine()
+    if (household.value?.hasHousehold === false) {
+      members.value = []
+      items.value = []
+      consumables.value = []
+      outgoingInvitations.value = []
+    }
     return household.value
   }
 
@@ -191,8 +198,16 @@ export const useHouseholdStore = defineStore('household', () => {
     if (previewMode.value) return
     await householdApi.acceptInvitation(id, idempotencyKey)
     await fetchHousehold()
-    await fetchMembers()
-    await fetchInvitations()
+    if (household.value?.hasHousehold === false) {
+      await fetchInvitations()
+      return
+    }
+    await Promise.all([
+      fetchMembers(),
+      fetchItems(lastQuery.value),
+      fetchConsumables(),
+      fetchInvitations(),
+    ])
   }
 
   async function rejectInvitation(id: number) {
@@ -201,7 +216,18 @@ export const useHouseholdStore = defineStore('household', () => {
       return
     }
     await householdApi.rejectInvitation(id)
-    await fetchInvitations()
+    await fetchHousehold()
+    if (household.value?.hasHousehold === false) {
+      await fetchInvitations()
+      return
+    }
+    await Promise.all([
+      fetchMembers(),
+      fetchItems(lastQuery.value),
+      fetchConsumables(),
+      fetchTemplates(),
+      fetchInvitations(),
+    ])
   }
 
   async function removeMember(memberId: number) {
@@ -290,6 +316,10 @@ export const useHouseholdStore = defineStore('household', () => {
       previewMode.value = false
       await fetchServerToday()
       await fetchHousehold()
+      if (awaitingInvitation.value) {
+        await fetchInvitations()
+        return
+      }
       await Promise.all([
         fetchMembers(),
         fetchItems(lastQuery.value),
@@ -677,6 +707,7 @@ export const useHouseholdStore = defineStore('household', () => {
     loading,
     previewMode,
     isAdmin,
+    awaitingInvitation,
     calendarToday,
     fetchServerToday,
     fetchHousehold,
