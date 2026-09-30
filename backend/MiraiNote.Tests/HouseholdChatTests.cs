@@ -66,7 +66,7 @@ public class HouseholdChatTests
             "13月1日换了滤网",
             "2026年2月30日换了滤网",
             "2026-02-30换了滤网",
-            "今天换了滤网，花了 1000001",
+            "今天换了滤网，花了 1000000000",
             "今天换了滤网，花了 999999999999999999999"
         })
         {
@@ -74,6 +74,28 @@ public class HouseholdChatTests
             Assert.True(parsed.InvalidInput);
             Assert.NotEqual(HouseholdChatIntent.Record, parsed.Intent);
         }
+    }
+
+    [Fact]
+    public void Amounts_KeepThousandsSeparatorsAndFullWidthDigits()
+    {
+        var today = new DateOnly(2026, 10, 8);
+
+        Assert.Equal(1000m, HouseholdChatPhrase.Parse("今天换了滤网，花了1,000元", today).Cost);
+        Assert.Equal(123m, HouseholdChatPhrase.Parse("今天换了滤网，花了１２３元", today).Cost);
+        Assert.Equal(1000m, HouseholdChatPhrase.Parse("今天换了滤网，花了1，000元", today).Cost);
+        Assert.Equal(1234567m, HouseholdChatPhrase.Parse("今天换了滤网，花了1,234,567元", today).Cost);
+        Assert.Equal(12345.60m, HouseholdChatPhrase.Parse("今天换了滤网，花了12,345.60元", today).Cost);
+        Assert.Equal(HouseholdCost.MaxAmount, HouseholdChatPhrase.Parse("今天换了滤网，花了999999999.99元", today).Cost);
+
+        var split = HouseholdChatPhrase.Parse("花了12，3个人分", today);
+        Assert.Equal(12m, split.Cost);
+        Assert.NotEqual(123m, split.Cost);
+        Assert.False(split.InvalidInput);
+
+        var over = HouseholdChatPhrase.Parse("花了1000000000元", today);
+        Assert.True(over.InvalidInput);
+        Assert.Null(over.Cost);
     }
 
     [Fact]
@@ -368,6 +390,26 @@ public class HouseholdChatTests
         Assert.Equal(exact, confirmed.IdempotencyKey);
         Assert.Equal(item.Id, confirmed.StoredItemId);
         Assert.Equal(1, await lab.Db.HouseholdCompletionRecords.CountAsync(r => r.IdempotencyKey == exact));
+    }
+
+    [Fact]
+    public async Task Confirm_RejectsCostAboveTheSharedLimit_AndKeepsTheDraftPending()
+    {
+        await using var lab = await ChatLab.CreateAsync(Morning);
+        var item = await lab.CreateAsync("厨房净水器 PP 棉");
+        var draft = await lab.Chat.InterpretAsync(lab.OwnerId, "今天换了厨房净水器 PP 棉");
+        var request = Confirm(draft, item.Id);
+        request.Cost = HouseholdCost.MaxAmount + 0.01m;
+
+        var rejected = await Assert.ThrowsAsync<BusinessException>(() =>
+            lab.Chat.ConfirmAsync(lab.OwnerId, request, "over-cost"));
+
+        Assert.Equal(400, rejected.StatusCode);
+        Assert.Equal("费用超出范围", rejected.Message);
+        var pending = await lab.Db.HouseholdChatDrafts.SingleAsync(d => d.Id == draft.DraftId);
+        Assert.Null(pending.IdempotencyKey);
+        Assert.Null(pending.StoredItemId);
+        Assert.Equal(0, await lab.Db.HouseholdCompletionRecords.CountAsync());
     }
 
     [Fact]

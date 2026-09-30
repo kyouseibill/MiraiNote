@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
@@ -100,10 +101,11 @@ public sealed class HouseholdService : IHouseholdService
         return await strategy.ExecuteAsync(async () =>
         {
             _db.ChangeTracker.Clear();
-            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+            await LockHouseholdAsync(ctx.Household.Id, ct);
             var member = await LoadMemberAsync(ctx.Household.Id, memberId, ct);
             if (member.Role == HouseholdRole.Admin && request.Role != HouseholdRole.Admin)
-                await LockAdminsAndEnsureAnotherAsync(ctx.Household.Id, member.Id, ct);
+                await EnsureAnotherAdminAsync(ctx.Household.Id, member.Id, ct);
 
             member.Role = request.Role;
             await _db.SaveChangesAsync(ct);
@@ -133,10 +135,11 @@ public sealed class HouseholdService : IHouseholdService
         await strategy.ExecuteAsync(async () =>
         {
             _db.ChangeTracker.Clear();
-            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+            await LockHouseholdAsync(householdId, ct);
             var member = await LoadMemberAsync(householdId, memberId, ct);
             if (member.Role == HouseholdRole.Admin)
-                await LockAdminsAndEnsureAnotherAsync(householdId, member.Id, ct);
+                await EnsureAnotherAdminAsync(householdId, member.Id, ct);
 
             await ClearMemberFootprintsAsync(householdId, member, ct);
             await tx.CommitAsync(ct);
@@ -191,29 +194,39 @@ public sealed class HouseholdService : IHouseholdService
     }
 
     /// <summary>
-    /// 先锁住这个家庭的全部管理员行，再数还剩几位。SQL Server 上更新锁保持到事务结束，
-    /// 并发退出、移除或降级不能把管理员减到零。
+    /// 事务里的第一条语句锁住这一户。SQL Server 用家庭行的更新锁当互斥；
+    /// SQLite 没有 UPDLOCK，改写同一行来占住写锁。退出、移除、改角色都先走这里，再读成员。
     /// </summary>
-    private async Task LockAdminsAndEnsureAnotherAsync(int householdId, int exceptMemberId, CancellationToken ct)
+    private async Task LockHouseholdAsync(int householdId, CancellationToken ct)
     {
         if (_db.Database.IsSqlServer())
         {
-            await _db.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE [HouseholdMember] WITH (UPDLOCK, HOLDLOCK)
-                SET [Role] = [Role]
-                WHERE [HouseholdId] = {householdId} AND [Role] = N'Admin' AND [IsDeleted] = 0
-                """, ct);
-        }
-        else
-        {
-            await _db.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE "HouseholdMember" SET "Role" = "Role"
-                WHERE "HouseholdId" = {householdId} AND "Role" = 'Admin' AND "IsDeleted" = 0
-                """, ct);
+            var connection = _db.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync(ct);
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction()
+                ?? throw new InvalidOperationException("家庭锁必须在事务里取得");
+            command.CommandText = "SELECT [Id] FROM [Household] WITH (UPDLOCK, ROWLOCK) WHERE [Id] = @householdId";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@householdId";
+            parameter.Value = householdId;
+            command.Parameters.Add(parameter);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+            }
+
+            return;
         }
 
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"""UPDATE "Household" SET "Name" = "Name" WHERE "Id" = {householdId}""", ct);
+    }
+
+    private async Task EnsureAnotherAdminAsync(int householdId, int exceptMemberId, CancellationToken ct)
+    {
         var otherAdmins = await _db.HouseholdMembers.CountAsync(m =>
             m.HouseholdId == householdId && m.Role == HouseholdRole.Admin && m.Id != exceptMemberId, ct);
         if (otherAdmins == 0)

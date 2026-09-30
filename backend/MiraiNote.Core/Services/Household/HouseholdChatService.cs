@@ -136,7 +136,7 @@ public sealed class HouseholdChatService : IHouseholdChatService
         var cost = request.Cost ?? draft.Cost;
         if (cost < 0)
             throw new BusinessException("费用不能为负", 400);
-        if (cost > 999999999.99m)
+        if (cost > HouseholdCost.MaxAmount)
             throw new BusinessException("费用超出范围", 400);
         var skip = request.DeductConsumable == false;
         var householdId = access.Household.Id;

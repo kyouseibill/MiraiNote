@@ -678,7 +678,7 @@ public sealed class HouseholdItemService : IHouseholdItemService
             return null;
         if (cost < 0)
             throw new BusinessException("费用不能为负", 400);
-        if (cost > 999999999.99m)
+        if (cost > HouseholdCost.MaxAmount)
             throw new BusinessException("费用超出范围", 400);
         return decimal.Round(cost.Value, 2, MidpointRounding.AwayFromZero);
     }

@@ -26,7 +26,6 @@ internal static partial class HouseholdChatPhrase
 {
     public const string UnrecognizedMessage = "没听懂是要记下家务，还是要查询。请直接说做了什么，或问什么时候换过、最近哪些要到期。";
     public const string RephraseMessage = "日期或金额不合理，请换一种说法。";
-    public const decimal MaxReasonableCost = 1_000_000m;
 
     private static readonly HashSet<string> StopFragments = new(StringComparer.Ordinal)
     {
@@ -36,7 +35,7 @@ internal static partial class HouseholdChatPhrase
 
     public static HouseholdChatParse Parse(string? text, DateOnly today)
     {
-        var raw = (text ?? "").Trim();
+        var raw = NormalizeAmounts((text ?? "").Trim());
         if (raw.Length == 0)
             return new HouseholdChatParse(HouseholdChatIntent.Unrecognized, null, null, null, false);
 
@@ -143,7 +142,7 @@ internal static partial class HouseholdChatPhrase
             return new CostRead(null, false);
         if (!decimal.TryParse(match.Groups[1].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
             return new CostRead(null, true);
-        if (amount > MaxReasonableCost)
+        if (amount > HouseholdCost.MaxAmount)
             return new CostRead(null, true);
         return new CostRead(amount, false);
     }
@@ -265,6 +264,36 @@ internal static partial class HouseholdChatPhrase
         return 0;
     }
 
+    /// <summary>
+    /// 全角数字和小数点先转成半角。千分位只去掉「一位数字、逗号、后面正好三位且不再跟数字」。
+    /// 12，3 这种逗号留着，避免被当成 123。
+    /// </summary>
+    private static string NormalizeAmounts(string text)
+    {
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var ch = chars[i];
+            if (ch is >= '０' and <= '９')
+                chars[i] = (char)('0' + (ch - '０'));
+            else if (ch == '，')
+                chars[i] = ',';
+            else if (ch == '．')
+                chars[i] = '.';
+        }
+
+        var normalized = new string(chars);
+        string previous;
+        do
+        {
+            previous = normalized;
+            normalized = ThousandsSeparator().Replace(normalized, "");
+        }
+        while (normalized != previous);
+
+        return normalized;
+    }
+
     private static string Compact(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -274,6 +303,9 @@ internal static partial class HouseholdChatPhrase
 
     [GeneratedRegex(@"(?:花了|花费|费用)\s*(\d+(?:\.\d{1,2})?)\s*元?")]
     private static partial Regex CostPattern();
+
+    [GeneratedRegex(@"(?<=\d)[,，](?=\d{3}(?!\d))")]
+    private static partial Regex ThousandsSeparator();
 
     [GeneratedRegex(@"上周[一二三四五六日天]|今天|昨天|前天|明天|后天|\d{4}年\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日")]
     private static partial Regex DatePattern();
