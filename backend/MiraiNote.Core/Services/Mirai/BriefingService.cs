@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Mirai;
 
@@ -107,14 +108,14 @@ public class BriefingService : IBriefingService
     public async Task<BriefingDto> RegenerateAsync(
         int userId, DateOnly date, int tzOffsetMinutes, CancellationToken ct = default)
     {
-        // 每日限额：按 UTC 日统计 briefing_regenerate 动作（Decision=applied）。
-        var utcDayStart = DateTime.UtcNow.Date;
+        // 每日限额：按上海日历日统计 briefing_regenerate 动作（Decision=applied）。
+        var shanghaiDayStart = ShanghaiClock.DayRangeUtc(ShanghaiClock.Today(DateTimeOffset.UtcNow)).StartUtc;
         var regenerateCountToday = await _db.AIActionLogs
             .AsNoTracking()
             .CountAsync(l => l.UserId == userId
                 && l.ActionType == AIActionLog.ActionTypeBriefingRegenerate
                 && l.Decision == "applied"
-                && l.CreatedAt >= utcDayStart, ct);
+                && l.CreatedAt >= shanghaiDayStart, ct);
         if (regenerateCountToday >= RegenerateDailyLimit)
             throw new BusinessException($"晨报重生成已达每日上限（{RegenerateDailyLimit} 次）", 429);
 

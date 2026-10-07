@@ -11,6 +11,7 @@ public static class DependencyInjection
     {
         services.AddScoped<Services.DatabaseSeeder>();
         services.AddSingleton<Services.IJwtTokenService, Services.JwtTokenService>();
+        services.AddSingleton<Services.IBackgroundWork, Services.BackgroundWork>();
         services.AddScoped<Services.IAuthService, Services.AuthService>();
         services.AddScoped<Services.IUserAdminService, Services.UserAdminService>();
         services.AddScoped<Services.IWorkLogService, Services.WorkLogService>();

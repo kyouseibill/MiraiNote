@@ -1,4 +1,5 @@
 import { http } from '@/api/auth'
+import { apiFailure } from '@/utils/apiError'
 import { staticUrl } from '@/composables/useStaticUrl'
 
 const EXPORT_API_MARKER = '/api/v1/mirai/exports/'
@@ -114,7 +115,7 @@ async function messageFromAxiosError(error: unknown): Promise<string> {
     const msg = (data as { message?: string }).message
     if (msg) return msg
   }
-  return err?.message || '文件下载失败，请稍后重试'
+  return apiFailure(error, '文件下载失败，请稍后重试').message
 }
 
 /** Authenticated blob download via same-origin API path + `<a download>`. */

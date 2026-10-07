@@ -164,9 +164,10 @@ public class FileStorageTests
     [Fact]
     public void ExportsRoot_FallsBackToSiblingOfWorkspace()
     {
-        var options = new FileSystemOptions { WorkspaceRoot = @"D:\fileservice\workspace" };
-        Assert.Equal(@"D:\fileservice\exports", MiraiFileStorage.ExportsRoot(options));
-        Assert.Equal(@"D:\fileservice\temp", MiraiFileStorage.TempRoot(options));
+        var workspace = Path.Combine(Path.GetTempPath(), "fileservice", "workspace");
+        var options = new FileSystemOptions { WorkspaceRoot = workspace };
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "fileservice", "exports"), MiraiFileStorage.ExportsRoot(options));
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "fileservice", "temp"), MiraiFileStorage.TempRoot(options));
     }
 
     [Fact]

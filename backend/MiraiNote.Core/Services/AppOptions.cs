@@ -11,8 +11,13 @@ public class AppOptions
     public string FrontendBaseUrl { get; set; } = "http://localhost:5173";
 
     /// <summary>
+    /// 对外绝对地址。有值时验证邮件链接用它，否则回落 <see cref="FrontendBaseUrl"/>。
+    /// </summary>
+    public string? PublicBaseUrl { get; set; }
+
+    /// <summary>
     /// 是否要求邮箱验证。
-    /// 设为 false 时注册后直接标记为已验证，不发送验证邮件。
+    /// 为 false 时不发验证邮件、不拦截登录；自助注册的 IsEmailVerified 仍为 false。
     /// </summary>
     public bool RequireEmailVerification { get; set; } = true;
 }

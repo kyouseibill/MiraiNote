@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using MiraiNote.Shared.Json;
+
 namespace MiraiNote.Shared.Dtos.WorkLogs;
 
 // ===== 请求 DTO =====
@@ -10,6 +13,7 @@ public class CreateWorkLogRequest
     public string? Tags { get; set; }
     public string? Category { get; set; }
     /// <summary>记录日期（仅日期部分，格式 yyyy-MM-dd）。</summary>
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
     /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
     public byte Status { get; set; } = 0;
@@ -24,6 +28,7 @@ public class UpdateWorkLogRequest
     public string? Content { get; set; }
     public string? Tags { get; set; }
     public string? Category { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
     /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
     public byte Status { get; set; } = 0;
@@ -47,9 +52,11 @@ public class WorkLogListQuery
     public string? Tag { get; set; }
 
     /// <summary>日期范围起（含），格式 yyyy-MM-dd。</summary>
+    [JsonConverter(typeof(NullableCalendarDateJsonConverter))]
     public DateTime? DateFrom { get; set; }
 
     /// <summary>日期范围止（含），格式 yyyy-MM-dd。</summary>
+    [JsonConverter(typeof(NullableCalendarDateJsonConverter))]
     public DateTime? DateTo { get; set; }
 
     /// <summary>按状态筛选：null=全部，1=进行中，2=已完成，3=已延期。</summary>
@@ -66,6 +73,7 @@ public class WorkLogDto
     public string? Content { get; set; }
     public string? Tags { get; set; }
     public string? Category { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
     /// <summary>工作状态：0=未标记，1=进行中，2=已完成，3=已延期。</summary>
     public byte Status { get; set; }

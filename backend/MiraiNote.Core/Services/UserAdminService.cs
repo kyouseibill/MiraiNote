@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MiraiNote.Data;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
@@ -45,7 +46,10 @@ public class UserAdminService : IUserAdminService
         if (!string.IsNullOrWhiteSpace(query.Keyword))
         {
             var kw = query.Keyword.Trim();
-            q = q.Where(u => u.Username.Contains(kw) || u.Email.Contains(kw));
+            var normalized = AccountNormalizer.NormalizeEmail(kw);
+            q = q.Where(u => u.Username.Contains(kw)
+                || u.NormalizedUserName.Contains(normalized)
+                || u.Email.Contains(normalized));
         }
 
         var total = await q.CountAsync(ct);
@@ -81,11 +85,14 @@ public class UserAdminService : IUserAdminService
         {
             throw new BusinessException("用户名和邮箱为必填");
         }
-        if (await _db.Users.AnyAsync(u => u.Username == request.Username, ct))
+        var username = AccountNormalizer.DisplayUsername(request.Username);
+        var normalizedUsername = AccountNormalizer.NormalizeUsername(request.Username);
+        var email = AccountNormalizer.NormalizeEmail(request.Email);
+        if (await _db.Users.AnyAsync(u => u.NormalizedUserName == normalizedUsername, ct))
         {
             throw new BusinessException("用户名已被使用");
         }
-        if (await _db.Users.AnyAsync(u => u.Email == request.Email, ct))
+        if (await _db.Users.AnyAsync(u => u.Email == email, ct))
         {
             throw new BusinessException("邮箱已被注册");
         }
@@ -96,8 +103,9 @@ public class UserAdminService : IUserAdminService
 
         var user = new User
         {
-            Username = request.Username,
-            Email = request.Email,
+            Username = username,
+            NormalizedUserName = normalizedUsername,
+            Email = email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(initialPassword),
             IsAdmin = request.IsAdmin,
             IsEmailVerified = true, // 管理员创建默认已验证

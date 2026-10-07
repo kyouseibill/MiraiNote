@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 using MiraiNote.API.Services;
 using MiraiNote.Core.Services;
 using MiraiNote.Core.Services.ChatModels;
@@ -101,24 +101,18 @@ public static class ApiDependencyInjection
         {
             c.SwaggerDoc("v1", new OpenApiInfo { Title = "MiraiNote API", Version = "v1" });
 
-            var bearerScheme = new OpenApiSecurityScheme
+            c.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, new OpenApiSecurityScheme
             {
                 Name = "Authorization",
                 Description = "请输入 JWT，格式：Bearer {token}",
                 In = ParameterLocation.Header,
                 Type = SecuritySchemeType.Http,
                 Scheme = "bearer",
-                BearerFormat = "JWT",
-                Reference = new OpenApiReference
-                {
-                    Id = JwtBearerDefaults.AuthenticationScheme,
-                    Type = ReferenceType.SecurityScheme
-                }
-            };
-            c.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, bearerScheme);
-            c.AddSecurityRequirement(new OpenApiSecurityRequirement
+                BearerFormat = "JWT"
+            });
+            c.AddSecurityRequirement(document => new OpenApiSecurityRequirement
             {
-                { bearerScheme, Array.Empty<string>() }
+                [new OpenApiSecuritySchemeReference(JwtBearerDefaults.AuthenticationScheme, document)] = []
             });
         });
 

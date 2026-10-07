@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Auth;
 using MiraiNote.Shared.Dtos.Mirai;
@@ -201,8 +202,7 @@ public class InboxTriageService : IInboxTriageService
         }
 
         // 单事务：创建实体 → 写 AIActionLog → 置 Dispatched。任一步失败全部回滚。
-        // SQL Server 启用了 EnableRetryOnFailure，手动事务必须包进执行策略（否则
-        // SqlServerRetryingExecutionStrategy 拒绝用户事务，联调 2026-08-22 实测触发）。
+        // EnableRetryOnFailure 下，手动事务必须包进执行策略，否则重试策略会拒绝用户事务。
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
@@ -211,7 +211,7 @@ public class InboxTriageService : IInboxTriageService
             {
                 var created = new List<CreatedRefDto>();
                 var logDateSource = TryParseLocalDate(envelope.LocalTime)?.ToDateTime(TimeOnly.MinValue)
-                                    ?? DateTime.UtcNow.Date;
+                                    ?? ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
 
                 foreach (var (req, suggestion, merged) in planned)
                 {

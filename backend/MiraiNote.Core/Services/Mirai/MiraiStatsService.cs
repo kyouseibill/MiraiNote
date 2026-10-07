@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Dtos.Mirai;
 
 namespace MiraiNote.Core.Services.Mirai;
@@ -40,24 +41,29 @@ public class MiraiStatsService : IMiraiStatsService
             .ThenBy(x => x.ActionType, StringComparer.Ordinal)
             .ToList();
 
-        // 近 7 天（含今日，按 UTC 日）：按天零填充，便于前端画稳定的时间轴。
-        var todayUtc = DateTime.UtcNow.Date;
-        var windowStart = todayUtc.AddDays(-6);
-        var byDate = await logs
+        // 近 7 天（含今日，按上海日历日）在内存分桶。EF 不能可移植地把 timestamptz 转成 Asia/Shanghai。
+        var today = ShanghaiClock.Today(DateTimeOffset.UtcNow);
+        var windowStart = ShanghaiClock.DayRangeUtc(today.AddDays(-6)).StartUtc;
+        var createdAts = await logs
             .Where(l => l.CreatedAt >= windowStart)
-            .Select(l => new { Day = EF.Property<DateTime>(l, nameof(AIActionLog.CreatedAt)).Date })
-            .GroupBy(x => x.Day)
-            .Select(g => new { Day = g.Key, Count = g.Count() })
+            .Select(l => l.CreatedAt)
             .ToListAsync(ct);
-        var countByDate = byDate.ToDictionary(x => x.Day, x => x.Count);
+        var countByDate = createdAts
+            .GroupBy(created => ShanghaiClock.ToShanghaiDate(new DateTimeOffset(AsUtc(created))))
+            .ToDictionary(g => g.Key, g => g.Count());
         var last7Days = Enumerable.Range(0, 7)
             .Select(offset =>
             {
-                var day = windowStart.AddDays(offset);
+                var day = today.AddDays(offset - 6);
                 return new DateCountDto(day.ToString("yyyy-MM-dd"), countByDate.GetValueOrDefault(day));
             })
             .ToList();
 
         return new AiActionStatsDto(total, byActionType, last7Days);
     }
+
+    private static DateTime AsUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
 }

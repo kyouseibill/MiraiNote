@@ -18,13 +18,11 @@ public class WelcomeGreetingServiceTests : IDisposable
 
     private WelcomeGreetingService CreateService(
         string? apiKey,
-        IHttpClientFactory factory,
-        MiraiNoteDbContext? db = null)
+        IHttpClientFactory factory)
     {
         var cache = new MemoryCache(new MemoryCacheOptions());
         _caches.Add(cache);
         return new(
-            db ?? _fx.CreateContext(),
             cache,
             Options.Create(new DeepSeekOptions
             {
@@ -164,32 +162,22 @@ public class WelcomeGreetingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task PickFromPoolAsync_UsesDbRowsAndHonorsExclude()
+    public async Task PickFromPoolAsync_UsesBuiltinPoolAndHonorsExclude()
     {
-        await using (var seed = _fx.CreateContext())
-        {
-            seed.WelcomeGreetings.AddRange(
-                new WelcomeGreeting { Content = "库内第三条", IsActive = true, SortOrder = 30 },
-                new WelcomeGreeting { Content = "库内第一条", IsActive = true, SortOrder = 10 },
-                new WelcomeGreeting { Content = "库内第二条", IsActive = true, SortOrder = 20 },
-                new WelcomeGreeting { Content = "已禁用", IsActive = false, SortOrder = 1 });
-            await seed.SaveChangesAsync();
-        }
-
         var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
         var service = CreateService(apiKey: null, factory);
-        var expectedPool = new[] { "库内第一条", "库内第二条", "库内第三条" };
+        var exclude = WelcomeGreetingService.GreetingPool[1];
 
         for (var i = 0; i < 20; i++)
         {
-            var greeting = await service.PickFromPoolAsync(exclude: "库内第二条");
-            Assert.Contains(greeting, expectedPool);
-            Assert.NotEqual("库内第二条", greeting);
+            var greeting = await service.PickFromPoolAsync(exclude);
+            Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
+            Assert.NotEqual(exclude, greeting);
         }
     }
 
     [Fact]
-    public async Task PickFromPoolAsync_FallsBackWhenDbEmpty()
+    public async Task PickFromPoolAsync_UsesBuiltinPoolWhenNoDatabase()
     {
         var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
         var service = CreateService(apiKey: null, factory);

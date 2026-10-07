@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useWeeklyReportStore } from '@/stores/weeklyReport'
 import { useToast } from '@/composables/useToast'
+import { apiFailure } from '@/utils/apiError'
 
 const store = useWeeklyReportStore()
 const toast = useToast()
@@ -72,7 +73,7 @@ async function generate() {
     toast.success('周报生成成功')
   } catch (e) {
     // 流式请求不走 axios 拦截器，这里手动 toast（含"正在生成中"等业务错误）
-    toast.error(e instanceof Error && e.message ? e.message : '周报生成失败')
+    toast.error(apiFailure(e, '周报生成失败').message)
   }
 }
 

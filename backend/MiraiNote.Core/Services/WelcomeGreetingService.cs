@@ -1,12 +1,11 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Mirai;
-using MiraiNote.Data.Context;
+using MiraiNote.Shared;
 
 namespace MiraiNote.Core.Services;
 
@@ -21,16 +20,13 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     /// <summary>文案池首句；保留常量名供兼容旧测试/引用。</summary>
     public const string FallbackGreeting = "今天，AI 正在把不可能改写成日常";
     private const int MaxLength = 60;
-    private const string PoolCacheKey = "welcome-greeting-pool";
-    private static readonly TimeSpan PoolCacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan GenerateTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MinimumGreetingTtl = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ShortGreetingTtl = TimeSpan.FromMinutes(5);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> GreetingLocks = new();
 
     /// <summary>
-    /// P0 本地文案池（硬编码回退）。运行时优先读 WelcomeGreeting 表；
-    /// 选句改为每次随机，并通过 exclude 避免连续重复（池大小 ≥ 2 时）。
+    /// 内置文案池。没有写入入口，不再读库；AI 失败时从这里随机选句。
     /// </summary>
     public static readonly string[] GreetingPool =
     [
@@ -76,20 +72,17 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         "今天，给你的 AI 一个值得完成的任务",
     ];
 
-    private readonly MiraiNoteDbContext _db;
     private readonly IMemoryCache _cache;
     private readonly DeepSeekOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WelcomeGreetingService> _logger;
 
     public WelcomeGreetingService(
-        MiraiNoteDbContext db,
         IMemoryCache cache,
         IOptions<DeepSeekOptions> options,
         IHttpClientFactory httpClientFactory,
         ILogger<WelcomeGreetingService> logger)
     {
-        _db = db;
         _cache = cache;
         _options = options.Value;
         _httpClientFactory = httpClientFactory;
@@ -190,11 +183,11 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         return ttl < MinimumGreetingTtl ? ShortGreetingTtl : ttl;
     }
 
-    /// <summary>从缓存/DB 加载文案池后随机选句；池空或异常时回退硬编码原 40 条。</summary>
-    public async Task<string> PickFromPoolAsync(string? exclude = null, CancellationToken ct = default)
+    /// <summary>从内置文案池随机选句。AI 失败时走这里，不访问数据库。</summary>
+    public Task<string> PickFromPoolAsync(string? exclude = null, CancellationToken ct = default)
     {
-        var pool = await LoadPoolAsync(ct);
-        return PickRandomFromPool(pool, exclude);
+        _ = ct;
+        return Task.FromResult(PickRandomFromPool(GreetingPool, exclude));
     }
 
     /// <summary>对硬编码 GreetingPool 随机选句（兼容旧测试入口）。</summary>
@@ -226,38 +219,6 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         }
 
         return candidates[random.Next(candidates.Count)];
-    }
-
-    private async Task<IReadOnlyList<string>> LoadPoolAsync(CancellationToken ct)
-    {
-        if (_cache.TryGetValue(PoolCacheKey, out IReadOnlyList<string>? cached) && cached is { Count: > 0 })
-            return cached;
-
-        try
-        {
-            // 全局软删除过滤器已排除 IsDeleted=1；再按 IsActive + SortOrder,Id 排序
-            var list = await _db.WelcomeGreetings
-                .AsNoTracking()
-                .Where(g => g.IsActive)
-                .OrderBy(g => g.SortOrder)
-                .ThenBy(g => g.Id)
-                .Select(g => g.Content)
-                .ToListAsync(ct);
-
-            if (list.Count == 0)
-            {
-                _logger.LogWarning("WelcomeGreeting 表无可用文案，回退硬编码文案池");
-                return GreetingPool;
-            }
-
-            _cache.Set(PoolCacheKey, (IReadOnlyList<string>)list, PoolCacheDuration);
-            return list;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "加载 WelcomeGreeting 文案池失败，回退硬编码文案池");
-            return GreetingPool;
-        }
     }
 
     private static bool IsValid(string? value) =>

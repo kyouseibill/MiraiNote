@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MiraiNote.Data.Context;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Agent;
 
 namespace MiraiNote.Core.Services.Tools;
@@ -214,7 +215,7 @@ public class ServerRecordOverviewTool : IServerAgentTool
 
     private static (DateTime from, DateTime to) ParseRange(string argumentsJson)
     {
-        var today = DateTime.Today;
+        var today = ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
         var from = today.AddDays(-6);
         var to = today;
 

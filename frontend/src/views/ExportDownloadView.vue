@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { apiFailure } from '@/utils/apiError'
 import {
   downloadExportFile,
   fileNameFromUrl,
@@ -25,7 +26,7 @@ onMounted(async () => {
     await downloadExportFile(path, fileNameFromUrl(path))
     toast.success('下载完成')
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '文件下载失败，请稍后重试'
+    const message = apiFailure(error, '文件下载失败，请稍后重试').message
     toast.error(message)
   } finally {
     status.value = '即将返回对话…'

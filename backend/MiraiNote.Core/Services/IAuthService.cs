@@ -4,7 +4,7 @@ namespace MiraiNote.Core.Services;
 
 public interface IAuthService
 {
-    Task RegisterAsync(RegisterRequest request, CancellationToken ct = default);
+    Task<RegisterResult> RegisterAsync(RegisterRequest request, CancellationToken ct = default);
 
     Task<LoginResult> LoginAsync(LoginRequest request, CancellationToken ct = default);
 
@@ -14,9 +14,11 @@ public interface IAuthService
 
     Task<LoginResult> RefreshTokenAsync(string refreshToken, CancellationToken ct = default);
 
-    Task VerifyEmailAsync(string token, CancellationToken ct = default);
+    Task<VerifyEmailResult> VerifyEmailAsync(string token, CancellationToken ct = default);
 
-    Task ResendVerifyEmailAsync(int userId, CancellationToken ct = default);
+    Task ResendVerifyEmailAsync(string email, CancellationToken ct = default);
+
+    Task ResendVerifyByTokenAsync(string token, CancellationToken ct = default);
 
     Task ForgotPasswordAsync(string email, CancellationToken ct = default);
 

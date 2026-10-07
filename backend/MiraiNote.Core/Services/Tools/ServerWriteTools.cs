@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MiraiNote.Core.Services;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Dtos.LifeLogs;
 using MiraiNote.Shared.Dtos.Memos;
@@ -205,8 +207,8 @@ public class ServerCreateMemoTool : ServerWriteTool
             priority = (byte)p.GetInt32();
         bool isPinned = args.TryGetProperty("is_pinned", out var pin) && pin.ValueKind == JsonValueKind.True;
         DateTime? remindAt = null;
-        if (TryStr(args, "remind_at", out var rs) && DateTime.TryParse(rs, out var rd))
-            remindAt = rd.ToUniversalTime();
+        if (TryStr(args, "remind_at", out var rs))
+            remindAt = ShanghaiClock.ParseToUtc(rs);
         byte remindMethods = 0;
         if (args.TryGetProperty("remind_methods", out var rm) && rm.ValueKind == JsonValueKind.Number)
             remindMethods = (byte)rm.GetInt32();
@@ -259,8 +261,8 @@ public class ServerUpdateMemoTool : ServerWriteTool
             priority = (byte)p.GetInt32();
         bool isPinned = args.TryGetProperty("is_pinned", out var pin) && pin.ValueKind == JsonValueKind.True;
         DateTime? remindAt = null;
-        if (TryStr(args, "remind_at", out var rs) && DateTime.TryParse(rs, out var rd))
-            remindAt = rd.ToUniversalTime();
+        if (TryStr(args, "remind_at", out var rs))
+            remindAt = ShanghaiClock.ParseToUtc(rs);
         byte remindMethods = 0;
         if (args.TryGetProperty("remind_methods", out var rm) && rm.ValueKind == JsonValueKind.Number)
             remindMethods = (byte)rm.GetInt32();

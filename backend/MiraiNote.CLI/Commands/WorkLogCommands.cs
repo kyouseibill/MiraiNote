@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -211,7 +212,7 @@ public sealed class WorkLogCreateCommand(ApiClient api, TokenStore store) : Asyn
             var title = input.RequiredString("title").Trim();
             if (title.Length > 200) throw new WorkLogInputException("title 不能超过 200 个字符");
 
-            var logDate = input.OptionalDate("logDate") ?? DateTime.Today;
+            var logDate = input.OptionalDate("logDate") ?? ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
             var status = input.OptionalStatus("status") ?? 0;
             var payload = new
             {

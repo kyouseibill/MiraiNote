@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
 
@@ -11,6 +12,16 @@ namespace MiraiNote.Data.Context;
 /// </summary>
 public class MiraiNoteDbContext : DbContext
 {
+    private const string NotDeletedFilter = "\"IsDeleted\" = false";
+
+    private static readonly ValueConverter<DateTime, DateOnly> CalendarDate = new(
+        v => DateOnly.FromDateTime(v),
+        v => v.ToDateTime(TimeOnly.MinValue));
+
+    private static readonly ValueConverter<DateTime?, DateOnly?> NullableCalendarDate = new(
+        v => v.HasValue ? DateOnly.FromDateTime(v.Value) : null,
+        v => v.HasValue ? v.Value.ToDateTime(TimeOnly.MinValue) : null);
+
     private readonly ICurrentUserService? _currentUserService;
 
     public DbSet<User> Users => Set<User>();
@@ -29,7 +40,6 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<InboxItem> InboxItems => Set<InboxItem>();
     public DbSet<DailyBriefing> DailyBriefings => Set<DailyBriefing>();
     public DbSet<AIActionLog> AIActionLogs => Set<AIActionLog>();
-    public DbSet<WelcomeGreeting> WelcomeGreetings => Set<WelcomeGreeting>();
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
@@ -50,17 +60,26 @@ public class MiraiNoteDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // ===== 唯一索引：Username / Email =====
-        // 注意：HasFilter 与软删除过滤器配合，只对未删除记录强制唯一
+        // ===== 唯一索引：NormalizedUserName / Email =====
+        // 用户名原样留在 Username；比较和唯一约束只用小写列。邮箱列本身已是小写。
+        // HasFilter 与软删除过滤器配合，只对未删除记录强制唯一。
         modelBuilder.Entity<User>()
-            .HasIndex(u => u.Username)
+            .HasIndex(u => u.NormalizedUserName)
             .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
+            .HasFilter(NotDeletedFilter);
 
         modelBuilder.Entity<User>()
             .HasIndex(u => u.Email)
             .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
+            .HasFilter(NotDeletedFilter);
+
+        // 纯日期列：PostgreSQL 用 date，避免把日历日当成 UTC 瞬时再偏移 8 小时。
+        modelBuilder.Entity<WorkLog>().Property(w => w.LogDate).HasConversion(CalendarDate);
+        modelBuilder.Entity<LifeLog>().Property(l => l.LogDate).HasConversion(CalendarDate);
+        modelBuilder.Entity<WeeklyReport>().Property(r => r.WeekStart).HasConversion(CalendarDate);
+        modelBuilder.Entity<WeeklyReport>().Property(r => r.WeekEnd).HasConversion(CalendarDate);
+        modelBuilder.Entity<WeeklyReportReference>().Property(r => r.WeekStart).HasConversion(NullableCalendarDate);
+        modelBuilder.Entity<WeeklyReportReference>().Property(r => r.WeekEnd).HasConversion(NullableCalendarDate);
 
         modelBuilder.Entity<EmailVerifyToken>()
             .HasIndex(t => t.Token);
@@ -225,7 +244,7 @@ public class MiraiNoteDbContext : DbContext
         modelBuilder.Entity<AgentMemory>()
             .HasIndex(m => new { m.UserId, m.Key })
             .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
+            .HasFilter(NotDeletedFilter);
 
         modelBuilder.Entity<AgentMemory>()
             .HasIndex(m => m.UserId);
@@ -268,7 +287,7 @@ public class MiraiNoteDbContext : DbContext
         modelBuilder.Entity<DailyBriefing>()
             .HasIndex(b => new { b.UserId, b.BriefDate })
             .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
+            .HasFilter(NotDeletedFilter);
 
         modelBuilder.Entity<DailyBriefing>()
             .HasOne(b => b.User)
@@ -288,15 +307,6 @@ public class MiraiNoteDbContext : DbContext
             .WithMany()
             .HasForeignKey(a => a.UserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        // ===== WelcomeGreeting：文案唯一（未删除）+ 启用排序索引 =====
-        modelBuilder.Entity<WelcomeGreeting>()
-            .HasIndex(g => g.Content)
-            .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
-
-        modelBuilder.Entity<WelcomeGreeting>()
-            .HasIndex(g => new { g.IsActive, g.SortOrder });
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
@@ -318,11 +328,35 @@ public class MiraiNoteDbContext : DbContext
     /// - Modified：仅更新 UpdatedAt/By
     /// 未登录场景 UserId=0，统一回退为 1（超级管理员）。
     /// </summary>
+    public override int SaveChanges()
+    {
+        ApplyAudit();
+        return base.SaveChanges();
+    }
+
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        ApplyAudit();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    private void ApplyAudit()
     {
         var now = DateTime.UtcNow;
         var userId = _currentUserService?.UserId ?? 0;
         var effectiveUserId = userId > 0 ? userId : 1;
+
+        foreach (var entry in ChangeTracker.Entries<User>())
+        {
+            if (entry.State is not (EntityState.Added or EntityState.Modified))
+                continue;
+
+            entry.Entity.Username = AccountNormalizer.DisplayUsername(entry.Entity.Username);
+            entry.Entity.NormalizedUserName = AccountNormalizer.NormalizeUsername(entry.Entity.Username);
+            entry.Entity.Email = AccountNormalizer.NormalizeEmail(entry.Entity.Email);
+        }
+
+        NormalizeInstantKinds();
 
         foreach (var entry in ChangeTracker.Entries<BaseEntity>())
         {
@@ -340,7 +374,36 @@ public class MiraiNoteDbContext : DbContext
                 entry.Entity.UpdatedBy = effectiveUserId;
             }
         }
-
-        return base.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// timestamptz 列只接受 UTC。未标注 Kind 的瞬时值按既有约定视为 UTC，不加减 8 小时。
+    /// 日历日列（LogDate / WeekStart / WeekEnd）保持日期部分，不在这里改 Kind。
+    /// </summary>
+    private void NormalizeInstantKinds()
+    {
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State is not (EntityState.Added or EntityState.Modified))
+                continue;
+
+            foreach (var prop in entry.Properties)
+            {
+                if (prop.Metadata.ClrType != typeof(DateTime) && prop.Metadata.ClrType != typeof(DateTime?))
+                    continue;
+                if (prop.CurrentValue is not DateTime value)
+                    continue;
+                if (IsCalendarDate(prop.Metadata.Name))
+                    continue;
+
+                if (value.Kind == DateTimeKind.Unspecified)
+                    prop.CurrentValue = DateTime.SpecifyKind(value, DateTimeKind.Utc);
+                else if (value.Kind == DateTimeKind.Local)
+                    prop.CurrentValue = value.ToUniversalTime();
+            }
+        }
+    }
+
+    private static bool IsCalendarDate(string propertyName) =>
+        propertyName is "LogDate" or "WeekStart" or "WeekEnd";
 }

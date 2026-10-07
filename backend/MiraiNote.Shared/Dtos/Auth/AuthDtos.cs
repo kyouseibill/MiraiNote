@@ -28,6 +28,66 @@ public class ResendVerifyEmailRequest
     public string Email { get; set; } = string.Empty;
 }
 
+public class ResendVerifyTokenRequest
+{
+    public string Token { get; set; } = string.Empty;
+}
+
+public static class RegisterOutcomes
+{
+    public const string VerificationEmailSent = "verification_email_sent";
+    public const string VerificationEmailFailed = "verification_email_failed";
+    public const string VerificationDisabled = "verification_disabled";
+}
+
+public static class VerifyEmailStatuses
+{
+    public const string Verified = "verified";
+    public const string AlreadyVerified = "already_verified";
+    public const string Expired = "expired";
+    public const string Invalid = "invalid";
+}
+
+public static class AuthMessages
+{
+    public const string ResendVerify =
+        "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。";
+
+    public const string RegisterEmailSent = "注册成功，请查收验证邮件";
+    public const string RegisterEmailFailed = "验证邮件发送失败，请稍后重发";
+    public const string RegisterVerificationDisabled = "注册成功";
+
+    public const string VerifySuccess = "验证成功";
+    public const string VerifyAlready = "邮箱已验证，请直接登录";
+    public const string VerifyExpired = "链接已过期";
+    public const string VerifyInvalid = "链接无效";
+
+    public static string RegisterMessage(string outcome) => outcome switch
+    {
+        RegisterOutcomes.VerificationEmailSent => RegisterEmailSent,
+        RegisterOutcomes.VerificationEmailFailed => RegisterEmailFailed,
+        _ => RegisterVerificationDisabled
+    };
+
+    public static string VerifyMessage(string status) => status switch
+    {
+        VerifyEmailStatuses.Verified => VerifySuccess,
+        VerifyEmailStatuses.AlreadyVerified => VerifyAlready,
+        VerifyEmailStatuses.Expired => VerifyExpired,
+        _ => VerifyInvalid
+    };
+}
+
+public class RegisterResult
+{
+    public string Outcome { get; set; } = string.Empty;
+}
+
+public class VerifyEmailResult
+{
+    public string Status { get; set; } = string.Empty;
+}
+
 public class ForgotPasswordRequest
 {
     public string Email { get; set; } = string.Empty;

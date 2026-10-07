@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Agent;
 
 namespace MiraiNote.CLI.Agent.Tools;
@@ -210,7 +211,7 @@ public class GenerateWeeklyReportTool : ApiBackedTool
             weekStart = parsed;
         else
         {
-            var today = DateTime.Today;
+            var today = ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
             weekStart = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
         }
 
@@ -252,7 +253,7 @@ public class CreateWorkLogTool : ApiBackedTool
         if (!ToolArgHelper.TryGetString(args, "title", out var title))
             return "创建失败：title 为必填项。";
 
-        DateTime logDate = DateTime.Today;
+        DateTime logDate = ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
         if (ToolArgHelper.TryGetString(args, "log_date", out var ds))
             DateTime.TryParse(ds, out logDate);
 

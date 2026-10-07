@@ -2,6 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import { workspaceApi, type WorkspaceEntry } from '@/api/workspace'
 import { useToast } from '@/composables/useToast'
+import { apiFailure } from '@/utils/apiError'
 
 const emit = defineEmits<{
   attach: [result: { fileName: string; fileType: string; textContent: string }]
@@ -36,7 +37,7 @@ async function load() {
     entries.value = result.entries
     currentPath.value = result.currentPath
   } catch (e: any) {
-    toast.error(e?.response?.data?.message ?? '加载失败')
+    toast.error(apiFailure(e, '加载失败').message)
   } finally {
     loading.value = false
   }
@@ -63,7 +64,7 @@ async function attachFile(entry: WorkspaceEntry) {
     })
     toast.success(`已附加：${result.fileName}`)
   } catch (e: any) {
-    toast.error(e?.response?.data?.message ?? '附加失败')
+    toast.error(apiFailure(e, '附加失败').message)
   } finally {
     attaching.value = null
   }

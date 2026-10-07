@@ -6,7 +6,7 @@ namespace MiraiNote.Data.Context;
 
 /// <summary>
 /// 仅供 EF Core Migration（dotnet ef）使用的设计期 DbContext 工厂。
-/// 使用 MigrationConnection（迁移账户：Bill.Gong / db_owner），不会注册到运行时 DI 容器。
+/// 使用 MigrationConnection（迁移账户），不会注册到运行时 DI 容器。
 /// 应用程序运行时始终使用 <see cref="MiraiNoteDbContext"/> + DefaultConnection（应用账户）。
 /// </summary>
 public class MigrationDbContextFactory : IDesignTimeDbContextFactory<MiraiNoteDbContext>
@@ -28,7 +28,7 @@ public class MigrationDbContextFactory : IDesignTimeDbContextFactory<MiraiNoteDb
                 "未找到 ConnectionStrings:MigrationConnection。请在 appsettings.Development.json 中配置迁移账户连接字符串。");
 
         var optionsBuilder = new DbContextOptionsBuilder<MiraiNoteDbContext>();
-        optionsBuilder.UseSqlServer(connectionString);
+        optionsBuilder.UseNpgsql(connectionString);
 
         // 设计期不需要 ICurrentUserService，使用单参构造
         return new MiraiNoteDbContext(optionsBuilder.Options);

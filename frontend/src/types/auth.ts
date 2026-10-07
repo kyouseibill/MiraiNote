@@ -39,6 +39,22 @@ export interface AuthResponse {
   user: User
 }
 
+export type RegisterOutcome =
+  | 'verification_email_sent'
+  | 'verification_email_failed'
+  | 'verification_disabled'
+
+export interface RegisterResult {
+  outcome: RegisterOutcome
+  message: string
+}
+
+export type VerifyEmailStatus = 'verified' | 'already_verified' | 'expired' | 'invalid'
+
+export interface VerifyEmailResult {
+  status: VerifyEmailStatus
+}
+
 // 验证邮箱
 export interface VerifyEmailRequest {
   token: string
@@ -47,6 +63,13 @@ export interface VerifyEmailRequest {
 export interface ResendVerifyEmailRequest {
   email: string
 }
+
+export interface ResendVerifyTokenRequest {
+  token: string
+}
+
+export const RESEND_VERIFY_MESSAGE =
+  '如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。'
 
 // 忘记/重置密码
 export interface ForgotPasswordRequest {

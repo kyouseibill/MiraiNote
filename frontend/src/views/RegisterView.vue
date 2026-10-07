@@ -2,7 +2,10 @@
 import { reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
+import { useResendCooldown } from '@/composables/useResendCooldown'
+import { RESEND_VERIFY_MESSAGE, type RegisterOutcome } from '@/types/auth'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
@@ -25,6 +28,11 @@ const errors = reactive({
   confirmPassword: '',
 })
 const loading = ref(false)
+const outcome = ref<RegisterOutcome | null>(null)
+const notice = ref('')
+const resendNotice = ref('')
+const resendLoading = ref(false)
+const { remaining, start: startCooldown } = useResendCooldown()
 
 // 用户名：字母或数字开头；中间可含字母、数字、下划线、点；
 // 相邻两个特殊字符之间必须有字母/数字；不能以特殊字符结尾；3-30 位
@@ -115,25 +123,57 @@ async function onSubmit() {
   if (!validate()) return
   loading.value = true
   try {
-    await auth.register({
+    const result = await auth.register({
       username: form.username,
       email: form.email,
       password: form.password,
       confirmPassword: form.confirmPassword,
     })
-    toast.success('注册成功，请登录')
-    router.replace({ name: 'login', query: { username: form.username } })
+    if (result.outcome === 'verification_disabled') {
+      toast.success('注册成功')
+      router.replace({ name: 'login', query: { username: form.username } })
+      return
+    }
+    outcome.value = result.outcome
+    notice.value = result.outcome === 'verification_email_failed'
+      ? '验证邮件发送失败，请稍后重发'
+      : '注册成功，请查收验证邮件'
   } catch {
     // toast 已显示
   } finally {
     loading.value = false
   }
 }
+
+async function onResend() {
+  resendLoading.value = true
+  try {
+    resendNotice.value = (await authApi.resendVerify({ email: form.email.trim() })) || RESEND_VERIFY_MESSAGE
+    startCooldown()
+  } catch {
+    // toast 已显示
+  } finally {
+    resendLoading.value = false
+  }
+}
 </script>
 
 <template>
   <AuthCard title="创建未来ノート账号" subtitle="开启你的个人助理之旅">
-    <form class="space-y-4" @submit.prevent="onSubmit">
+    <div v-if="outcome" class="space-y-4 text-center">
+      <p class="text-sm text-gray-700">{{ notice }}</p>
+      <button type="button" class="btn-primary" :disabled="resendLoading || remaining > 0" @click="onResend">
+        <span v-if="resendLoading">发送中…</span>
+        <span v-else-if="remaining > 0">{{ remaining }} 秒后可再次发送</span>
+        <span v-else>重发验证邮件</span>
+      </button>
+      <p v-if="resendNotice" class="text-sm text-gray-600 text-left">{{ resendNotice }}</p>
+      <p class="text-sm text-center text-gray-600">
+        <router-link :to="{ name: 'login', query: { username: form.username } }" class="text-brand hover:text-brand-dark font-medium">去登录</router-link>
+      </p>
+    </div>
+
+    <form v-else class="space-y-4" @submit.prevent="onSubmit">
       <FormField label="用户名" :error="errors.username" hint="3–30 位，以字母或数字开头，可含字母、数字、下划线（_）、点（.），不允许连续出现特殊字符">
         <input v-model="form.username" type="text" autocomplete="username" class="form-input" placeholder="例如 mirai.user 或 john_doe" @blur="checkUsername" />
       </FormField>

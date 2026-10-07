@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using MiraiNote.Shared.Json;
+
 namespace MiraiNote.Shared.Dtos.LifeLogs;
 
 /// <summary>
@@ -22,6 +25,7 @@ public class CreateLifeLogRequest
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
     public List<string>? ImagePaths { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
 }
 
@@ -34,6 +38,7 @@ public class UpdateLifeLogRequest
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
     public List<string>? ImagePaths { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
 }
 
@@ -47,6 +52,7 @@ public class LifeLogDto
     public string? Mood { get; set; }
     public string? ImagePath { get; set; }
     public List<string> ImagePaths { get; set; } = [];
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime LogDate { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
