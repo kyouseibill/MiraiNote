@@ -24,6 +24,7 @@ public class ChatController : ControllerBase
     private readonly ChatSessionRunGate _runGate;
     private readonly IAgentRunService _agentRuns;
     private readonly ILogger<ChatController> _logger;
+    private readonly ChatFileLibrary? _files;
 
     // 确认状态：key = sessionId，value = TaskCompletionSource
     private static readonly ConcurrentDictionary<int, TaskCompletionSource<bool>> _pendingConfirms = new();
@@ -35,7 +36,8 @@ public class ChatController : ControllerBase
         ChatFileParserService fileParser,
         ChatSessionRunGate runGate,
         IAgentRunService agentRuns,
-        ILogger<ChatController> logger)
+        ILogger<ChatController> logger,
+        ChatFileLibrary? files = null)
     {
         _service = service;
         _currentUser = currentUser;
@@ -43,6 +45,7 @@ public class ChatController : ControllerBase
         _runGate = runGate;
         _agentRuns = agentRuns;
         _logger = logger;
+        _files = files;
     }
 
     [HttpGet("sessions")]
@@ -689,6 +692,9 @@ public class ChatController : ControllerBase
             return BadRequest(ApiResponse.Fail("图片内容与文件格式不符，或图片已损坏"));
 
         var textContent = await _fileParser.ExtractTextAsync(buffer, file.FileName, ct);
+        string? storedPath = null;
+        if (_files != null)
+            storedPath = _files.SaveUpload(_currentUser.UserId, file.FileName, buffer.ToArray(), DateTime.UtcNow);
         var mimeType = GetMimeType(ext);
         var isImage = mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
         var dataUrl = isImage
@@ -703,7 +709,8 @@ public class ChatController : ControllerBase
             FileSizeBytes = file.Length,
             MimeType = mimeType,
             DataUrl = dataUrl,
-            IsImage = isImage
+            IsImage = isImage,
+            StoredPath = storedPath
         };
 
         return Ok(ApiResponse<ChatAttachmentResponseDto>.Ok(result, "文件已解析"));

@@ -102,6 +102,8 @@ export interface ChatAttachmentContent {
   mimeType?: string
   dataUrl?: string
   isImage?: boolean
+  /** 私有工作区相对路径，例如 uploads/2026/10/文件.pdf */
+  storedPath?: string
 }
 
 export interface SendMessagePayload {
@@ -126,4 +128,5 @@ export interface ChatAttachmentResponse {
   mimeType?: string
   dataUrl?: string
   isImage?: boolean
+  storedPath?: string
 }

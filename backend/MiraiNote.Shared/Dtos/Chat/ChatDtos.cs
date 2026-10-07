@@ -122,6 +122,8 @@ public class ChatAttachmentContent
     public string? MimeType { get; set; }
     public string? DataUrl { get; set; }
     public bool IsImage { get; set; }
+    /// <summary>保存到用户私有工作区后的相对路径，例如 uploads/2026/10/文件.pdf。</summary>
+    public string? StoredPath { get; set; }
 }
 
 /// <summary>
@@ -136,6 +138,8 @@ public class ChatAttachmentResponseDto
     public string? MimeType { get; set; }
     public string? DataUrl { get; set; }
     public bool IsImage { get; set; }
+    /// <summary>保存到用户私有工作区后的相对路径。</summary>
+    public string? StoredPath { get; set; }
 }
 
 /// <summary>

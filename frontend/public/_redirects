@@ -1,0 +1,4 @@
+# Vue Router history 模式。没有这个重写时，刷新 /chat 这类路径会 404。
+# Cloudflare Pages 在没有顶层 404.html 时也会按 SPA 处理；这里写明回退。
+# /api/v1 同样会被重写成 index.html，直到同域反代或可公开的 HTTPS API 接上。
+/*    /index.html   200

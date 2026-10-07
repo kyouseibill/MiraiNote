@@ -1,0 +1,6 @@
+# Cloudflare Pages 静态站点（Vue 3 + Vite）。
+# 控制台 Git 接入时：根目录 frontend，构建命令 npm run build，输出目录 dist。
+# 项目名可在首次创建 Pages 项目前修改。生产 API 仍使用 .env.production 里的同源 /api/v1，
+# 这里不配置后端地址：Pages 不会把 /api 转到 IIS。
+name = "mirainote"
+pages_build_output_dir = "./dist"

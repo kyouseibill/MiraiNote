@@ -1267,6 +1267,48 @@
   font-size: 11px;
   line-height: 1.9;
 }
+.chat-file-library {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-bottom: 22px;
+}
+.chat-file-library section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-file-library h3,
+.chat-file-library-heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mn-ink);
+}
+.chat-file-library-heading {
+  margin-bottom: 10px;
+}
+.chat-file-library-hint,
+.chat-file-library-empty,
+.chat-file-library-note,
+.chat-file-library-state {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #68665f;
+}
+.chat-file-library-note {
+  padding: 10px 12px;
+  border: 1px solid var(--mn-line);
+  border-radius: 8px;
+  background: #f7f4ee;
+  color: var(--mn-ink);
+}
+.chat-file-library-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .chat-artifacts {
   display: flex;
   flex-direction: column;

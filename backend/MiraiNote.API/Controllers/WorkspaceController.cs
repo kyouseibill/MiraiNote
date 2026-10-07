@@ -1,3 +1,4 @@
+using System.Net.Mime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -15,15 +16,43 @@ public class WorkspaceController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly FileSystemOptions _fsOptions;
     private readonly ChatFileParserService _parser;
+    private readonly ChatFileLibrary _files;
 
     public WorkspaceController(
         ICurrentUserService currentUser,
         IOptions<FileSystemOptions> fsOptions,
-        ChatFileParserService parser)
+        ChatFileParserService parser,
+        ChatFileLibrary files)
     {
         _currentUser = currentUser;
         _fsOptions = fsOptions.Value;
         _parser = parser;
+        _files = files;
+    }
+
+    /// <summary>
+    /// 聊天文件库：用户上传、工作模式生成的文件，以及导出成品。
+    /// 首次读取时，把私有区根目录里已经生成的散落文件归入 generated/archive。
+    /// </summary>
+    [HttpGet("library")]
+    public ActionResult<ApiResponse<ChatFileLibrarySnapshot>> Library()
+    {
+        var snapshot = _files.List(_currentUser.UserId, DateTime.UtcNow);
+        return Ok(ApiResponse<ChatFileLibrarySnapshot>.Ok(snapshot));
+    }
+
+    /// <summary>
+    /// 下载用户自己的上传文件或工作生成文件。成品导出仍走 /api/v1/mirai/exports。
+    /// </summary>
+    [HttpGet("download")]
+    public IActionResult Download([FromQuery] string? path)
+    {
+        var full = _files.ResolvePrivateDownload(_currentUser.UserId, path);
+        if (full == null)
+            return NotFound(ApiResponse.Fail("文件不存在"));
+
+        var downloadName = ChatFileLibrary.DisplayName(Path.GetFileName(full));
+        return PhysicalFile(full, ContentTypeFor(full), downloadName);
     }
 
     /// <summary>
@@ -160,6 +189,23 @@ public class WorkspaceController : ControllerBase
             Scope = request.Scope ?? "private"
         }));
     }
+
+    private static string ContentTypeFor(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".json" => MediaTypeNames.Application.Json,
+        ".csv" => "text/csv",
+        ".html" or ".htm" => "text/html",
+        ".md" or ".txt" or ".log" => MediaTypeNames.Text.Plain,
+        ".zip" => "application/zip",
+        _ => MediaTypeNames.Application.Octet
+    };
 }
 
 public class WorkspaceDirDto

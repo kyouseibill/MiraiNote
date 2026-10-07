@@ -12,6 +12,7 @@ import type {
   ToolCallEvent,
 } from '@/types/chat'
 import { chatApi } from '@/api/chat'
+import { householdEntryEnabled } from '@/features/householdEntry'
 import { householdApi } from '@/api/household'
 import { createIdempotencyKey } from '@/utils/idempotencyKey'
 import { agentApi } from '@/api/agent'
@@ -172,6 +173,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadSessionDrafts(sessionId: number, requestVersion: number) {
+    if (!householdEntryEnabled) {
+      if (requestVersion === selectionVersion && currentSession.value?.id === sessionId)
+        sessionHouseholdDrafts.value = []
+      return
+    }
     try {
       const rows = await householdApi.listChatDrafts(sessionId)
       if (requestVersion !== selectionVersion) return
