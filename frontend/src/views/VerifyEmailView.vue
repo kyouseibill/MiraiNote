@@ -4,14 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
 import { useResendCooldown } from '@/composables/useResendCooldown'
 import { RESEND_VERIFY_MESSAGE, type VerifyEmailStatus } from '@/types/auth'
-import { apiFailure } from '@/utils/apiError'
+import { apiFailure, SERVER_ERROR_MESSAGE } from '@/utils/apiError'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-const phase = ref<'verifying' | 'idle' | VerifyEmailStatus>('idle')
+const phase = ref<'verifying' | 'idle' | 'server_error' | VerifyEmailStatus>('idle')
 const message = ref('')
 const token = ref('')
 const resendNotice = ref('')
@@ -29,23 +29,33 @@ const statusCopy: Record<VerifyEmailStatus, string> = {
   invalid: '链接无效',
 }
 
-onMounted(async () => {
+onMounted(() => {
   const queryToken = route.query.token as string | undefined
   if (!queryToken) {
     phase.value = 'idle'
     return
   }
   token.value = queryToken
+  void verifyCurrentToken()
+})
+
+async function verifyCurrentToken() {
   phase.value = 'verifying'
   try {
-    const result = await authApi.verifyEmail({ token: queryToken })
+    const result = await authApi.verifyEmail({ token: token.value })
     phase.value = result.status
     message.value = statusCopy[result.status] || statusCopy.invalid
   } catch (error: unknown) {
+    const failure = apiFailure(error, '链接无效')
+    if (failure.status != null && failure.status >= 500) {
+      phase.value = 'server_error'
+      message.value = failure.message || SERVER_ERROR_MESSAGE
+      return
+    }
     phase.value = 'invalid'
-    message.value = apiFailure(error, '链接无效').message
+    message.value = failure.message
   }
-})
+}
 
 async function onResendEmail() {
   for (const k of Object.keys(resendErrors)) delete resendErrors[k]
@@ -102,6 +112,11 @@ function goLogin() {
         <span v-else>重发验证邮件</span>
       </button>
       <p v-if="resendNotice" class="text-sm text-gray-600 text-left">{{ resendNotice }}</p>
+    </div>
+
+    <div v-else-if="phase === 'server_error'" class="text-center py-4 space-y-4">
+      <p class="text-sm text-gray-700">{{ message }}</p>
+      <button class="btn-primary" @click="verifyCurrentToken">重试</button>
     </div>
 
     <div v-else-if="phase === 'invalid'" class="text-center py-4 space-y-4">

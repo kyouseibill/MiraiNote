@@ -123,7 +123,7 @@ http.interceptors.response.use(
 
     // 统一错误 toast。个别请求会自己处理 409/422 文案，避免和这里各弹一次。
     const toast = useToast()
-    const msg = apiFailure(error, '网络错误').message
+    const msg = apiFailure(error, '请求失败').message
     const skipStatuses = original?.skipErrorToastStatuses
     if (status !== 401 && !(status != null && skipStatuses?.includes(status))) toast.error(msg)
     return Promise.reject(error)

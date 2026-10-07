@@ -91,8 +91,8 @@ public class MemoReminderBackgroundService : BackgroundService
             if (memo.RemindAt < deadline)
             {
                 _logger.LogWarning(
-                    "备忘提醒已超时放弃：MemoId={MemoId}, RemindAt={RemindAt}, To={Email}",
-                    memo.Id, memo.RemindAt, item.Email);
+                    "备忘提醒已超时放弃：MemoId={MemoId}, RemindAt={RemindAt}",
+                    memo.Id, memo.RemindAt);
                 memo.EmailReminderSent = true;
                 memo.RemindedAt ??= DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
@@ -113,7 +113,10 @@ public class MemoReminderBackgroundService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "发送备忘提醒邮件失败：MemoId={MemoId}, To={Email}", memo.Id, item.Email);
+                _logger.LogError(
+                    "发送备忘提醒邮件失败：MemoId={MemoId}，类型 {ExceptionType}",
+                    memo.Id,
+                    ex.GetType().Name);
                 // 未超时则下个周期继续重试
             }
         }

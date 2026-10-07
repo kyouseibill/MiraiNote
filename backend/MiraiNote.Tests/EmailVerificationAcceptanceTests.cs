@@ -184,6 +184,50 @@ public class EmailVerificationAcceptanceTests
     }
 
     [Fact]
+    public async Task Resend_ExpiresPreviousToken_NewTokenStillVerifies()
+    {
+        using var h = new Harness();
+        await h.Auth.RegisterAsync(Bill());
+        var oldToken = TokenFromLink(h.Links[0]);
+        var row = await h.Db.EmailVerifyTokens.SingleAsync(t => t.Token == oldToken);
+        row.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        await h.Db.SaveChangesAsync();
+
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        Assert.Equal(2, h.Links.Count);
+        var newToken = TokenFromLink(h.Links[1]);
+
+        Assert.Equal(VerifyEmailStatuses.Expired, (await h.Auth.VerifyEmailAsync(oldToken)).Status);
+        Assert.Equal(VerifyEmailStatuses.Verified, (await h.Auth.VerifyEmailAsync(newToken)).Status);
+    }
+
+    [Fact]
+    public async Task ResendBySupersededToken_StillSendsAndKeepsSameCopy()
+    {
+        using var h = new Harness();
+        await h.Auth.RegisterAsync(Bill());
+        var oldToken = TokenFromLink(h.Links[0]);
+        var row = await h.Db.EmailVerifyTokens.SingleAsync(t => t.Token == oldToken);
+        row.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        await h.Db.SaveChangesAsync();
+
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        var issued = await h.Db.EmailVerifyTokens.Where(t => t.UserId == row.UserId).ToListAsync();
+        foreach (var tokenRow in issued)
+            tokenRow.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        await h.Db.SaveChangesAsync();
+
+        var before = h.Links.Count;
+        await h.Auth.ResendVerifyByTokenAsync(oldToken);
+        Assert.Equal(before + 1, h.Links.Count);
+        Assert.Equal(
+            "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。",
+            AuthMessages.ResendVerify);
+        Assert.Equal(VerifyEmailStatuses.Expired, (await h.Auth.VerifyEmailAsync(oldToken)).Status);
+        Assert.Equal(VerifyEmailStatuses.Verified, (await h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[^1]))).Status);
+    }
+
+    [Fact]
     public async Task Register_SendFailure_KeepsAccountAndHidesSmtpSecret()
     {
         using var h = new Harness();

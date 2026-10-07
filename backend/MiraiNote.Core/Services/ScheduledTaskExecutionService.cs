@@ -100,7 +100,10 @@ public class ScheduledTaskExecutionService : BackgroundService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "发送任务 {TaskId} 结果邮件失败", task.Id);
+                        _logger.LogWarning(
+                            "发送任务 {TaskId} 结果邮件失败，类型 {ExceptionType}",
+                            task.Id,
+                            ex.GetType().Name);
                     }
                 }
             }
