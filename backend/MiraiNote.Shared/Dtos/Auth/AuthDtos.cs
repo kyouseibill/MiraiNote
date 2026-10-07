@@ -53,7 +53,7 @@ public static class AuthMessages
     public const string ResendVerify =
         "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。";
 
-    public const string RegisterEmailSent = "注册成功，请查收验证邮件";
+    public const string RegisterEmailSent = "注册成功，请查收验证邮件。没收到的话，请看一下垃圾邮件箱。";
     public const string RegisterEmailFailed = "验证邮件发送失败，请稍后重发";
     public const string RegisterVerificationDisabled = "注册成功";
 

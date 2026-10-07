@@ -137,7 +137,7 @@ async function onSubmit() {
     outcome.value = result.outcome
     notice.value = result.outcome === 'verification_email_failed'
       ? '验证邮件发送失败，请稍后重发'
-      : '注册成功，请查收验证邮件'
+      : '注册成功，请查收验证邮件。没收到的话，请看一下垃圾邮件箱。'
     // 成功和失败都会先写入验证 token，后端 60 秒冷却已经开始。
     startCooldown()
   } catch {
