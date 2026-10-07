@@ -29,7 +29,23 @@ MIRAI_USE_MOCK=0
 - 应用层：还原第 1 步的站点备份即可（旧代码对 M1 新表无感知）
 - 数据层：无需回滚（迁移只增不改；极端情况用备份 .bak 还原整库）
 
-## 四、安全提示（不阻塞上线，建议排期）
+## 四、邮件（SMTP）
+
+注册验证、找回密码和备忘提醒都走同一套 SMTP。密钥只放在服务器自己的 `appsettings.Production.json` 或环境变量里，不要提交到 git。QQ 邮箱要等 SMTP 授权码重新生成后再填到部署环境。
+
+| 配置项 | 环境变量 |
+| --- | --- |
+| `Email:SmtpHost` | `Email__SmtpHost` |
+| `Email:SmtpPort` | `Email__SmtpPort` |
+| `Email:SmtpUser` | `Email__SmtpUser` |
+| `Email:SmtpPassword` | `Email__SmtpPassword` |
+| `Email:FromAddress` | `Email__FromAddress` |
+| `Email:FromName` | `Email__FromName` |
+| `Email:UseSsl` | `Email__UseSsl` |
+
+`SmtpHost` 为空时不发信。`UseSsl` 为 `false` 时走 STARTTLS，为 `true` 时走 SSL 直连。
+
+## 五、安全提示（不阻塞上线，建议排期）
 
 - `:10090` 是明文 HTTP，桌面端 JWT 与数据经公网明文传输。个人使用可接受，建议后续加 HTTPS（反向代理或证书直挂），或 M3 本地模式彻底绕开
 - 本次会话中数据库口令与 DeepSeek Key 曾在明文渠道出现过，按既定计划**轮换一次**（改 SQL 登录口令 + DeepSeek Key，同步更新服务器 appsettings.Production.json）

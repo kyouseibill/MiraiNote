@@ -12,7 +12,6 @@ import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi } from '@/api/welcome'
-import HouseholdUpcomingCard from '@/components/household/HouseholdUpcomingCard.vue'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
@@ -340,7 +339,6 @@ onUnmounted(cancelWelcomeTypewriter)
             <IconArrowRight :size="15" :stroke-width="1.4" />
           </button>
         </div>
-        <HouseholdUpcomingCard />
       </section>
 
       <aside class="border-t border-[#e1dcd4] pt-10 xl:border-l xl:border-t-0 xl:pl-12 xl:pt-14">

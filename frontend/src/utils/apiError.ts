@@ -1,16 +1,8 @@
 import axios from 'axios'
 
-/** 与 HouseholdAccessService.PendingInvitationMessage 一致。页面不直接展示这句。 */
-export const pendingInvitationConflictMessage = '请先处理家庭邀请'
-
 export interface ApiFailure {
   status: number | null
   message: string
-}
-
-export function isPendingInvitationConflict(error: unknown): boolean {
-  const failure = apiFailure(error)
-  return failure.status === 409 && failure.message === pendingInvitationConflictMessage
 }
 
 export function apiFailure(error: unknown): ApiFailure {

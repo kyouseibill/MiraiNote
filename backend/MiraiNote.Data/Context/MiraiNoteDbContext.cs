@@ -32,18 +32,6 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<WelcomeGreeting> WelcomeGreetings => Set<WelcomeGreeting>();
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
-    public DbSet<Household> Households => Set<Household>();
-    public DbSet<HouseholdMember> HouseholdMembers => Set<HouseholdMember>();
-    public DbSet<HouseholdItem> HouseholdItems => Set<HouseholdItem>();
-    public DbSet<HouseholdCompletionRecord> HouseholdCompletionRecords => Set<HouseholdCompletionRecord>();
-    public DbSet<HouseholdConsumable> HouseholdConsumables => Set<HouseholdConsumable>();
-    public DbSet<HouseholdItemTemplate> HouseholdItemTemplates => Set<HouseholdItemTemplate>();
-    public DbSet<HouseholdNotificationSetting> HouseholdNotificationSettings => Set<HouseholdNotificationSetting>();
-    public DbSet<HouseholdReminderLog> HouseholdReminderLogs => Set<HouseholdReminderLog>();
-    public DbSet<HouseholdConsumableReminder> HouseholdConsumableReminders => Set<HouseholdConsumableReminder>();
-    public DbSet<HouseholdChatDraft> HouseholdChatDrafts => Set<HouseholdChatDraft>();
-    public DbSet<HouseholdInvitation> HouseholdInvitations => Set<HouseholdInvitation>();
-
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
         : base(options)
@@ -310,8 +298,6 @@ public class MiraiNoteDbContext : DbContext
         modelBuilder.Entity<WelcomeGreeting>()
             .HasIndex(g => new { g.IsActive, g.SortOrder });
 
-        HouseholdModelConfiguration.Configure(modelBuilder);
-
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -328,7 +314,7 @@ public class MiraiNoteDbContext : DbContext
 
     /// <summary>
     /// 自动填充 BaseEntity 的审计字段：
-    /// - Added：CreatedAt/By 与 UpdatedAt/By 全部赋值。若调用方已写入非默认 CreatedAt（家务完成记录用家务时钟），则保留该值。
+    /// - Added：CreatedAt/By 与 UpdatedAt/By 全部赋值。若调用方已写入非默认 CreatedAt，则保留该值。
     /// - Modified：仅更新 UpdatedAt/By
     /// 未登录场景 UserId=0，统一回退为 1（超级管理员）。
     /// </summary>
@@ -344,9 +330,6 @@ public class MiraiNoteDbContext : DbContext
             {
                 if (entry.Entity.CreatedAt == default)
                     entry.Entity.CreatedAt = now;
-                // 接受邀请会事先写上家务时钟。自动创建的家庭不写，这里与 CreatedAt 对齐，避免把部署时刻当成新的加入起点。
-                if (entry.Entity is HouseholdMember joined && joined.NotifyFromUtc == default)
-                    joined.NotifyFromUtc = entry.Entity.CreatedAt;
                 entry.Entity.CreatedBy = effectiveUserId;
                 entry.Entity.UpdatedAt = now;
                 entry.Entity.UpdatedBy = effectiveUserId;

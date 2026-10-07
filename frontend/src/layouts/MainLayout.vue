@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
   IconBooks,
-  IconCalendarTime,
   IconChecklist,
   IconFileText,
   IconHome,
@@ -25,7 +24,6 @@ interface NavItem {
   to: string
   label: string
   icon: Component
-  matchPrefix?: boolean
 }
 
 interface NavGroup {
@@ -48,7 +46,6 @@ const groups: NavGroup[] = [
     items: [
       { to: '/life/memos', label: '生活备忘', icon: IconNotebook },
       { to: '/life/logs', label: '生活记录', icon: IconBooks },
-      { to: '/household', label: '家务周期', icon: IconCalendarTime, matchPrefix: true },
     ],
   },
   {
@@ -70,19 +67,15 @@ watch(() => route.fullPath, () => {
 })
 
 function isNavCurrent(item: NavItem) {
-  if (item.matchPrefix) return route.path === item.to || route.path.startsWith(`${item.to}/`)
   return route.path === item.to
 }
 
 function navTarget(item: NavItem) {
-  const keepPreview = isDesignPreview.value && (item.to === '/dashboard' || item.to === '/life/logs' || item.to === '/household')
+  const keepPreview = isDesignPreview.value && (item.to === '/dashboard' || item.to === '/life/logs')
   if (!keepPreview) return item.to
   return {
     path: item.to,
-    query: {
-      designPreview: '1',
-      ...(route.query.as === 'member' ? { as: 'member' } : {}),
-    },
+    query: { designPreview: '1' },
   }
 }
 

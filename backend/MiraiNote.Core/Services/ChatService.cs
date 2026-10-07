@@ -9,7 +9,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Tools;
 using MiraiNote.Core.Services.ChatModels;
-using MiraiNote.Core.Services.Household;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Agent;
@@ -141,8 +140,7 @@ public class ChatService : IChatService
         "search_work_logs", "search_memos", "search_life_logs", "get_weekly_reports",
         "search_internet", "fetch_web_page", "get_weather", "query_calendar",
         "get_current_time", "calculate", "record_overview", "read_file", "list_files",
-        "list_scheduled_tasks", "recall", "load_skill",
-        Tools.ServerHouseholdChatTool.ToolName
+        "list_scheduled_tasks", "recall", "load_skill"
     };
 
     private const string ChatReadOnlyPrompt = """
@@ -206,7 +204,6 @@ public class ChatService : IChatService
         Tools.ServerScheduleTaskTool scheduleTask,
         Tools.ServerListScheduledTasksTool listScheduledTasks,
         Tools.ServerLoadSkillTool loadSkill,
-        Tools.ServerHouseholdChatTool householdChat,
         Services.Mirai.IMiraiContextProvider contextProvider,
         IChatModelRegistry modelRegistry,
         IChatModelProviderResolver modelProviderResolver,
@@ -243,7 +240,7 @@ public class ChatService : IChatService
             getWeather, sendEmail, exportFile, queryCalendar,
             currentTime, calculator, recordOverview,
             readFile, writeFile, deleteFile, moveFile, publishWorkspaceFile, listFiles, runShell,
-            scheduleTask, listScheduledTasks, loadSkill, householdChat
+            scheduleTask, listScheduledTasks, loadSkill
         }) _toolRegistry.Register(t);
     }
 
@@ -603,7 +600,6 @@ public class ChatService : IChatService
         ChatStreamCallback callback,
         CancellationToken ct = default)
     {
-        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -742,7 +738,6 @@ public class ChatService : IChatService
         Func<Task<bool>>? confirmCallback = null,
         CancellationToken ct = default)
     {
-        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
         {
             await callback("error", "{\"message\":\"消息内容不能为空\"}");
@@ -1072,16 +1067,10 @@ public class ChatService : IChatService
     private static string PrepareToolResultForClient(string toolName, string result)
     {
         // export_file 返回的是结构化 JSON，截断后前端无法解析 URL 和 markdown。
-        if (string.Equals(toolName, "export_file", StringComparison.Ordinal)
-            || string.Equals(toolName, Tools.ServerHouseholdChatTool.ToolName, StringComparison.Ordinal))
+        if (string.Equals(toolName, "export_file", StringComparison.Ordinal))
             return result;
         return result.Length > 500 ? result[..500] + "..." : result;
     }
-
-    private static string ModelToolContent(string toolName, string result) =>
-        string.Equals(toolName, ServerHouseholdChatTool.ToolName, StringComparison.Ordinal)
-            ? ServerHouseholdChatTool.ForModel(result)
-            : result;
 
     private async Task<string> EnsureRequestedExportAsync(
         int userId,
@@ -1399,7 +1388,7 @@ public class ChatService : IChatService
                         result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
-                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = ModelToolContent(tc.FunctionName, result) });
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
                 }
             }
         }
@@ -1693,7 +1682,7 @@ public class ChatService : IChatService
                     name = toolCall.FunctionName,
                     result = PrepareToolResultForClient(toolCall.FunctionName, result)
                 }));
-                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = ModelToolContent(toolCall.FunctionName, result) });
+                messages.Add(new { role = "tool", tool_call_id = toolCall.Id, content = result });
             }
         }
     }
@@ -1807,7 +1796,7 @@ public class ChatService : IChatService
                         result = PrepareToolResultForClient(tc.FunctionName, result)
                     }));
 
-                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = ModelToolContent(tc.FunctionName, result) });
+                    messages.Add(new { role = "tool", tool_call_id = tc.Id, content = result });
                 }
             }
         }
@@ -2034,7 +2023,6 @@ public class ChatService : IChatService
 
     public async Task<ChatMessageDto> SendMessageAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct = default)
     {
-        using var _householdChatSession = HouseholdChatAmbient.Push(sessionId);
         if (!HasMessageContent(request))
             throw new BusinessException("消息内容不能为空", 400);
 
@@ -2182,7 +2170,7 @@ public class ChatService : IChatService
                     var result = await ExecuteToolAsync(userId, funcName, argsJson, request, ct);
                     CollectExportedFileLink(funcName, result, exportedFiles);
                     supervisor.ObserveTool(funcName, argsJson, result);
-                    messages.Add(new { role = "tool", tool_call_id = toolCallId, content = ModelToolContent(funcName, result) });
+                    messages.Add(new { role = "tool", tool_call_id = toolCallId, content = result });
                 }
             }
         }
@@ -2661,7 +2649,6 @@ public class ChatService : IChatService
             你不仅能查询数据，还能帮用户创建、修改和删除各类记录。
 
             【当前时间】今天是 {today}（{weekday}），本周范围：{weekMon} 至 {weekSun}。
-            【家务】用户说换滤芯、做保养、花了多少钱，或问什么时候换过、最近要到期，调用 household_chat，utterance 用原话。这个工具只给出待确认草稿或只读结果，不会写入。不要说已经记上，让用户在确认卡片里点确认。识别不出就直接说明，不要猜。
             【运行模式】{(autoMode ? "Auto（全自动）：系统会自动处理所有确认，无需在文字中向用户请示操作权限。" : "手动：危险操作会由系统弹出确认框，不需要你在文字中询问用户。")}
 
             【输出格式】
