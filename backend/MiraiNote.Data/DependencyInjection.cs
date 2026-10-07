@@ -19,11 +19,11 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException("未配置 ConnectionStrings:DefaultConnection。");
 
         services.AddDbContext<MiraiNoteDbContext>(options =>
-            options.UseSqlServer(connectionString, sqlOptions =>
-                sqlOptions.EnableRetryOnFailure(
+            options.UseNpgsql(connectionString, npgsqlOptions =>
+                npgsqlOptions.EnableRetryOnFailure(
                     maxRetryCount: 3,
                     maxRetryDelay: TimeSpan.FromSeconds(5),
-                    errorNumbersToAdd: null)));
+                    errorCodesToAdd: null)));
 
         return services;
     }

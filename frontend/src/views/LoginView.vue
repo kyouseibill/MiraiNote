@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
@@ -20,6 +21,9 @@ const form = reactive({
 
 const errors = reactive<Record<string, string>>({})
 const loading = ref(false)
+const needsVerify = ref(false)
+const resendEmail = ref('')
+const resendLoading = ref(false)
 
 function validate(): boolean {
   for (const k of Object.keys(errors)) delete errors[k]
@@ -40,10 +44,31 @@ async function onSubmit() {
     toast.success('登录成功')
     const redirect = (route.query.redirect as string) || '/'
     router.replace(redirect)
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || e?.message || ''
+    needsVerify.value = msg.includes('请先验证邮箱')
+    if (needsVerify.value && form.usernameOrEmail.includes('@')) {
+      resendEmail.value = form.usernameOrEmail.trim()
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+async function onResend() {
+  if (!resendEmail.value.trim()) {
+    errors.resendEmail = '请输入邮箱'
+    return
+  }
+  delete errors.resendEmail
+  resendLoading.value = true
+  try {
+    await authApi.resendVerify({ email: resendEmail.value.trim() })
+    toast.success('验证邮件已重新发送')
   } catch {
     // 错误已由 axios 拦截器 toast
   } finally {
-    loading.value = false
+    resendLoading.value = false
   }
 }
 </script>
@@ -73,6 +98,17 @@ async function onSubmit() {
         <router-link to="/forgot-password" class="text-brand hover:text-brand-dark">
           忘记密码？
         </router-link>
+      </div>
+
+      <div v-if="needsVerify" class="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <p class="text-sm text-amber-800">请先验证邮箱</p>
+        <FormField label="邮箱" :error="errors.resendEmail">
+          <input v-model="resendEmail" type="email" class="form-input" placeholder="you@example.com" />
+        </FormField>
+        <button type="button" class="btn-primary" :disabled="resendLoading" @click="onResend">
+          <span v-if="resendLoading">发送中…</span>
+          <span v-else>重发验证邮件</span>
+        </button>
       </div>
 
       <button type="submit" class="btn-primary" :disabled="loading">

@@ -45,7 +45,29 @@ MIRAI_USE_MOCK=0
 
 `SmtpHost` 为空时不发信。`UseSsl` 为 `false` 时走 STARTTLS，为 `true` 时走 SSL 直连。
 
-## 五、安全提示（不阻塞上线，建议排期）
+## 五、PostgreSQL（Ubuntu / 本机回环）
+
+生产库只监听本机，由 Nginx 反代站点。连接串放在服务器自己的环境变量或未入库的 `appsettings.Production.json`，不要提交口令。
+
+Npgsql 连接串占位：
+
+```
+Host=127.0.0.1;Port=5432;Database=mirainote;Username=mirainote_app;Password=<PASSWORD>
+```
+
+| 配置项 | 环境变量 |
+| --- | --- |
+| `ConnectionStrings:DefaultConnection` | `ConnectionStrings__DefaultConnection` |
+| `ConnectionStrings:MigrationConnection` | `ConnectionStrings__MigrationConnection` |
+| `App:FrontendBaseUrl` | `App__FrontendBaseUrl` |
+| `App:PublicBaseUrl` | `App__PublicBaseUrl` |
+| `App:RequireEmailVerification` | `App__RequireEmailVerification` |
+
+`PublicBaseUrl` 有值时，验证邮件和重置邮件用它拼绝对链接；为空时回落 `FrontendBaseUrl`。生产应写成 `https://` 开头的站点地址。`RequireEmailVerification` 默认 true；设为 false 时不发验证邮件，也不拦截未验证登录。
+
+迁移命令使用 `MigrationConnection`。空库执行 `dotnet ef database update`，迁移名 `InitialPostgres`。表清单、时间列换算和导入前查重见 `docs/pg-table-list.md`。
+
+## 六、安全提示（不阻塞上线，建议排期）
 
 - `:10090` 是明文 HTTP，桌面端 JWT 与数据经公网明文传输。个人使用可接受，建议后续加 HTTPS（反向代理或证书直挂），或 M3 本地模式彻底绕开
 - 本次会话中数据库口令与 DeepSeek Key 曾在明文渠道出现过，按既定计划**轮换一次**（改 SQL 登录口令 + DeepSeek Key，同步更新服务器 appsettings.Production.json）

@@ -29,7 +29,7 @@ onMounted(async () => {
   try {
     await authApi.verifyEmail({ token })
     status.value = 'success'
-    message.value = '邮箱验证成功，请前往登录'
+    message.value = '验证成功'
   } catch (e: any) {
     status.value = 'failed'
     message.value = e?.message || '链接无效或已过期'
@@ -78,7 +78,7 @@ async function onResend() {
         </FormField>
         <button type="submit" class="btn-primary" :disabled="resendLoading">
           <span v-if="resendLoading">发送中…</span>
-          <span v-else>发送</span>
+          <span v-else>重发验证邮件</span>
         </button>
       </form>
     </div>

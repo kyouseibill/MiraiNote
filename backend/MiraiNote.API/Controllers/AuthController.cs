@@ -25,8 +25,8 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<ApiResponse>> Register([FromBody] RegisterRequest request, CancellationToken ct)
     {
-        await _auth.RegisterAsync(request, ct);
-        return Ok(ApiResponse.Ok("注册成功，请查收验证邮件"));
+        var message = await _auth.RegisterAsync(request, ct);
+        return Ok(ApiResponse.Ok(message));
     }
 
     [HttpPost("login")]
@@ -70,14 +70,14 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ApiResponse>> VerifyEmail([FromBody] VerifyEmailRequest request, CancellationToken ct)
     {
         await _auth.VerifyEmailAsync(request.Token, ct);
-        return Ok(ApiResponse.Ok("邮箱验证成功"));
+        return Ok(ApiResponse.Ok("验证成功"));
     }
 
-    [Microsoft.AspNetCore.Authorization.Authorize]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     [HttpPost("resend-verify")]
-    public async Task<ActionResult<ApiResponse>> ResendVerify(CancellationToken ct)
+    public async Task<ActionResult<ApiResponse>> ResendVerify([FromBody] ResendVerifyEmailRequest request, CancellationToken ct)
     {
-        await _auth.ResendVerifyEmailAsync(_currentUser.UserId, ct);
+        await _auth.ResendVerifyEmailAsync(request.Email, ct);
         return Ok(ApiResponse.Ok("验证邮件已重新发送"));
     }
 

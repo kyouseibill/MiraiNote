@@ -2395,8 +2395,8 @@ public class ChatService : IChatService
             isPinned = true;
 
         DateTime? remindAt = null;
-        if (TryGetStr(args, "remind_at", out var remStr) && DateTime.TryParse(remStr, out var remDt))
-            remindAt = remDt.ToUniversalTime();
+        if (TryGetStr(args, "remind_at", out var remStr))
+            remindAt = ShanghaiClock.ParseToUtc(remStr);
 
         byte remindMethods = 0;
         if (args.TryGetProperty("remind_methods", out var rmEl) && rmEl.ValueKind == JsonValueKind.Number)
@@ -2430,8 +2430,8 @@ public class ChatService : IChatService
             isPinned = true;
 
         DateTime? remindAt = null;
-        if (TryGetStr(args, "remind_at", out var remStr) && DateTime.TryParse(remStr, out var remDt))
-            remindAt = remDt.ToUniversalTime();
+        if (TryGetStr(args, "remind_at", out var remStr))
+            remindAt = ShanghaiClock.ParseToUtc(remStr);
 
         byte remindMethods = 0;
         if (args.TryGetProperty("remind_methods", out var rmEl) && rmEl.ValueKind == JsonValueKind.Number)

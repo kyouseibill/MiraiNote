@@ -13,17 +13,22 @@ public class User : BaseEntity
     [Key]
     public int Id { get; set; }
 
-    /// <summary>用户名，4~50 字符，仅允许字母/数字/下划线，全局唯一。</summary>
+    /// <summary>用户名原样（仅 Trim），供页面显示。比较和唯一约束见 <see cref="NormalizedUserName"/>。</summary>
     [Required]
     [MaxLength(50)]
     public string Username { get; set; } = string.Empty;
+
+    /// <summary>Trim + 小写后的用户名。登录、注册查重和唯一索引只用这一列。</summary>
+    [Required]
+    [MaxLength(50)]
+    public string NormalizedUserName { get; set; } = string.Empty;
 
     /// <summary>BCrypt 哈希后的密码。</summary>
     [Required]
     [MaxLength(256)]
     public string PasswordHash { get; set; } = string.Empty;
 
-    /// <summary>邮箱地址，全局唯一。</summary>
+    /// <summary>邮箱地址，入库前 Trim + 小写，全局唯一。</summary>
     [Required]
     [MaxLength(200)]
     public string Email { get; set; } = string.Empty;
