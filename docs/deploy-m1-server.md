@@ -78,7 +78,7 @@ location = /health {
     access_log off;
     proxy_pass http://127.0.0.1:5273;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
@@ -86,9 +86,44 @@ location = /health/ready {
     access_log off;
     proxy_pass http://127.0.0.1:5273;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
+```
+
+`$remote_addr` 会覆盖客户端自己带进来的 `X-Forwarded-For`，伪造的值不会再传到应用。主站的 `location /api/` 也用同样的两行：
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+如果走 Cloudflare 代理，先用 `real_ip_header CF-Connecting-IP` 和 `set_real_ip_from` 把 `$remote_addr` 还原成真实客户端。`set_real_ip_from` 只列 Cloudflare 官方 IP 段（来源：<https://www.cloudflare.com/ips/>）：
+
+```nginx
+real_ip_header CF-Connecting-IP;
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
 ```
 
 应用只接受来自 `127.0.0.1` 和 `::1` 的 `X-Forwarded-For`、`X-Forwarded-Proto`，并且只取一跳。启用这段代码后，服务器上的 `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` 要删掉：那个环境变量会信任任意来源的转发头，也不要和代码里的配置一起开。
