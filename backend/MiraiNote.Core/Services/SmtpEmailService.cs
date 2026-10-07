@@ -147,8 +147,10 @@ public class SmtpEmailService : IEmailService
     private async Task SendAsync(string toEmail, string subject, string htmlBody, CancellationToken ct)
     {
         var message = new MimeMessage();
-        // QQ SMTP 要求 From 地址必须与认证账号相同，始终使用 SmtpUser 作为发件地址
-        var fromEmail = !string.IsNullOrWhiteSpace(_options.SmtpUser) ? _options.SmtpUser : _options.FromAddress;
+        // 优先用 FromAddress；没配时才回退到 SmtpUser。
+        // QQ SMTP 要求 From 与认证账号相同：用 QQ 时把 FromAddress 也填成 QQ 地址即可。
+        // Resend 等服务的认证用户名（如 "resend"）不是邮箱地址，不能当 From。
+        var fromEmail = !string.IsNullOrWhiteSpace(_options.FromAddress) ? _options.FromAddress : _options.SmtpUser;
         message.From.Add(new MailboxAddress(_options.FromName, fromEmail));
         message.To.Add(MailboxAddress.Parse(toEmail));
         message.Subject = subject;
