@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MiraiNote.Core.Services;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Dtos.LifeLogs;
 using MiraiNote.Shared.Dtos.Memos;

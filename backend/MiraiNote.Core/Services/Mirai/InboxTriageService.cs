@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Auth;
 using MiraiNote.Shared.Dtos.Mirai;
@@ -210,7 +211,7 @@ public class InboxTriageService : IInboxTriageService
             {
                 var created = new List<CreatedRefDto>();
                 var logDateSource = TryParseLocalDate(envelope.LocalTime)?.ToDateTime(TimeOnly.MinValue)
-                                    ?? DateTime.UtcNow.Date;
+                                    ?? ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
 
                 foreach (var (req, suggestion, merged) in planned)
                 {

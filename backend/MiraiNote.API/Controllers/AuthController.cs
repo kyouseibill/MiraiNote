@@ -25,8 +25,8 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<ApiResponse>> Register([FromBody] RegisterRequest request, CancellationToken ct)
     {
-        var message = await _auth.RegisterAsync(request, ct);
-        return Ok(ApiResponse.Ok(message));
+        var result = await _auth.RegisterAsync(request, ct);
+        return Ok(ApiResponse<RegisterResult>.Ok(result, AuthMessages.RegisterMessage(result.Outcome)));
     }
 
     [HttpPost("login")]
@@ -69,8 +69,8 @@ public class AuthController : ControllerBase
     [HttpPost("verify-email")]
     public async Task<ActionResult<ApiResponse>> VerifyEmail([FromBody] VerifyEmailRequest request, CancellationToken ct)
     {
-        await _auth.VerifyEmailAsync(request.Token, ct);
-        return Ok(ApiResponse.Ok("验证成功"));
+        var result = await _auth.VerifyEmailAsync(request.Token, ct);
+        return Ok(ApiResponse<VerifyEmailResult>.Ok(result, AuthMessages.VerifyMessage(result.Status)));
     }
 
     [Microsoft.AspNetCore.Authorization.AllowAnonymous]
@@ -78,7 +78,15 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ApiResponse>> ResendVerify([FromBody] ResendVerifyEmailRequest request, CancellationToken ct)
     {
         await _auth.ResendVerifyEmailAsync(request.Email, ct);
-        return Ok(ApiResponse.Ok("验证邮件已重新发送"));
+        return Ok(ApiResponse.Ok(AuthMessages.ResendVerify));
+    }
+
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    [HttpPost("resend-verify-token")]
+    public async Task<ActionResult<ApiResponse>> ResendVerifyByToken([FromBody] ResendVerifyTokenRequest request, CancellationToken ct)
+    {
+        await _auth.ResendVerifyByTokenAsync(request.Token, ct);
+        return Ok(ApiResponse.Ok(AuthMessages.ResendVerify));
     }
 
     [HttpPost("forgot-password")]

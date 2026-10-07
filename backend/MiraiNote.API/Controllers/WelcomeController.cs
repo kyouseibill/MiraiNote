@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 
 namespace MiraiNote.API.Controllers;

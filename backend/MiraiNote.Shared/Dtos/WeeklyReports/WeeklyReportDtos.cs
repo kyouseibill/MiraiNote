@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using MiraiNote.Shared.Json;
+
 namespace MiraiNote.Shared.Dtos.WeeklyReports;
 
 /// <summary>
@@ -5,7 +8,9 @@ namespace MiraiNote.Shared.Dtos.WeeklyReports;
 /// </summary>
 public class GenerateReportRequest
 {
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime WeekStart { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime WeekEnd { get; set; }
 
     /// <summary>
@@ -28,7 +33,9 @@ public class UpdateReportRequest
 public class WeeklyReportDto
 {
     public int Id { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime WeekStart { get; set; }
+    [JsonConverter(typeof(CalendarDateJsonConverter))]
     public DateTime WeekEnd { get; set; }
     public string Content { get; set; } = string.Empty;
     public DateTime GeneratedAt { get; set; }
@@ -44,7 +51,9 @@ public class WeeklyReportReferenceDto
 {
     public int Id { get; set; }
     public string FileName { get; set; } = string.Empty;
+    [JsonConverter(typeof(NullableCalendarDateJsonConverter))]
     public DateTime? WeekStart { get; set; }
+    [JsonConverter(typeof(NullableCalendarDateJsonConverter))]
     public DateTime? WeekEnd { get; set; }
     public string? Remark { get; set; }
     public DateTime CreatedAt { get; set; }

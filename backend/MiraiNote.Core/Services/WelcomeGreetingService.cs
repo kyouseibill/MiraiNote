@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services.Mirai;
+using MiraiNote.Shared;
 
 namespace MiraiNote.Core.Services;
 

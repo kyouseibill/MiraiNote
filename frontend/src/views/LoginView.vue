@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
+import { useResendCooldown } from '@/composables/useResendCooldown'
+import { RESEND_VERIFY_MESSAGE } from '@/types/auth'
+import { apiFailure } from '@/utils/apiError'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
@@ -24,6 +27,8 @@ const loading = ref(false)
 const needsVerify = ref(false)
 const resendEmail = ref('')
 const resendLoading = ref(false)
+const resendNotice = ref('')
+const { remaining, start: startCooldown } = useResendCooldown()
 
 function validate(): boolean {
   for (const k of Object.keys(errors)) delete errors[k]
@@ -44,8 +49,8 @@ async function onSubmit() {
     toast.success('登录成功')
     const redirect = (route.query.redirect as string) || '/'
     router.replace(redirect)
-  } catch (e: any) {
-    const msg = e?.response?.data?.message || e?.message || ''
+  } catch (e: unknown) {
+    const msg = apiFailure(e, '').message
     needsVerify.value = msg.includes('请先验证邮箱')
     if (needsVerify.value && form.usernameOrEmail.includes('@')) {
       resendEmail.value = form.usernameOrEmail.trim()
@@ -63,8 +68,8 @@ async function onResend() {
   delete errors.resendEmail
   resendLoading.value = true
   try {
-    await authApi.resendVerify({ email: resendEmail.value.trim() })
-    toast.success('验证邮件已重新发送')
+    resendNotice.value = (await authApi.resendVerify({ email: resendEmail.value.trim() })) || RESEND_VERIFY_MESSAGE
+    startCooldown()
   } catch {
     // 错误已由 axios 拦截器 toast
   } finally {
@@ -105,10 +110,12 @@ async function onResend() {
         <FormField label="邮箱" :error="errors.resendEmail">
           <input v-model="resendEmail" type="email" class="form-input" placeholder="you@example.com" />
         </FormField>
-        <button type="button" class="btn-primary" :disabled="resendLoading" @click="onResend">
+        <button type="button" class="btn-primary" :disabled="resendLoading || remaining > 0" @click="onResend">
           <span v-if="resendLoading">发送中…</span>
+          <span v-else-if="remaining > 0">{{ remaining }} 秒后可再次发送</span>
           <span v-else>重发验证邮件</span>
         </button>
+        <p v-if="resendNotice" class="text-sm text-gray-700">{{ resendNotice }}</p>
       </div>
 
       <button type="submit" class="btn-primary" :disabled="loading">

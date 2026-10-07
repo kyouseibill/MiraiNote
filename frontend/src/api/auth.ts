@@ -11,12 +11,16 @@ import type {
   AuthResponse,
   LoginRequest,
   RegisterRequest,
+  RegisterResult,
   VerifyEmailRequest,
+  VerifyEmailResult,
   ResendVerifyEmailRequest,
+  ResendVerifyTokenRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
   ChangePasswordRequest,
 } from '@/types/auth'
+import { apiFailure } from '@/utils/apiError'
 import { useToast } from '@/composables/useToast'
 
 // 仅用于存取内存中的 accessToken，避免循环依赖 store
@@ -119,7 +123,7 @@ http.interceptors.response.use(
 
     // 统一错误 toast。个别请求会自己处理 409/422 文案，避免和这里各弹一次。
     const toast = useToast()
-    const msg = error.response?.data?.message || error.message || '网络错误'
+    const msg = apiFailure(error, '网络错误').message
     const skipStatuses = original?.skipErrorToastStatuses
     if (status !== 401 && !(status != null && skipStatuses?.includes(status))) toast.error(msg)
     return Promise.reject(error)
@@ -138,8 +142,13 @@ export async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>): Pro
 // ============ Auth APIs ============
 
 export const authApi = {
-  register: (payload: RegisterRequest) =>
-    unwrap<null>(http.post('/auth/register', payload)),
+  register: async (payload: RegisterRequest): Promise<RegisterResult> => {
+    const resp = await http.post<ApiResponse<Pick<RegisterResult, 'outcome'>>>('/auth/register', payload)
+    if (!resp.data.success || !resp.data.data?.outcome) {
+      throw new Error(resp.data.message || '请求失败')
+    }
+    return { outcome: resp.data.data.outcome, message: resp.data.message }
+  },
 
   login: (payload: LoginRequest) =>
     unwrap<AuthResponse>(http.post('/auth/login', payload)),
@@ -148,11 +157,25 @@ export const authApi = {
 
   refresh: () => unwrap<AuthResponse>(http.post('/auth/refresh')),
 
-  verifyEmail: (payload: VerifyEmailRequest) =>
-    unwrap<null>(http.post('/auth/verify-email', payload)),
+  verifyEmail: async (payload: VerifyEmailRequest): Promise<VerifyEmailResult> => {
+    const resp = await http.post<ApiResponse<VerifyEmailResult>>('/auth/verify-email', payload)
+    if (!resp.data.success || !resp.data.data?.status) {
+      throw new Error(resp.data.message || '请求失败')
+    }
+    return resp.data.data
+  },
 
-  resendVerify: (payload: ResendVerifyEmailRequest) =>
-    unwrap<null>(http.post('/auth/resend-verify', payload)),
+  resendVerify: async (payload: ResendVerifyEmailRequest) => {
+    const resp = await http.post<ApiResponse>('/auth/resend-verify', payload)
+    if (!resp.data.success) throw new Error(resp.data.message || '请求失败')
+    return resp.data.message
+  },
+
+  resendVerifyToken: async (payload: ResendVerifyTokenRequest) => {
+    const resp = await http.post<ApiResponse>('/auth/resend-verify-token', payload)
+    if (!resp.data.success) throw new Error(resp.data.message || '请求失败')
+    return resp.data.message
+  },
 
   forgotPassword: (payload: ForgotPasswordRequest) =>
     unwrap<null>(http.post('/auth/forgot-password', payload)),

@@ -1,4 +1,5 @@
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
@@ -76,7 +77,7 @@ public class WeeklyGenerateCommand : AsyncCommand<WeeklyGenerateSettings>
                 weekStart = parsed;
             else
             {
-                var today = DateTime.Today;
+                var today = ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
                 weekStart = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
             }
 

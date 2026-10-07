@@ -19,9 +19,10 @@ public class EmailVerificationAcceptanceTests
     public async Task Register_LinkIsAbsoluteAndUsernameKeepsDisplayCase()
     {
         using var h = new Harness();
-        var message = await h.Auth.RegisterAsync(Bill());
+        var result = await h.Auth.RegisterAsync(Bill());
 
-        Assert.Equal("注册成功，请查收验证邮件", message);
+        Assert.Equal(RegisterOutcomes.VerificationEmailSent, result.Outcome);
+        Assert.Equal("注册成功，请查收验证邮件", AuthMessages.RegisterMessage(result.Outcome));
         var link = Assert.Single(h.Links);
         Assert.StartsWith("https://notes.example.com/verify-email?token=", link);
 
@@ -57,19 +58,23 @@ public class EmailVerificationAcceptanceTests
         expiredRow.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
         await h.Db.SaveChangesAsync();
 
-        var expired = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.VerifyEmailAsync(token));
-        Assert.Equal("链接已过期", expired.Message);
+        var expired = await h.Auth.VerifyEmailAsync(token);
+        Assert.Equal(VerifyEmailStatuses.Expired, expired.Status);
+        Assert.Equal("链接已过期", AuthMessages.VerifyMessage(expired.Status));
 
         var usedRow = await h.Db.EmailVerifyTokens.SingleAsync(t => t.Token == token);
         usedRow.ExpiresAt = DateTime.UtcNow.AddHours(1);
         usedRow.IsUsed = true;
         await h.Db.SaveChangesAsync();
 
-        var used = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.VerifyEmailAsync(token));
-        Assert.Equal("链接已使用", used.Message);
+        var used = await h.Auth.VerifyEmailAsync(token);
+        Assert.Equal(VerifyEmailStatuses.AlreadyVerified, used.Status);
+        Assert.Equal("邮箱已验证，请直接登录", AuthMessages.VerifyMessage(used.Status));
 
-        var invalid = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.VerifyEmailAsync("not-a-token"));
-        Assert.Equal("链接无效", invalid.Message);
+        var invalid = await h.Auth.VerifyEmailAsync("not-a-token");
+        Assert.Equal(VerifyEmailStatuses.Invalid, invalid.Status);
+        Assert.Equal("链接无效", AuthMessages.VerifyMessage(invalid.Status));
+        Assert.Equal(VerifyEmailStatuses.Invalid, (await h.Auth.VerifyEmailAsync("")).Status);
     }
 
     [Fact]
@@ -77,10 +82,12 @@ public class EmailVerificationAcceptanceTests
     {
         using var h = new Harness();
         await h.Auth.RegisterAsync(Bill());
-        await h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[0]));
+        var verified = await h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[0]));
+        Assert.Equal(VerifyEmailStatuses.Verified, verified.Status);
 
-        var again = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[0])));
-        Assert.Equal("链接已使用", again.Message);
+        var again = await h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[0]));
+        Assert.Equal(VerifyEmailStatuses.AlreadyVerified, again.Status);
+        Assert.Equal("邮箱已验证，请直接登录", AuthMessages.VerifyMessage(again.Status));
 
         var byName = await h.Auth.LoginAsync(new LoginRequest
         {
@@ -100,19 +107,27 @@ public class EmailVerificationAcceptanceTests
     [Fact]
     public async Task Resend_RateLimitIsStoredAndUnknownEmailLooksTheSame()
     {
+        const string expected =
+            "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。";
+        Assert.Equal(expected, AuthMessages.ResendVerify);
+
         using var h = new Harness();
         await h.Auth.ResendVerifyEmailAsync("missing@example.com");
+        await h.Auth.ResendVerifyByTokenAsync("missing-token");
         h.Email.Verify(e => e.SendVerifyEmailAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         await h.Auth.RegisterAsync(Bill());
-        var tooSoon = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.ResendVerifyEmailAsync("bill@example.com"));
-        Assert.Equal("发送过于频繁，请 60 秒后再试", tooSoon.Message);
+        var sentAtRegister = h.Links.Count;
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        Assert.Equal(sentAtRegister, h.Links.Count);
 
+        var shanghaiMorning = new DateTime(2026, 10, 6, 23, 59, 0, DateTimeKind.Utc);
+        var shanghaiLater = new DateTime(2026, 10, 7, 0, 1, 0, DateTimeKind.Utc);
         var limitedUser = await h.Db.Users.SingleAsync(u => u.Email == "bill@example.com");
         var existing = await h.Db.EmailVerifyTokens.Where(t => t.UserId == limitedUser.Id).ToListAsync();
         foreach (var row in existing)
-            row.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+            row.CreatedAt = new DateTime(2026, 10, 6, 16, 0, 0, DateTimeKind.Utc);
         for (var i = existing.Count; i < 5; i++)
         {
             h.Db.EmailVerifyTokens.Add(new EmailVerifyToken
@@ -120,15 +135,52 @@ public class EmailVerificationAcceptanceTests
                 UserId = limitedUser.Id,
                 Token = Guid.NewGuid().ToString("N"),
                 Type = EmailVerifyTokenType.VerifyEmail,
-                ExpiresAt = DateTime.UtcNow.AddHours(24),
+                ExpiresAt = shanghaiLater.AddHours(24),
                 IsUsed = false,
-                CreatedAt = DateTime.UtcNow.AddMinutes(-2)
+                CreatedAt = new DateTime(2026, 10, 6, 16, 0, 0, DateTimeKind.Utc)
             });
         }
         await h.Db.SaveChangesAsync();
 
-        var daily = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.ResendVerifyEmailAsync("BILL@example.com"));
-        Assert.Equal("今日验证邮件已达 5 次上限，请明天再试", daily.Message);
+        h.Auth.UtcNowProvider = () => shanghaiMorning;
+        await h.Auth.ResendVerifyEmailAsync("BILL@example.com");
+        h.Auth.UtcNowProvider = () => shanghaiLater;
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        Assert.Equal(sentAtRegister, h.Links.Count);
+
+        var counted = await h.Db.EmailVerifyTokens.Where(t => t.UserId == limitedUser.Id).ToListAsync();
+        foreach (var row in counted)
+            row.CreatedAt = new DateTime(2026, 10, 6, 15, 59, 0, DateTimeKind.Utc);
+        await h.Db.SaveChangesAsync();
+
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        Assert.Equal(sentAtRegister + 1, h.Links.Count);
+    }
+
+    [Fact]
+    public async Task ResendByToken_ExpiredUnverifiedSends_VerifiedDoesNot()
+    {
+        const string expected =
+            "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。";
+        Assert.Equal(expected, AuthMessages.ResendVerify);
+
+        using var h = new Harness();
+        await h.Auth.RegisterAsync(Bill());
+        var token = TokenFromLink(h.Links[0]);
+        var row = await h.Db.EmailVerifyTokens.SingleAsync(t => t.Token == token);
+        row.ExpiresAt = DateTime.UtcNow.AddMinutes(-5);
+        row.CreatedAt = DateTime.UtcNow.AddMinutes(-5);
+        await h.Db.SaveChangesAsync();
+
+        Assert.Equal(VerifyEmailStatuses.Expired, (await h.Auth.VerifyEmailAsync(token)).Status);
+        await h.Auth.ResendVerifyByTokenAsync(token);
+        Assert.Equal(2, h.Links.Count);
+
+        await h.Auth.VerifyEmailAsync(TokenFromLink(h.Links[1]));
+        var before = h.Links.Count;
+        await h.Auth.ResendVerifyByTokenAsync(token);
+        await h.Auth.ResendVerifyEmailAsync("bill@example.com");
+        Assert.Equal(before, h.Links.Count);
     }
 
     [Fact]
@@ -139,7 +191,7 @@ public class EmailVerificationAcceptanceTests
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("smtp password=SuperSecretAuthCode"));
 
-        var message = await h.Auth.RegisterAsync(new RegisterRequest
+        var result = await h.Auth.RegisterAsync(new RegisterRequest
         {
             Username = "MailFail",
             Email = "fail@example.com",
@@ -147,8 +199,17 @@ public class EmailVerificationAcceptanceTests
             ConfirmPassword = "Password1"
         });
 
-        Assert.Equal("验证邮件发送失败，请稍后重发", message);
+        Assert.Equal(RegisterOutcomes.VerificationEmailFailed, result.Outcome);
+        Assert.Equal("验证邮件发送失败，请稍后重发", AuthMessages.RegisterMessage(result.Outcome));
         Assert.True(await h.Db.Users.AnyAsync(u => u.Email == "fail@example.com"));
+        Assert.DoesNotContain(h.Logs, line => line.Contains("SuperSecretAuthCode", StringComparison.Ordinal));
+
+        var row = await h.Db.EmailVerifyTokens.SingleAsync();
+        row.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        await h.Db.SaveChangesAsync();
+        h.Logs.Clear();
+        await h.Auth.ResendVerifyEmailAsync("fail@example.com");
+        Assert.Equal(AuthMessages.ResendVerify, "如果这个邮箱已注册但还没验证，几分钟内会收到验证邮件。没收到的话，请看一下垃圾邮件箱。");
         Assert.DoesNotContain(h.Logs, line => line.Contains("SuperSecretAuthCode", StringComparison.Ordinal));
     }
 
@@ -156,7 +217,7 @@ public class EmailVerificationAcceptanceTests
     public async Task RequireEmailVerification_Off_DoesNotSendOrBlock()
     {
         using var h = new Harness(requireVerification: false);
-        var message = await h.Auth.RegisterAsync(new RegisterRequest
+        var result = await h.Auth.RegisterAsync(new RegisterRequest
         {
             Username = "OpenUser",
             Email = "open@example.com",
@@ -164,7 +225,9 @@ public class EmailVerificationAcceptanceTests
             ConfirmPassword = "Password1"
         });
 
-        Assert.Equal("注册成功，请查收验证邮件", message);
+        Assert.Equal(RegisterOutcomes.VerificationDisabled, result.Outcome);
+        Assert.Equal("注册成功", AuthMessages.RegisterMessage(result.Outcome));
+        Assert.DoesNotContain("查收验证邮件", AuthMessages.RegisterMessage(result.Outcome));
         h.Email.Verify(e => e.SendVerifyEmailAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
@@ -253,7 +316,8 @@ public class EmailVerificationAcceptanceTests
                     FrontendBaseUrl = "http://localhost:5173",
                     RequireEmailVerification = requireVerification
                 }),
-                new ListLogger<AuthService>(Logs));
+                new ListLogger<AuthService>(Logs),
+                new InlineBackgroundWork());
         }
 
         public void Dispose()
@@ -261,6 +325,11 @@ public class EmailVerificationAcceptanceTests
             Db.Dispose();
             Fx.Dispose();
         }
+    }
+
+    private sealed class InlineBackgroundWork : IBackgroundWork
+    {
+        public void Run(Func<Task> work) => work().GetAwaiter().GetResult();
     }
 
     private sealed class ListLogger<T>(List<string> sink) : ILogger<T>

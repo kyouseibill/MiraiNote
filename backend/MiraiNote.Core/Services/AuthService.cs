@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using MiraiNote.Data;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Auth;
 
@@ -19,7 +20,7 @@ namespace MiraiNote.Core.Services;
 /// 3. 安全：
 ///    - 密码 BCrypt 哈希
 ///    - 登录连续失败 5 次，账户锁定 15 分钟（IMemoryCache，进程级，重启重置 —— 可接受）
-///    - 重置邮件频率限制基于 IMemoryCache；验证邮件重发次数记在 EmailVerifyToken 表
+///    - 重置邮件频率限制基于 IMemoryCache；验证邮件重发次数记在 EmailVerifyToken 表，超限时不发信也不单独报错
 ///    - 忘记密码无论邮箱是否存在均返回成功，防止账户枚举
 ///    - RefreshToken 入库只存 SHA-256 哈希，原文随响应返回，由 Controller 写入 HttpOnly Cookie
 /// </summary>
@@ -49,6 +50,10 @@ public class AuthService : IAuthService
     private readonly JwtOptions _jwtOptions;
     private readonly AppOptions _appOptions;
     private readonly ILogger<AuthService> _logger;
+    private readonly IBackgroundWork _background;
+
+    /// <summary>测试可替换，生产使用 UTC 现在。</summary>
+    internal Func<DateTime> UtcNowProvider { get; set; } = static () => DateTime.UtcNow;
 
     public AuthService(
         MiraiNoteDbContext db,
@@ -57,7 +62,8 @@ public class AuthService : IAuthService
         IMemoryCache cache,
         IOptions<JwtOptions> jwtOptions,
         IOptions<AppOptions> appOptions,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        IBackgroundWork background)
     {
         _db = db;
         _jwt = jwt;
@@ -66,12 +72,13 @@ public class AuthService : IAuthService
         _jwtOptions = jwtOptions.Value;
         _appOptions = appOptions.Value;
         _logger = logger;
+        _background = background;
     }
 
     // ============================================================
     // 注册
     // ============================================================
-    public async Task<string> RegisterAsync(RegisterRequest request, CancellationToken ct = default)
+    public async Task<RegisterResult> RegisterAsync(RegisterRequest request, CancellationToken ct = default)
     {
         var username = AccountNormalizer.DisplayUsername(request.Username);
         var normalizedUsername = AccountNormalizer.NormalizeUsername(request.Username);
@@ -110,18 +117,19 @@ public class AuthService : IAuthService
 
         if (!_appOptions.RequireEmailVerification)
         {
-            return "注册成功，请查收验证邮件";
+            return new RegisterResult { Outcome = RegisterOutcomes.VerificationDisabled };
         }
 
         try
         {
-            await IssueAndSendVerifyEmailAsync(user, ct);
-            return "注册成功，请查收验证邮件";
+            var link = await IssueVerifyLinkAsync(user, ct);
+            await _email.SendVerifyEmailAsync(user.Email, user.Username, link, ct);
+            return new RegisterResult { Outcome = RegisterOutcomes.VerificationEmailSent };
         }
         catch (Exception)
         {
             _logger.LogError("注册用户 {Username} 后发送验证邮件失败，请检查 SMTP 配置", user.Username);
-            return "验证邮件发送失败，请稍后重发";
+            return new RegisterResult { Outcome = RegisterOutcomes.VerificationEmailFailed };
         }
     }
 
@@ -258,32 +266,36 @@ public class AuthService : IAuthService
     // ============================================================
     // 邮箱验证
     // ============================================================
-    public async Task VerifyEmailAsync(string token, CancellationToken ct = default)
+    public async Task<VerifyEmailResult> VerifyEmailAsync(string token, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new BusinessException("链接无效");
+            return new VerifyEmailResult { Status = VerifyEmailStatuses.Invalid };
         }
+
         var record = await _db.EmailVerifyTokens
             .Include(t => t.User)
             .FirstOrDefaultAsync(t => t.Token == token && t.Type == EmailVerifyTokenType.VerifyEmail, ct);
 
-        if (record == null || record.User == null)
+        if (record?.User == null)
         {
-            throw new BusinessException("链接无效");
+            return new VerifyEmailResult { Status = VerifyEmailStatuses.Invalid };
         }
-        if (record.IsUsed)
+
+        if (record.IsUsed || record.User.IsEmailVerified)
         {
-            throw new BusinessException("链接已使用");
+            return new VerifyEmailResult { Status = VerifyEmailStatuses.AlreadyVerified };
         }
-        if (record.ExpiresAt < DateTime.UtcNow)
+
+        if (record.ExpiresAt < UtcNow())
         {
-            throw new BusinessException("链接已过期");
+            return new VerifyEmailResult { Status = VerifyEmailStatuses.Expired };
         }
 
         record.IsUsed = true;
         record.User.IsEmailVerified = true;
         await _db.SaveChangesAsync(ct);
+        return new VerifyEmailResult { Status = VerifyEmailStatuses.Verified };
     }
 
     public async Task ResendVerifyEmailAsync(string email, CancellationToken ct = default)
@@ -300,23 +312,52 @@ public class AuthService : IAuthService
             return;
         }
 
-        await EnforceVerifyResendLimitAsync(user.Id, ct);
-        try
-        {
-            await IssueAndSendVerifyEmailAsync(user, ct);
-        }
-        catch (BusinessException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            _logger.LogError("向用户 {UserId} 重发验证邮件失败，请检查 SMTP 配置", user.Id);
-            throw new BusinessException("验证邮件发送失败，请稍后重发");
-        }
+        await TryQueueVerifyEmailAsync(user, ct);
     }
 
-    private async Task IssueAndSendVerifyEmailAsync(User user, CancellationToken ct)
+    public async Task ResendVerifyByTokenAsync(string token, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
+        var record = await _db.EmailVerifyTokens
+            .Include(t => t.User)
+            .FirstOrDefaultAsync(t => t.Token == token && t.Type == EmailVerifyTokenType.VerifyEmail, ct);
+        if (record?.User == null || record.User.IsEmailVerified || !record.User.IsActive)
+        {
+            return;
+        }
+
+        await TryQueueVerifyEmailAsync(record.User, ct);
+    }
+
+    private async Task TryQueueVerifyEmailAsync(User user, CancellationToken ct)
+    {
+        if (!await CanSendVerifyEmailAsync(user.Id, ct))
+        {
+            return;
+        }
+
+        var link = await IssueVerifyLinkAsync(user, ct);
+        var email = user.Email;
+        var username = user.Username;
+        var userId = user.Id;
+        _background.Run(async () =>
+        {
+            try
+            {
+                await _email.SendVerifyEmailAsync(email, username, link, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                _logger.LogError("向用户 {UserId} 重发验证邮件失败，请检查 SMTP 配置", userId);
+            }
+        });
+    }
+
+    private async Task<string> IssueVerifyLinkAsync(User user, CancellationToken ct)
     {
         var token = Guid.NewGuid().ToString("N");
         _db.EmailVerifyTokens.Add(new EmailVerifyToken
@@ -324,20 +365,18 @@ public class AuthService : IAuthService
             UserId = user.Id,
             Token = token,
             Type = EmailVerifyTokenType.VerifyEmail,
-            ExpiresAt = DateTime.UtcNow.Add(VerifyEmailTokenLifetime),
+            ExpiresAt = UtcNow().Add(VerifyEmailTokenLifetime),
             IsUsed = false
         });
         await _db.SaveChangesAsync(ct);
-
-        var link = BuildAbsoluteLink($"/verify-email?token={token}");
-        await _email.SendVerifyEmailAsync(user.Email, user.Username, link, ct);
+        return BuildAbsoluteLink($"/verify-email?token={token}");
     }
 
-    private async Task EnforceVerifyResendLimitAsync(int userId, CancellationToken ct)
+    private async Task<bool> CanSendVerifyEmailAsync(int userId, CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
+        var now = UtcNow();
         var sinceMinute = now - VerifyEmailMinInterval;
-        var dayStart = DateTime.SpecifyKind(now.Date, DateTimeKind.Utc);
+        var (dayStart, _) = ShanghaiClock.DayRangeUtc(ShanghaiClock.Today(new DateTimeOffset(now, TimeSpan.Zero)));
 
         var sentRecently = await _db.EmailVerifyTokens.AnyAsync(t =>
             t.UserId == userId
@@ -345,18 +384,17 @@ public class AuthService : IAuthService
             && t.CreatedAt >= sinceMinute, ct);
         if (sentRecently)
         {
-            throw new BusinessException("发送过于频繁，请 60 秒后再试");
+            return false;
         }
 
         var sentToday = await _db.EmailVerifyTokens.CountAsync(t =>
             t.UserId == userId
             && t.Type == EmailVerifyTokenType.VerifyEmail
             && t.CreatedAt >= dayStart, ct);
-        if (sentToday >= MaxVerifyEmailsPerDay)
-        {
-            throw new BusinessException("今日验证邮件已达 5 次上限，请明天再试");
-        }
+        return sentToday < MaxVerifyEmailsPerDay;
     }
+
+    private DateTime UtcNow() => DateTime.SpecifyKind(UtcNowProvider(), DateTimeKind.Utc);
 
     private string BuildAbsoluteLink(string pathAndQuery)
     {

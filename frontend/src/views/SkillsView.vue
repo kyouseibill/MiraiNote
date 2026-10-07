@@ -5,6 +5,7 @@ import { IconArrowRight, IconLoader2, IconPlus, IconSparkles, IconTrash } from '
 import AppDialog from '@/components/AppDialog.vue'
 import { useToast } from '@/composables/useToast'
 import { skillsApi, type SkillDocument, type SkillSummary } from '@/api/skills'
+import { apiFailure } from '@/utils/apiError'
 
 const toast = useToast()
 const skills = ref<SkillSummary[]>([])
@@ -30,7 +31,7 @@ const dirty = computed(() => creating.value
 const activeName = computed(() => creating.value ? newName.value.trim() : selected.value?.name ?? '')
 
 function messageOf(cause: unknown) {
-  return cause instanceof Error ? cause.message : '操作失败，请稍后重试'
+  return apiFailure(cause, '操作失败，请稍后重试').message
 }
 
 async function refresh() {

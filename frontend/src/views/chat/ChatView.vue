@@ -22,7 +22,7 @@ import {
   sessionDateGroup as sessionDateGroupByAccountTz,
 } from '@/utils/accountTime'
 import { chatApi } from '@/api/chat'
-import { apiFailure } from '@/utils/apiError'
+import { apiFailure, isAxiosError } from '@/utils/apiError'
 import { skillsApi, type SkillSummary } from '@/api/skills'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
@@ -85,7 +85,7 @@ async function downloadExportFile(url: string, fileName = fileNameFromUrl(url)) 
   try {
     await downloadExportFileBase(url, fileName)
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '文件下载失败，请稍后重试'
+    const message = apiFailure(error, '文件下载失败，请稍后重试').message
     toast.error(message)
   }
 }
@@ -981,12 +981,14 @@ function textMimeType(fileName: string): string {
   return map[ext] ?? 'text/plain'
 }
 
-function formatUploadError(err: any): string {
-  if (err?.code === 'ECONNABORTED') return '上传超时，请稍后重试或换一个较小的文件'
-  const status = err?.response?.status
-  const message = err?.response?.data?.message || err?.message
-  if (status) return `HTTP ${status}${message ? `：${message}` : ''}`
-  return message || '网络请求失败'
+function formatUploadError(err: unknown): string {
+  if (isAxiosError(err) && err.code === 'ECONNABORTED') return '上传超时，请稍后重试或换一个较小的文件'
+  const failure = apiFailure(err, '网络请求失败')
+  if (failure.status) {
+    const detail = failure.message && failure.message !== '网络请求失败' ? `：${failure.message}` : ''
+    return `HTTP ${failure.status}${detail}`
+  }
+  return failure.message
 }
 
 async function handlePaste(e: ClipboardEvent) {

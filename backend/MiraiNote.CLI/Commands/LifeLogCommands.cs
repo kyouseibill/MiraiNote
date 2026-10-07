@@ -1,4 +1,5 @@
 using MiraiNote.CLI.Services;
+using MiraiNote.Shared;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
@@ -117,7 +118,7 @@ public class LifeLogAddCommand : AsyncCommand<LifeLogAddSettings>
             {
                 // Agent 模式
                 content = s.Content;
-                date    = DateTime.TryParse(s.Date, out var pd) ? pd : DateTime.Today;
+                date    = DateTime.TryParse(s.Date, out var pd) ? pd : ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
                 mood    = CommandHelpers.OrNull(s.Mood);
             }
             else
@@ -125,8 +126,8 @@ public class LifeLogAddCommand : AsyncCommand<LifeLogAddSettings>
                 // 交互模式
                 AnsiConsole.MarkupLine("[bold cyan]新建生活记录[/]");
                 content = AnsiConsole.Ask<string>("内容（必填）：");
-                var dStr = AnsiConsole.Ask<string>("日期（yyyy-MM-dd，默认今天）：", DateTime.Today.ToString("yyyy-MM-dd"));
-                date = DateTime.TryParse(dStr, out var d) ? d : DateTime.Today;
+                var dStr = AnsiConsole.Ask<string>("日期（yyyy-MM-dd，默认今天）：", ShanghaiClock.Today(DateTimeOffset.UtcNow).ToString("yyyy-MM-dd"));
+                date = DateTime.TryParse(dStr, out var d) ? d : ShanghaiClock.TodayUnspecified(DateTimeOffset.UtcNow);
                 mood = CommandHelpers.OrNull(AnsiConsole.Ask<string>("心情（可留空）：", ""));
             }
 

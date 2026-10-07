@@ -11,6 +11,7 @@ using MiraiNote.Core.Services.Tools;
 using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Agent;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Agent;
@@ -1187,7 +1188,7 @@ public class ChatService : IChatService
         }
         else
         {
-            fileName = $"MiraiChat_{DateTime.Now:yyyyMMdd_HHmmss}{extension}";
+            fileName = $"MiraiChat_{ShanghaiClock.ToShanghaiWall(DateTimeOffset.UtcNow):yyyyMMdd_HHmmss}{extension}";
         }
 
         return true;
@@ -2907,7 +2908,7 @@ public class ChatService : IChatService
                     properties = new
                     {
                         title    = new { type = "string", description = "工作记录标题（必填）" },
-                        log_date = new { type = "string", description = "记录日期，格式 yyyy-MM-dd（必填），如不确定用今天 " + DateTime.UtcNow.ToString("yyyy-MM-dd") },
+                        log_date = new { type = "string", description = "记录日期，格式 yyyy-MM-dd（必填），如不确定用今天 " + ShanghaiClock.Today(DateTimeOffset.UtcNow).ToString("yyyy-MM-dd") },
                         purpose  = new { type = "string", description = "工作目的/背景" },
                         content  = new { type = "string", description = "工作内容详情" },
                         tags     = new { type = "string", description = "标签，多个用逗号分隔" },
