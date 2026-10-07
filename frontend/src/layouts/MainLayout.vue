@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
   IconBooks,
-  IconCalendarTime,
   IconChecklist,
   IconFileText,
   IconHome,
@@ -48,7 +47,6 @@ const groups: NavGroup[] = [
     items: [
       { to: '/life/memos', label: '生活备忘', icon: IconNotebook },
       { to: '/life/logs', label: '生活记录', icon: IconBooks },
-      { to: '/household', label: '家务周期', icon: IconCalendarTime, matchPrefix: true },
     ],
   },
   {
@@ -75,7 +73,7 @@ function isNavCurrent(item: NavItem) {
 }
 
 function navTarget(item: NavItem) {
-  const keepPreview = isDesignPreview.value && (item.to === '/dashboard' || item.to === '/life/logs' || item.to === '/household')
+  const keepPreview = isDesignPreview.value && (item.to === '/dashboard' || item.to === '/life/logs')
   if (!keepPreview) return item.to
   return {
     path: item.to,

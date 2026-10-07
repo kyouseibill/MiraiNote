@@ -42,14 +42,14 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'household',
         name: 'household',
-        component: () => import('@/views/household/HouseholdView.vue'),
+        component: () => import('@/views/household/HouseholdClosedView.vue'),
         meta: { requiresAuth: true, title: '家务周期' },
       },
       {
         path: 'household/items/:id',
         name: 'household-item',
-        component: () => import('@/views/household/HouseholdItemView.vue'),
-        meta: { requiresAuth: true, title: '家务事项' },
+        component: () => import('@/views/household/HouseholdClosedView.vue'),
+        meta: { requiresAuth: true, title: '家务周期' },
       },
       {
         path: 'work/reports',

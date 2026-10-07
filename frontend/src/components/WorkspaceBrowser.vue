@@ -4,7 +4,7 @@ import { workspaceApi, type WorkspaceEntry } from '@/api/workspace'
 import { useToast } from '@/composables/useToast'
 
 const emit = defineEmits<{
-  attach: [result: { fileName: string; fileType: string; textContent: string }]
+  attach: [result: { fileName: string; fileType: string; textContent: string; storedPath?: string }]
   close: []
 }>()
 
@@ -60,6 +60,7 @@ async function attachFile(entry: WorkspaceEntry) {
       fileName: result.fileName,
       fileType: result.fileType,
       textContent: result.textContent,
+      storedPath: result.relativePath,
     })
     toast.success(`已附加：${result.fileName}`)
   } catch (e: any) {

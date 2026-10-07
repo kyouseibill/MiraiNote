@@ -141,8 +141,7 @@ public class ChatService : IChatService
         "search_work_logs", "search_memos", "search_life_logs", "get_weekly_reports",
         "search_internet", "fetch_web_page", "get_weather", "query_calendar",
         "get_current_time", "calculate", "record_overview", "read_file", "list_files",
-        "list_scheduled_tasks", "recall", "load_skill",
-        Tools.ServerHouseholdChatTool.ToolName
+        "list_scheduled_tasks", "recall", "load_skill"
     };
 
     private const string ChatReadOnlyPrompt = """
@@ -984,15 +983,31 @@ public class ChatService : IChatService
         "forget"
     };
 
-    private object[] BuildToolDefinitions(SendMessageRequest request) =>
-        _toolRegistry.BuildToolDefinitions(
-            request is TemporaryChatRequest ? TemporaryExcludedToolNames : null);
+    private HashSet<string> ExcludedToolNames(SendMessageRequest request)
+    {
+        var excluded = new HashSet<string>(StringComparer.Ordinal)
+        {
+            Tools.ServerHouseholdChatTool.ToolName
+        };
+        if (request is TemporaryChatRequest)
+        {
+            foreach (var name in TemporaryExcludedToolNames)
+                excluded.Add(name);
+        }
+        return excluded;
+    }
 
-    private List<string> GetAvailableToolNames(SendMessageRequest request) =>
-        _toolRegistry.Tools
-            .Where(t => request is not TemporaryChatRequest || !TemporaryExcludedToolNames.Contains(t.Name))
+    private object[] BuildToolDefinitions(SendMessageRequest request) =>
+        _toolRegistry.BuildToolDefinitions(ExcludedToolNames(request));
+
+    private List<string> GetAvailableToolNames(SendMessageRequest request)
+    {
+        var excluded = ExcludedToolNames(request);
+        return _toolRegistry.Tools
+            .Where(t => !excluded.Contains(t.Name))
             .Select(t => t.Name)
             .ToList();
+    }
 
     private static readonly Regex WorkQuestionOnlyPattern = new(
         @"^(?:为什么|为何|怎么|如何|是否|什么|哪些|哪里|哪儿|谁|何时|多久|有何|有什么|区别)",
@@ -1030,6 +1045,9 @@ public class ChatService : IChatService
         SendMessageRequest request,
         CancellationToken ct)
     {
+        if (string.Equals(toolName, Tools.ServerHouseholdChatTool.ToolName, StringComparison.Ordinal))
+            return Task.FromResult("家务功能入口已关闭，这次不能记录或查询家务。");
+
         if (request is TemporaryChatRequest && TemporaryExcludedToolNames.Contains(toolName))
             return Task.FromResult("临时聊天不会保存长期记忆，已跳过此操作。");
 
@@ -1450,6 +1468,8 @@ public class ChatService : IChatService
         foreach (var a in request.Attachments)
         {
             sb.AppendLine($"【文件：{a.FileName}（{a.FileType}）】");
+            if (!string.IsNullOrWhiteSpace(a.StoredPath))
+                sb.AppendLine($"保存路径：{a.StoredPath}");
             sb.AppendLine(TruncateAttachmentText(a.TextContent, maxAttachmentTextChars));
         }
         lastUser.Content = sb.ToString();
@@ -1478,6 +1498,8 @@ public class ChatService : IChatService
         {
             sb.AppendLine($"- 文件名：{attachment.FileName}");
             sb.AppendLine($"  类型：{attachment.FileType}");
+            if (!string.IsNullOrWhiteSpace(attachment.StoredPath))
+                sb.AppendLine($"  保存路径：{attachment.StoredPath}");
             if (!string.IsNullOrWhiteSpace(attachment.MimeType))
                 sb.AppendLine($"  MIME：{attachment.MimeType}");
             if (attachment.IsImage && !string.IsNullOrWhiteSpace(attachment.DataUrl))
@@ -1634,7 +1656,7 @@ public class ChatService : IChatService
     {
         var client = CreateModelClient(modelConnection);
         var messages = BuildMessages(history, BuildSystemPromptWithSkills(userId, request) + ChatReadOnlyPrompt, request);
-        var excluded = request is TemporaryChatRequest ? TemporaryExcludedToolNames : null;
+        var excluded = ExcludedToolNames(request);
         var tools = _toolRegistry.BuildToolDefinitions(excluded, ChatReadOnlyToolNames);
         var fullContent = new StringBuilder();
         var supervisor = new AgentRunSupervisor(_workVerificationTimeout);
@@ -1672,6 +1694,9 @@ public class ChatService : IChatService
 
             foreach (var toolCall in toolCalls)
             {
+                if (string.Equals(toolCall.FunctionName, Tools.ServerHouseholdChatTool.ToolName, StringComparison.Ordinal))
+                    return "家务功能入口已关闭，这次不能记录或查询家务。";
+
                 if (!ChatReadOnlyToolNames.Contains(toolCall.FunctionName))
                 {
                     var boundaryMessage = "对话模式不能执行写入或其他操作，请切换到工作模式后重试。";
@@ -2661,7 +2686,6 @@ public class ChatService : IChatService
             你不仅能查询数据，还能帮用户创建、修改和删除各类记录。
 
             【当前时间】今天是 {today}（{weekday}），本周范围：{weekMon} 至 {weekSun}。
-            【家务】用户说换滤芯、做保养、花了多少钱，或问什么时候换过、最近要到期，调用 household_chat，utterance 用原话。这个工具只给出待确认草稿或只读结果，不会写入。不要说已经记上，让用户在确认卡片里点确认。识别不出就直接说明，不要猜。
             【运行模式】{(autoMode ? "Auto（全自动）：系统会自动处理所有确认，无需在文字中向用户请示操作权限。" : "手动：危险操作会由系统弹出确认框，不需要你在文字中询问用户。")}
 
             【输出格式】
@@ -2678,9 +2702,9 @@ public class ChatService : IChatService
             - 如果无法完整输出上述标签，也必须优先输出正式回答内容，不要停留在只有 <thinking> 的状态。
 
             【聊天上传附件与多模态规则】
-            - 用户通过聊天输入框上传或粘贴的附件已经随当前用户消息提供，不是工作区文件路径。
+            - 用户通过聊天输入框上传或粘贴的附件已经随当前用户消息提供。文件本体同时保存在私有工作区 uploads/年/月/，消息里的「保存路径」是相对路径。
             - PDF、Word、Excel、文本、代码等文件的可提取文本会直接出现在当前用户消息的"用户上传的文件内容"部分。
-              你必须优先基于这些已提供内容完成分析，不要再要求用户复制文本，不要说附件不在工作区，除非当前消息确实没有附件内容。
+              你必须优先基于这些已提供内容完成分析，不要再要求用户复制文本。只有需要回读原文件时，才对「保存路径」调用 read_file。
             - 图片附件会作为当前用户消息的多模态 image_url 一并发送；请结合用户文字和图片内容完成分析。
             - 只有用户明确要求读取工作区内某个路径，或需要处理已存在于工作区的文件时，才调用 read_file/list_files。
             - 如果附件文本提示"无法提取文本内容"或"解析失败"，如实说明该附件无法从服务端解析，并继续处理其他已成功解析的附件。
@@ -2770,7 +2794,9 @@ public class ChatService : IChatService
             - export_file 的 filename 必须带正确扩展名：PDF 用 .pdf，Word 用 .docx，Excel 用 .xlsx；不要用 write_file 伪造这些二进制文档。
             - export_file 返回的 markdown 字段必须原样放进最终回复，确保用户能点击下载。
             - 读取文件：使用 read_file 工具读取文本文件内容。
-            - 写入文件：使用 write_file 工具创建或覆盖文件。
+            - 写入文件：使用 write_file 工具创建或覆盖文件。新的工作文件写到 generated/，例如 generated/notes.md 或 generated/charts/output.png，不要直接写在私有区根目录。
+            - skills/ 只放技能，uploads/ 只放用户上传。不要随意移动或覆盖这两处，除非用户明确要求。
+            - 早先散落在私有区根目录的文件会整理到 generated/archive/。找不到旧文件时，到 generated/ 和 generated/archive/ 里找。
             - 删除文件：使用 delete_file 工具删除文件或目录。
             - 移动/重命名：使用 move_file 工具。
             - 展示工作区图片：使用 publish_workspace_file 工具把私有工作区图片发布成聊天可直接显示的 Markdown 图片链接。
@@ -2791,7 +2817,7 @@ public class ChatService : IChatService
             - 生成图形时优先使用已安装的 matplotlib/numpy/pandas。不要在未尝试 import 前说“需要先安装 matplotlib”。
             - 如果需要某个 Python 库，先用 run_shell 执行类似 python -c "import matplotlib" 的检查；只有检查失败时才考虑 pip install。
             - 当你使用 run_shell 执行 Python/matplotlib/seaborn/plotly 等生成 png/jpg/svg/webp 图片时，
-              必须让脚本把图片保存到当前私有工作区，例如 output.png。
+              必须让脚本把图片保存到 generated/，例如 generated/output.png。
             - 图片生成后，必须调用 publish_workspace_file，path 传入生成图片的相对路径。
             - publish_workspace_file 返回的 markdown 字段必须原样放进最终回复，这样聊天窗口才能直接展示图片。
             - 不要只告诉用户“图片已保存到 xxx.png”；除非 publish_workspace_file 返回失败，否则最终回复必须包含图片 Markdown。

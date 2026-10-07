@@ -25,10 +25,9 @@ import { chatApi } from '@/api/chat'
 import { apiFailure } from '@/utils/apiError'
 import { skillsApi, type SkillSummary } from '@/api/skills'
 import WorkspaceBrowser from '@/components/WorkspaceBrowser.vue'
+import ChatFileLibraryPanel from '@/components/ChatFileLibraryPanel.vue'
 import { staticUrl } from '@/composables/useStaticUrl'
 import type { AiModel, ChatMessage, ChatProject, ToolCallEvent } from '@/types/chat'
-import HouseholdChatConfirmCard from '@/components/household/HouseholdChatConfirmCard.vue'
-import { visibleRestoredDrafts } from '@/utils/householdChat'
 import AppDialog from '@/components/AppDialog.vue'
 import {
   IconPlus,
@@ -238,13 +237,6 @@ function toolEventsForMessage(msg: { id?: number; streaming?: boolean }) {
   return []
 }
 
-function householdCardsFor(msg: { id?: number; streaming?: boolean }) {
-  return toolEventsForMessage(msg).filter((event) => {
-    const kind = event.householdDraft?.kind
-    return kind === 'confirm' || kind === 'choose' || kind === 'create'
-  })
-}
-
 function toolEventsSummary(events: ToolCallEvent[]) {
   const running = events.filter((e) => e.status === 'running').length
   const success = events.filter((e) => e.status === 'success').length
@@ -303,17 +295,6 @@ const displayMessages = computed(() => [
       ]
     : []),
 ])
-const restoredHouseholdDrafts = computed(() => {
-  const live = new Set<number>()
-  for (const msg of displayMessages.value) {
-    for (const event of toolEventsForMessage(msg)) {
-      const id = event.householdDraft?.draftId
-      if (typeof id === 'number') live.add(id)
-    }
-  }
-  if (store.isTemporary) return []
-  return visibleRestoredDrafts(store.sessionHouseholdDrafts, store.currentSession?.id, live)
-})
 const starters = [
   {
     title: '整理工作，写一份周报',
@@ -861,48 +842,6 @@ const ACCEPTED_TYPES = [
   '.log',
 ].join(',')
 
-const LOCAL_TEXT_EXTENSIONS = new Set([
-  '.txt',
-  '.md',
-  '.csv',
-  '.json',
-  '.xml',
-  '.html',
-  '.htm',
-  '.yaml',
-  '.yml',
-  '.toml',
-  '.ini',
-  '.env',
-  '.log',
-  '.sql',
-  '.ts',
-  '.js',
-  '.jsx',
-  '.tsx',
-  '.py',
-  '.cs',
-  '.java',
-  '.cpp',
-  '.c',
-  '.h',
-  '.go',
-  '.rs',
-  '.php',
-  '.rb',
-  '.sh',
-  '.bat',
-  '.ps1',
-  '.vue',
-  '.css',
-  '.scss',
-  '.less',
-  '.conf',
-  '.config',
-  '.csproj',
-  '.sln',
-])
-const LOCAL_TEXT_MAX_CHARS = 800_000
 const MAX_IMAGE_DATA_URL_CHARS = 16 * 1024 * 1024
 
 function triggerFileInput() {
@@ -922,18 +861,6 @@ async function uploadFiles(files: File[]) {
     uploadingFiles.value = new Set([...uploadingFiles.value, file.name])
 
     try {
-      if (isLocalTextFile(file)) {
-        const textContent = truncateLocalText(await readFileAsText(file), file.name)
-        store.pendingAttachments.push({
-          fileName: file.name,
-          fileType: '文本',
-          textContent,
-          mimeType: file.type || textMimeType(file.name),
-          isImage: false,
-        })
-        continue
-      }
-
       const result = await chatApi.uploadAttachment(file)
       if (result.isImage && result.dataUrl) {
         const pendingImageChars = store.pendingAttachments.reduce(
@@ -951,6 +878,7 @@ async function uploadFiles(files: File[]) {
         mimeType: result.mimeType,
         dataUrl: result.dataUrl,
         isImage: result.isImage,
+        storedPath: result.storedPath,
       })
     } catch (err: any) {
       toast.error(`文件「${file.name}」上传失败：${formatUploadError(err)}`)
@@ -960,45 +888,9 @@ async function uploadFiles(files: File[]) {
   }
 }
 
-function truncateLocalText(text: string, fileName: string): string {
-  if (text.length <= LOCAL_TEXT_MAX_CHARS) return text
-  return (
-    text.slice(0, LOCAL_TEXT_MAX_CHARS) +
-    `\n\n... [文件内容已截断，共 ${text.length} 字符，文件名：${fileName}]`
-  )
-}
-
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(reader.error ?? new Error('读取文件失败'))
-    reader.readAsText(file)
-  })
-}
-
-function isLocalTextFile(file: File): boolean {
-  if (file.type.startsWith('text/')) return true
-  return LOCAL_TEXT_EXTENSIONS.has(fileExtension(file.name))
-}
-
 function fileExtension(fileName: string): string {
   const idx = fileName.lastIndexOf('.')
   return idx >= 0 ? fileName.slice(idx).toLowerCase() : ''
-}
-
-function textMimeType(fileName: string): string {
-  const ext = fileExtension(fileName)
-  const map: Record<string, string> = {
-    '.csv': 'text/csv',
-    '.html': 'text/html',
-    '.htm': 'text/html',
-    '.json': 'application/json',
-    '.xml': 'application/xml',
-    '.yaml': 'application/yaml',
-    '.yml': 'application/yaml',
-  }
-  return map[ext] ?? 'text/plain'
 }
 
 function formatUploadError(err: any): string {
@@ -1051,6 +943,16 @@ function getFileIcon(fileType: string): string {
   return icons[fileType] ?? 'FILE'
 }
 
+function onLibraryAttach(file: {
+  fileName: string
+  fileType: string
+  textContent: string
+  storedPath?: string
+}) {
+  onWorkspaceAttach(file)
+  showArtifacts.value = false
+}
+
 function onWorkspaceAttach(file: {
   fileName: string
   fileType: string
@@ -1058,6 +960,7 @@ function onWorkspaceAttach(file: {
   mimeType?: string
   dataUrl?: string
   isImage?: boolean
+  storedPath?: string
 }) {
   store.pendingAttachments.push(file)
   showWorkspaceBrowser.value = false
@@ -1560,11 +1463,11 @@ async function reloadConversations() {
         <button
           class="chat-files-button"
           :class="{ 'is-emphasized': isWorkMode }"
-          aria-label="对话文件"
+          aria-label="文件"
           :aria-expanded="showArtifacts"
           @click="showArtifacts = true"
         >
-          <IconFolder :size="17" /><span>对话文件</span
+          <IconFolder :size="17" /><span>文件</span>
           ><span v-if="artifacts.length" class="chat-count">{{ artifacts.length }}</span>
         </button>
       </header>
@@ -1709,11 +1612,6 @@ async function reloadConversations() {
                       </p>
                     </article>
                   </details>
-                  <HouseholdChatConfirmCard
-                    v-for="tc in householdCardsFor(msg)"
-                    :key="`${tc.id}-household`"
-                    :draft="tc.householdDraft!"
-                  />
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
                   <div v-if="msg.streaming && (!msg.answer || isWorkMode)" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{
@@ -1748,13 +1646,6 @@ async function reloadConversations() {
                   </template>
                 </div>
               </article>
-              <div v-if="restoredHouseholdDrafts.length" data-testid="household-draft-restore">
-                <HouseholdChatConfirmCard
-                  v-for="draft in restoredHouseholdDrafts"
-                  :key="`restored-${draft.draftId ?? draft.suggestedName}`"
-                  :draft="draft"
-                />
-              </div>
             </template>
           </div>
         </div>
@@ -1965,14 +1856,16 @@ async function reloadConversations() {
     </AppDialog>
     <AppDialog
       :open="showArtifacts"
-      title="对话文件"
-      description="这段对话中生成的文件，集中放在这里。"
+      title="文件"
+      description="上传的文件、工作模式生成的文件，以及这段对话里的导出。"
       size="drawer"
       @close="showArtifacts = false"
     >
+      <ChatFileLibraryPanel v-if="showArtifacts" @attach="onLibraryAttach" />
       <div class="chat-artifacts">
+        <h3 class="chat-file-library-heading">这次对话</h3>
         <div v-if="!artifacts.length" class="chat-panel-empty">
-          <IconFolder :size="36" :stroke-width="1.3" /><strong>文件会在这里相遇</strong>
+          <IconFolder :size="36" :stroke-width="1.3" /><strong>这次对话还没有导出</strong>
           <p>请 Mirai 生成一份文档或表格后，<br />就可以在这里预览和下载。</p>
         </div>
         <article v-for="artifact in artifacts" :key="artifact.url" class="chat-artifact">

@@ -154,6 +154,7 @@ public class ServerFileWriteTool : IServerAgentTool
     public ToolRiskLevel RiskLevel => ToolRiskLevel.Write;
     public string Description =>
         "将内容写入工作区私有文件（覆盖写入）。只能写入自己的私有区域，不能写入公共区域。" +
+        "新的工作文件请写到 generated/ 下，例如 generated/notes.md；不要写到私有区根目录。不要随意改动 skills/ 和 uploads/。" +
         (_options.AllowWrite ? "" : "（当前已禁用写入）");
 
     public ToolParameterSchema Parameters => new()
