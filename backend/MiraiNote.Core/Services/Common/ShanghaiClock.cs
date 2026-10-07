@@ -1,8 +1,8 @@
-namespace MiraiNote.Core.Services.Household;
+namespace MiraiNote.Core.Services;
 
 /// <summary>
 /// Asia/Shanghai 日历日。Linux / IANA 用 Asia/Shanghai，Windows 回退 China Standard Time。
-/// 不使用服务器本地时区。
+/// 不使用服务器本地时区。欢迎语按这个日历日计算。
 /// </summary>
 public static class ShanghaiClock
 {

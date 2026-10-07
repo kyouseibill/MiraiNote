@@ -1,6 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 
 namespace MiraiNote.Core;
 
@@ -18,47 +16,6 @@ public static class DependencyInjection
         services.AddScoped<Services.IWorkLogService, Services.WorkLogService>();
         services.AddScoped<Services.IMemoService, Services.MemoService>();
         services.AddScoped<Services.ILifeLogService, Services.LifeLogService>();
-        services.AddSingleton(Services.Household.HouseholdAccessPolicy.Default);
-        services.AddSingleton(TimeProvider.System);
-        services.AddSingleton(sp => new Services.Household.AdjustableHouseholdTimeProvider(TimeProvider.System));
-        services.AddSingleton<Services.Household.IHouseholdClock>(sp =>
-        {
-            var env = sp.GetService<IHostEnvironment>();
-            var options = sp.GetService<IOptions<Services.Household.HouseholdOptions>>()?.Value;
-            if (env != null && options != null && Services.Household.HouseholdTestClockPolicy.IsEnabled(options, env))
-                return sp.GetRequiredService<Services.Household.AdjustableHouseholdTimeProvider>();
-            return new Services.Household.SystemHouseholdClock();
-        });
-        services.AddHostedService<Services.Household.HouseholdTestClockStartupLogger>();
-        services.AddSingleton<Services.Household.HouseholdLinkBuilder>();
-        services.AddSingleton<Services.Household.HouseholdCycleRules>();
-        services.AddScoped<Services.Household.IHouseholdAccessService, Services.Household.HouseholdAccessService>();
-        services.AddScoped<Services.Household.IHouseholdService, Services.Household.HouseholdService>();
-        services.AddScoped<Services.Household.IHouseholdInvitationService, Services.Household.HouseholdInvitationService>();
-        services.AddScoped<Services.Household.IHouseholdItemService, Services.Household.HouseholdItemService>();
-        services.AddScoped<Services.Household.IHouseholdConsumableService, Services.Household.HouseholdConsumableService>();
-        services.AddScoped<Services.Household.IHouseholdTestClockService, Services.Household.HouseholdTestClockService>();
-        services.AddSingleton<Services.Household.IHouseholdSecretProtector, Services.Household.HouseholdSecretProtector>();
-        services.AddScoped<Services.Household.BarkNotificationChannel>();
-        services.AddScoped<Services.Household.EmailNotificationChannel>();
-        services.AddSingleton<Services.Household.HouseholdNotificationRateLimiter>();
-        services.AddScoped<Services.Household.IHouseholdNotificationSettingsService, Services.Household.HouseholdNotificationSettingsService>();
-        services.AddScoped<Services.Household.IHouseholdNotificationDispatcher, Services.Household.HouseholdNotificationDispatcher>();
-        services.AddScoped<Services.Household.IHouseholdChatService, Services.Household.HouseholdChatService>();
-        services.AddHostedService<Services.Household.HouseholdNotificationBackgroundService>();
-        services.AddHttpClient(Services.Household.BarkNotificationChannel.HttpClientName, client =>
-        {
-            client.Timeout = TimeSpan.FromSeconds(Services.Household.BarkNotificationChannel.TimeoutSeconds);
-        })
-        .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            UseProxy = false,
-            ConnectTimeout = TimeSpan.FromSeconds(Services.Household.BarkNotificationChannel.TimeoutSeconds),
-            ConnectCallback = Services.Household.HouseholdBarkConnector.ConnectCallback
-        })
-        .RemoveAllLoggers();
         services.AddScoped<Services.IWeeklyReportService, Services.WeeklyReportService>();
         services.AddSingleton<Services.ChatSessionRunGate>();
         services.AddSingleton<Services.AgentRuns.AgentRunDispatcher>();
@@ -126,7 +83,6 @@ public static class DependencyInjection
         services.AddScoped<Services.Tools.ServerScheduleTaskTool>();
         services.AddScoped<Services.Tools.ServerListScheduledTasksTool>();
         services.AddScoped<Services.Tools.ServerLoadSkillTool>();
-        services.AddScoped<Services.Tools.ServerHouseholdChatTool>();
         // 混合推理模型"思考+正文"可能远超 HttpClient 默认 100s 超时导致流被掐断，
         // 改为无限超时；由 ChatService 读取循环里的空闲超时兜底（长时间收不到新行才中断）。
         services.AddHttpClient("DeepSeek").ConfigureHttpClient(c =>

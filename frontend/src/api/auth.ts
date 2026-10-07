@@ -18,7 +18,6 @@ import type {
   ChangePasswordRequest,
 } from '@/types/auth'
 import { useToast } from '@/composables/useToast'
-import { pendingInvitationConflictMessage } from '@/utils/apiError'
 
 // 仅用于存取内存中的 accessToken，避免循环依赖 store
 let accessTokenGetter: () => string | null = () => null
@@ -122,8 +121,7 @@ http.interceptors.response.use(
     const toast = useToast()
     const msg = error.response?.data?.message || error.message || '网络错误'
     const skipStatuses = original?.skipErrorToastStatuses
-    const pendingInvitation = status === 409 && msg === pendingInvitationConflictMessage
-    if (status !== 401 && !pendingInvitation && !(status != null && skipStatuses?.includes(status))) toast.error(msg)
+    if (status !== 401 && !(status != null && skipStatuses?.includes(status))) toast.error(msg)
     return Promise.reject(error)
   },
 )
