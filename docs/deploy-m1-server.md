@@ -45,6 +45,8 @@ MIRAI_USE_MOCK=0
 
 `SmtpHost` 为空时不发信。`UseSsl` 为 `false` 时走 STARTTLS，为 `true` 时走 SSL 直连。
 
+发件人优先用 `FromAddress`，为空时才回退到 `SmtpUser`。用 QQ 邮箱时 `FromAddress` 要填成和 `SmtpUser` 相同的 QQ 地址；用 Resend 这类服务时 `SmtpUser` 是固定用户名（如 `resend`），`FromAddress` 填已验证域名下的发件地址。
+
 ## 五、PostgreSQL（Ubuntu / 本机回环）
 
 生产库只监听本机，由 Nginx 反代站点。连接串放在服务器自己的环境变量或未入库的 `appsettings.Production.json`，不要提交口令。
