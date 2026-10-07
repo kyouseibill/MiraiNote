@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosError } from 'axios'
 
 export interface ApiFailure {
   status: number | null
@@ -29,6 +29,6 @@ export function apiFailure(error: unknown, fallback = '请求失败'): ApiFailur
   return { status: null, message: fallback }
 }
 
-export function isAxiosError(error: unknown): boolean {
+export function isAxiosError(error: unknown): error is AxiosError {
   return axios.isAxiosError(error)
 }
