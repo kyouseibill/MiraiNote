@@ -63,6 +63,6 @@ public class DatabaseSeeder
         _db.Users.Add(admin);
         await _db.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Seeder: 超级管理员账户已创建（Id={Id}, Username=admin）。", admin.Id);
+        _logger.LogInformation("Seeder: 超级管理员账户已创建（Id={Id}）。", admin.Id);
     }
 }

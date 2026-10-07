@@ -167,32 +167,14 @@ public class SmtpEmailService : IEmailService
             await client.SendAsync(message, ct);
             await client.DisconnectAsync(true, ct);
 
-            _logger.LogInformation("邮件已发送：{Subject} → {To}", subject, toEmail);
+            _logger.LogInformation("邮件已发送：{Subject}", subject);
         }
         catch (Exception ex)
         {
-            // 不把异常对象写进日志，避免 SMTP 对话里带上授权码或账号。
-            _logger.LogError(
-                "邮件发送失败：{Subject} → {To}，类型 {ExceptionType}，原因 {Reason}",
-                subject,
-                toEmail,
-                ex.GetType().Name,
-                SanitizeMailError(ex.Message));
+            // 只记异常类型。不写收件人、异常对象或消息，避免带上邮箱、授权码或堆栈。
+            _logger.LogError("邮件发送失败：{Subject}，类型 {ExceptionType}", subject, ex.GetType().Name);
             throw;
         }
-    }
-
-    private string SanitizeMailError(string? message)
-    {
-        if (string.IsNullOrEmpty(message))
-            return "";
-
-        var sanitized = message;
-        if (!string.IsNullOrEmpty(_options.SmtpPassword))
-            sanitized = sanitized.Replace(_options.SmtpPassword, "***", StringComparison.Ordinal);
-        if (!string.IsNullOrEmpty(_options.SmtpUser))
-            sanitized = sanitized.Replace(_options.SmtpUser, "***", StringComparison.Ordinal);
-        return sanitized;
     }
 
     private static string Escape(string input) =>

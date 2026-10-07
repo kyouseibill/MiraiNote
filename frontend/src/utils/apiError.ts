@@ -13,12 +13,22 @@ function readable(candidate: string | undefined, fallback: string): string {
   return text
 }
 
+export const SERVER_ERROR_MESSAGE = '服务器出错了，请稍后再试'
+export const NETWORK_ERROR_MESSAGE = '网络错误'
+
 export function apiFailure(error: unknown, fallback = '请求失败'): ApiFailure {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { message?: string } | undefined
+    if (!error.response) {
+      return { status: null, message: NETWORK_ERROR_MESSAGE }
+    }
+    const status = error.response.status ?? null
+    const data = error.response.data as { message?: string } | undefined
     const fromBody = typeof data?.message === 'string' ? data.message : ''
+    if (status != null && status >= 500 && !fromBody.trim()) {
+      return { status, message: SERVER_ERROR_MESSAGE }
+    }
     return {
-      status: error.response?.status ?? null,
+      status,
       message: readable(fromBody, fallback),
     }
   }

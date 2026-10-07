@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useWeeklyReportStore } from '@/stores/weeklyReport'
 import { useToast } from '@/composables/useToast'
 import { apiFailure } from '@/utils/apiError'
+import { formatAccountDate } from '@/utils/accountTime'
 
 const store = useWeeklyReportStore()
 const toast = useToast()
@@ -329,7 +330,7 @@ onMounted(async () => {
               <div class="text-xs text-gray-400 mt-0.5">
                 <span v-if="ref.remark" class="mr-2 text-teal-600">{{ ref.remark }}</span>
                 <span v-if="ref.weekStart">{{ fmtDate(ref.weekStart) }} ~ {{ fmtDate(ref.weekEnd ?? '') }}</span>
-                <span v-else>上传于 {{ fmtDate(ref.createdAt) }}</span>
+                <span v-else>上传于 {{ formatAccountDate(ref.createdAt) }}</span>
               </div>
             </div>
             <button

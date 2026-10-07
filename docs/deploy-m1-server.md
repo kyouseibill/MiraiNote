@@ -67,7 +67,70 @@ Host=127.0.0.1;Port=5432;Database=mirainote;Username=mirainote_app;Password=<PAS
 
 迁移命令使用 `MigrationConnection`。空库执行 `dotnet ef database update`，迁移名 `InitialPostgres`。表清单、时间列换算和导入前查重见 `docs/pg-table-list.md`。
 
-## 六、安全提示（不阻塞上线，建议排期）
+## 六、健康检查与转发头
+
+`GET /health` 只表示进程还在，返回纯文本 `Healthy`。`GET /health/ready` 用数据库上下文检查 PostgreSQL，连不上返回 503。两个路径都不带 `/api`，也不需要登录。
+
+Nginx 上这两段要写在 SPA 的 `try_files` / `index.html` 回退之前，用精确匹配把它们反代到本机 Kestrel（端口按服务器实际监听地址改），并且不记访问日志：
+
+```nginx
+location = /health {
+    access_log off;
+    proxy_pass http://127.0.0.1:5273;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /health/ready {
+    access_log off;
+    proxy_pass http://127.0.0.1:5273;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`$remote_addr` 会覆盖客户端自己带进来的 `X-Forwarded-For`，伪造的值不会再传到应用。主站的 `location /api/` 也用同样的两行：
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+如果走 Cloudflare 代理，先用 `real_ip_header CF-Connecting-IP` 和 `set_real_ip_from` 把 `$remote_addr` 还原成真实客户端。`set_real_ip_from` 只列 Cloudflare 官方 IP 段（来源：<https://www.cloudflare.com/ips/>）：
+
+```nginx
+real_ip_header CF-Connecting-IP;
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
+```
+
+应用只接受来自 `127.0.0.1` 和 `::1` 的 `X-Forwarded-For`、`X-Forwarded-Proto`，并且只取一跳。启用这段代码后，服务器上的 `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` 要删掉：那个环境变量会信任任意来源的转发头，也不要和代码里的配置一起开。
+
+验证邮件和重置邮件的链接只用 `App:PublicBaseUrl`（为空才回落 `FrontendBaseUrl`），不看请求里的 Host。登录锁定按账号，验证邮件冷却按用户，都不按套接字地址计数；转发头在认证前面，所以之后如果按 `Connection.RemoteIpAddress` 做限流，读到的是转发后的客户端地址。
+
+## 七、安全提示（不阻塞上线，建议排期）
 
 - `:10090` 是明文 HTTP，桌面端 JWT 与数据经公网明文传输。个人使用可接受，建议后续加 HTTPS（反向代理或证书直挂），或 M3 本地模式彻底绕开
 - 本次会话中数据库口令与 DeepSeek Key 曾在明文渠道出现过，按既定计划**轮换一次**（改 SQL 登录口令 + DeepSeek Key，同步更新服务器 appsettings.Production.json）

@@ -1,9 +1,12 @@
+using System.Net;
 using MiraiNote.API;
+using MiraiNote.API.Health;
 using MiraiNote.API.Infrastructure;
 using MiraiNote.API.Middleware;
 using MiraiNote.Core;
 using MiraiNote.Core.Services;
 using MiraiNote.Data;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
 using Serilog.Events;
@@ -43,17 +46,35 @@ builder.Services.AddControllers()
 builder.Services.AddDataLayer(builder.Configuration);
 builder.Services.AddCoreLayer();
 builder.Services.AddApiLayer(builder.Configuration, builder.Environment);
+builder.Services.AddMiraiHealthChecks();
+
+// 只信任本机 Nginx。不要再设 ASPNETCORE_FORWARDEDHEADERS_ENABLED，那个开关会信任任意来源，也不能和这里叠加。
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    // net10 里 KnownNetworks 就是 KnownIPNetworks，默认是 127.0.0.0/8。清掉后只留两个回环地址。
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+});
 
 var app = builder.Build();
 
 // ===== Database Seed（幂等）=====
-using (var scope = app.Services.CreateScope())
+// 集成测试用 Test 环境，避免启动时连库。生产和其他环境仍会播种。
+if (!app.Environment.IsEnvironment("Test"))
 {
+    using var scope = app.Services.CreateScope();
     var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
     await seeder.SeedAsync();
 }
 
 // ===== Pipeline =====
+// 转发头必须在 HSTS、HTTPS 重定向、限流和认证之前。登录锁定按账号，验证邮件冷却按用户，都不读套接字地址。
+app.UseForwardedHeaders();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -86,5 +107,14 @@ else
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapMiraiHealthChecks();
+
+if (app.Environment.IsEnvironment("Test"))
+{
+    app.MapGet("/__test/client-ip", (HttpContext http) =>
+        Results.Text(http.Connection.RemoteIpAddress?.ToString() ?? "")).AllowAnonymous();
+}
 
 app.Run();
+
+public partial class Program { }

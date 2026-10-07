@@ -126,9 +126,12 @@ public class AuthService : IAuthService
             await _email.SendVerifyEmailAsync(user.Email, user.Username, link, ct);
             return new RegisterResult { Outcome = RegisterOutcomes.VerificationEmailSent };
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            _logger.LogError("注册用户 {Username} 后发送验证邮件失败，请检查 SMTP 配置", user.Username);
+            _logger.LogError(
+                "注册后发送验证邮件失败，用户 {UserId}，类型 {ExceptionType}",
+                user.Id,
+                ex.GetType().Name);
             return new RegisterResult { Outcome = RegisterOutcomes.VerificationEmailFailed };
         }
     }
@@ -195,7 +198,7 @@ public class AuthService : IAuthService
         {
             var until = DateTime.UtcNow.Add(LockoutDuration);
             _cache.Set(lockoutKey, until, LockoutDuration);
-            _logger.LogWarning("账户 {Key} 因连续登录失败已锁定至 {Until}", usernameOrEmail, until);
+            _logger.LogWarning("账户因连续登录失败已锁定至 {Until}", until);
         }
     }
 
@@ -350,22 +353,36 @@ public class AuthService : IAuthService
             {
                 await _email.SendVerifyEmailAsync(email, username, link, CancellationToken.None);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                _logger.LogError("向用户 {UserId} 重发验证邮件失败，请检查 SMTP 配置", userId);
+                _logger.LogError(
+                    "重发验证邮件失败，用户 {UserId}，类型 {ExceptionType}",
+                    userId,
+                    ex.GetType().Name);
             }
         });
     }
 
     private async Task<string> IssueVerifyLinkAsync(User user, CancellationToken ct)
     {
+        var now = UtcNow();
+        var previous = await _db.EmailVerifyTokens
+            .Where(t => t.UserId == user.Id
+                && t.Type == EmailVerifyTokenType.VerifyEmail
+                && !t.IsUsed
+                && t.ExpiresAt > now)
+            .ToListAsync(ct);
+        // 新链接发出后，旧的未使用链接立刻过期。验证页按 expired 给一键重发，不标成已使用。
+        foreach (var old in previous)
+            old.ExpiresAt = now.AddSeconds(-1);
+
         var token = Guid.NewGuid().ToString("N");
         _db.EmailVerifyTokens.Add(new EmailVerifyToken
         {
             UserId = user.Id,
             Token = token,
             Type = EmailVerifyTokenType.VerifyEmail,
-            ExpiresAt = UtcNow().Add(VerifyEmailTokenLifetime),
+            ExpiresAt = now.Add(VerifyEmailTokenLifetime),
             IsUsed = false
         });
         await _db.SaveChangesAsync(ct);
