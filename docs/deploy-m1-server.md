@@ -67,7 +67,35 @@ Host=127.0.0.1;Port=5432;Database=mirainote;Username=mirainote_app;Password=<PAS
 
 迁移命令使用 `MigrationConnection`。空库执行 `dotnet ef database update`，迁移名 `InitialPostgres`。表清单、时间列换算和导入前查重见 `docs/pg-table-list.md`。
 
-## 六、安全提示（不阻塞上线，建议排期）
+## 六、健康检查与转发头
+
+`GET /health` 只表示进程还在，返回纯文本 `Healthy`。`GET /health/ready` 用数据库上下文检查 PostgreSQL，连不上返回 503。两个路径都不带 `/api`，也不需要登录。
+
+Nginx 上这两段要写在 SPA 的 `try_files` / `index.html` 回退之前，用精确匹配把它们反代到本机 Kestrel（端口按服务器实际监听地址改），并且不记访问日志：
+
+```nginx
+location = /health {
+    access_log off;
+    proxy_pass http://127.0.0.1:5273;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /health/ready {
+    access_log off;
+    proxy_pass http://127.0.0.1:5273;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+应用只接受来自 `127.0.0.1` 和 `::1` 的 `X-Forwarded-For`、`X-Forwarded-Proto`，并且只取一跳。启用这段代码后，服务器上的 `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` 要删掉：那个环境变量会信任任意来源的转发头，也不要和代码里的配置一起开。
+
+验证邮件和重置邮件的链接只用 `App:PublicBaseUrl`（为空才回落 `FrontendBaseUrl`），不看请求里的 Host。登录锁定按账号，验证邮件冷却按用户，都不按套接字地址计数；转发头在认证前面，所以之后如果按 `Connection.RemoteIpAddress` 做限流，读到的是转发后的客户端地址。
+
+## 七、安全提示（不阻塞上线，建议排期）
 
 - `:10090` 是明文 HTTP，桌面端 JWT 与数据经公网明文传输。个人使用可接受，建议后续加 HTTPS（反向代理或证书直挂），或 M3 本地模式彻底绕开
 - 本次会话中数据库口令与 DeepSeek Key 曾在明文渠道出现过，按既定计划**轮换一次**（改 SQL 登录口令 + DeepSeek Key，同步更新服务器 appsettings.Production.json）

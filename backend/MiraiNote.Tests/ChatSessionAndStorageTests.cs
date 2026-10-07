@@ -253,6 +253,35 @@ public class FileStorageTests
     }
 
     [Fact]
+    public async Task ExportFile_DocxAndXlsx_RoundTripThroughParser()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mirai-test-office-" + Guid.NewGuid().ToString("N"));
+        var tool = new ServerExportFileTool(Options.Create(new FileSystemOptions { ExportsRoot = root }));
+        var parser = new ChatFileParserService(Options.Create(new DeepSeekOptions()));
+
+        await tool.ExecuteAsync(7, """{"filename":"周报.docx","content":"第一段\n第二段"}""");
+        await tool.ExecuteAsync(7, """{"filename":"数据.xlsx","content":"指标\t数值\n访谈\t12"}""");
+
+        var docx = Directory.EnumerateFiles(root, "*.docx", SearchOption.AllDirectories).Single();
+        await using (var stream = File.OpenRead(docx))
+        {
+            var text = await parser.ExtractTextAsync(stream, "周报.docx");
+            Assert.Contains("第一段", text);
+            Assert.Contains("第二段", text);
+        }
+
+        var xlsx = Directory.EnumerateFiles(root, "*.xlsx", SearchOption.AllDirectories).Single();
+        await using (var stream = File.OpenRead(xlsx))
+        {
+            var text = await parser.ExtractTextAsync(stream, "数据.xlsx");
+            Assert.Contains("访谈", text);
+            Assert.Contains("12", text);
+        }
+
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
     public void ExportFile_Schema_DescribesZipFilesArray()
     {
         var tool = new ServerExportFileTool(Options.Create(new FileSystemOptions()));
