@@ -22,7 +22,7 @@ public class EmailVerificationAcceptanceTests
         var result = await h.Auth.RegisterAsync(Bill());
 
         Assert.Equal(RegisterOutcomes.VerificationEmailSent, result.Outcome);
-        Assert.Equal("注册成功，请查收验证邮件", AuthMessages.RegisterMessage(result.Outcome));
+        Assert.Equal("注册成功，请查收验证邮件。没收到的话，请看一下垃圾邮件箱。", AuthMessages.RegisterMessage(result.Outcome));
         var link = Assert.Single(h.Links);
         Assert.StartsWith("https://notes.example.com/verify-email?token=", link);
 

@@ -106,7 +106,7 @@ async function onResend() {
       </div>
 
       <div v-if="needsVerify" class="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-        <p class="text-sm text-amber-800">请先验证邮箱</p>
+        <p class="text-sm text-amber-800">请先验证邮箱。没收到验证邮件的话，请看一下垃圾邮件箱，或在下面重发。</p>
         <FormField label="邮箱" :error="errors.resendEmail">
           <input v-model="resendEmail" type="email" class="form-input" placeholder="you@example.com" />
         </FormField>
