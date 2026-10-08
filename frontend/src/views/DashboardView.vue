@@ -12,16 +12,19 @@ import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi } from '@/api/welcome'
+import { useAuthStore } from '@/stores/auth'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const auth = useAuthStore()
 
 const loading = ref(true)
-/** 初始必须为空：禁止把默认句「今天，安静地推进」当首屏 UI */
+/** 初始必须为空，避免把上一句欢迎语留在首屏。 */
 const greeting = ref('')
+const featureNote = ref('')
 /** 欢迎语所在区域始终占据固定高度，避免异步返回和逐字显示推动下面内容。 */
 const greetingRevealing = ref(false)
 let welcomeAbort: AbortController | null = null
@@ -34,8 +37,41 @@ const isDesignPreview = computed(() => import.meta.env.DEV && route.query.design
 
 const now = new Date()
 const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]
-const dateLabel = `${now.getMonth() + 1}月${now.getDate()}日 · ${weekday}`
+const dateLabel = shanghaiDateLabel(now)
+
+const shanghaiWeekdays: Record<string, string> = {
+  Sun: '周日',
+  Mon: '周一',
+  Tue: '周二',
+  Wed: '周三',
+  Thu: '周四',
+  Fri: '周五',
+  Sat: '周六',
+}
+
+function shanghaiParts(date: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'short',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(date)
+}
+
+function shanghaiPart(date: Date, type: Intl.DateTimeFormatPartTypes): string {
+  return shanghaiParts(date).find((part) => part.type === type)?.value ?? ''
+}
+
+function shanghaiDateLabel(date: Date): string {
+  const weekday = shanghaiWeekdays[shanghaiPart(date, 'weekday')] ?? ''
+  return `${shanghaiPart(date, 'month')}月${shanghaiPart(date, 'day')}日 · ${weekday}`
+}
+
+function fallbackGreeting(date = new Date()): string {
+  const label = `${shanghaiPart(date, 'month')}月${shanghaiPart(date, 'day')}日`
+  const name = auth.user?.username?.trim()
+  return name ? `${name}，${label}` : label
+}
 
 const previewWorkMemos: Memo[] = [
   {
@@ -159,15 +195,22 @@ async function typewriterReveal(text: string, signal: AbortSignal) {
   if (!signal.aborted) greetingRevealing.value = false
 }
 
-async function applyWelcomeContent(content: string | null | undefined, signal: AbortSignal) {
+async function applyWelcomeContent(
+  content: string | null | undefined,
+  note: string | null | undefined,
+  signal: AbortSignal,
+) {
   const text = (content ?? '').trim()
+  const feature = (note ?? '').trim()
   if (!text) {
     if (!signal.aborted) {
-      greeting.value = '今天，安静地推进'
+      greeting.value = fallbackGreeting()
+      featureNote.value = ''
       greetingRevealing.value = false
     }
     return
   }
+  if (!signal.aborted) featureNote.value = feature
   await typewriterReveal(text, signal)
 }
 
@@ -178,6 +221,7 @@ async function load() {
 
   loading.value = true
   greeting.value = ''
+  featureNote.value = ''
   greetingRevealing.value = false
 
   if (isDesignPreview.value) {
@@ -185,7 +229,7 @@ async function load() {
     lifeMemos.value = previewLifeMemos
     recentLogs.value = previewLogs
     loading.value = false
-    await applyWelcomeContent('今天，把重要的一件事做好', signal)
+    await applyWelcomeContent('林晓，10月9日。今天有 2 条备忘到期。', null, signal)
     return
   }
 
@@ -201,11 +245,12 @@ async function load() {
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
     loading.value = false
-    await applyWelcomeContent(welcome?.content, signal)
+    await applyWelcomeContent(welcome?.content, welcome?.featureNote, signal)
   } catch {
     if (!signal.aborted) {
       loading.value = false
-      greeting.value = '今天，安静地推进'
+      greeting.value = fallbackGreeting()
+      featureNote.value = ''
       greetingRevealing.value = false
     }
   }
@@ -264,17 +309,22 @@ onUnmounted(cancelWelcomeTypewriter)
             <span class="h-[9px] w-[9px] shrink-0 rounded-full bg-[#b4493f]" />
             <span>{{ dateLabel }}</span>
           </div>
-          <div class="greeting-stage mt-4" aria-live="polite" aria-atomic="true">
-            <p v-if="!greeting" class="greeting-placeholder" role="status">
-              正在为今天留一句话<span class="greeting-dots" aria-hidden="true"><i /><i /><i /></span>
+          <div class="mt-4" aria-live="polite" aria-atomic="true">
+            <div class="greeting-stage">
+              <p v-if="!greeting" class="greeting-placeholder" role="status">
+                正在为今天留一句话<span class="greeting-dots" aria-hidden="true"><i /><i /><i /></span>
+              </p>
+              <h1
+                v-else
+                class="greeting-copy font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]"
+                :title="greeting"
+              >
+                {{ greeting }}<span v-if="greetingRevealing" class="greeting-caret" aria-hidden="true" />
+              </h1>
+            </div>
+            <p v-if="featureNote" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]">
+              {{ featureNote }}
             </p>
-            <h1
-              v-else
-              class="greeting-copy font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]"
-              :title="greeting"
-            >
-              {{ greeting }}<span v-if="greetingRevealing" class="greeting-caret" aria-hidden="true" />
-            </h1>
           </div>
         </header>
 
