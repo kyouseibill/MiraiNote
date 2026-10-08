@@ -35,10 +35,6 @@ const lifeMemos = ref<Memo[]>([])
 const recentLogs = ref<WorkLog[]>([])
 const isDesignPreview = computed(() => import.meta.env.DEV && route.query.designPreview === '1')
 
-const now = new Date()
-const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-const dateLabel = shanghaiDateLabel(now)
-
 const shanghaiWeekdays: Record<string, string> = {
   Sun: '周日',
   Mon: '周一',
@@ -72,6 +68,10 @@ function fallbackGreeting(date = new Date()): string {
   const name = auth.user?.username?.trim()
   return name ? `${name}，${label}` : label
 }
+
+const now = new Date()
+const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+const dateLabel = shanghaiDateLabel(now)
 
 const previewWorkMemos: Memo[] = [
   {
