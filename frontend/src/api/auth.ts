@@ -19,6 +19,8 @@ import type {
   ForgotPasswordRequest,
   ResetPasswordRequest,
   ChangePasswordRequest,
+  MemoReminderSettings,
+  UpdateMemoReminderSettingsRequest,
 } from '@/types/auth'
 import { apiFailure } from '@/utils/apiError'
 import { useToast } from '@/composables/useToast'
@@ -185,4 +187,10 @@ export const authApi = {
 
   changePassword: (payload: ChangePasswordRequest) =>
     unwrap<null>(http.put('/auth/change-password', payload)),
+
+  getMemoReminderSettings: () =>
+    unwrap<MemoReminderSettings>(http.get('/auth/memo-reminder-settings')),
+
+  updateMemoReminderSettings: (payload: UpdateMemoReminderSettingsRequest) =>
+    unwrap<MemoReminderSettings>(http.put('/auth/memo-reminder-settings', payload)),
 }
