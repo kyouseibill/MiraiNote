@@ -94,7 +94,7 @@ ORDER BY LOWER(LTRIM(RTRIM(u.Username))), u.Id;
 
 旧库类型取自 main@afad560 的 SQL Server 模型：`DateTime` 列为 `datetime2`，`DailyBriefings.BriefDate` 为 `date`。新库瞬时列为 `timestamp with time zone`，日历日列为 `date`。
 
-上海没有夏令时，UTC+8。导入规则只有三种：原样标记为 UTC（会话时区设为 UTC 后写入，不减 8 小时）、减 8 小时、保持 date。下面没有一列需要减 8 小时。拿不准的两列单独标了「待核对」。
+上海没有夏令时，UTC+8。导入规则只有三种：原样标记为 UTC（会话时区设为 UTC 后写入，不减 8 小时）、减 8 小时、保持 date。下面没有一列需要减 8 小时。`Memo.RemindAt` 和 `ScheduledTask.ExecuteAt` 已于 2026-10-08 确认，旧口径为 UTC，导入原样标记为 UTC，不减 8 小时。
 
 `CreatedAt` / `UpdatedAt` 在保存时由 `MiraiNoteDbContext.ApplyAudit` 写成 `DateTime.UtcNow`（`backend/MiraiNote.Data/Context/MiraiNoteDbContext.cs:343` 起）。下表不再逐表重复这两列：旧类型 `datetime2`，新类型 `timestamp with time zone`，旧口径 UTC，导入原样标记为 UTC。依据就是这一处。聊天会话还会在 `backend/MiraiNote.Core/Services/ChatService.cs:3195` 把 `UpdatedAt` 设成 `DateTime.UtcNow`，口径相同。
 
@@ -110,7 +110,7 @@ ORDER BY LOWER(LTRIM(RTRIM(u.Username))), u.Id;
 | `WorkLog` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
 | `LifeLog` | `LogDate` | datetime2 | date | 纯日期 | 保持 date | `LifeLogService.cs:101`、`:121` `request.LogDate.Date` |
 | `LifeLog` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
-| `Memo` | `RemindAt` | datetime2 | timestamptz | 待核对 | 待核对。确认旧 Windows 主机时区是中国标准时间后，按 UTC 原样标记，不减 8 小时 | 接口原样保存请求值（`MemoService.cs:94`、`:114`）。旧聊天工具用 `DateTime.ToUniversalTime()`（main@afad560 的 `ChatService` / `ServerWriteTools`），无偏移字符串按服务器本地时区解释。新代码改为 `ShanghaiClock.ParseToUtc` |
+| `Memo` | `RemindAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC，不减 8 小时 | 接口原样保存请求值（`MemoService.cs:94`、`:114`）。旧聊天工具用 `DateTime.ToUniversalTime()`（main@afad560 的 `ChatService` / `ServerWriteTools`），无偏移字符串按服务器本地时区解释。新代码改为 `ShanghaiClock.ParseToUtc` |
 | `Memo` | `RemindedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `MemoService.cs:172`、`MemoReminderBackgroundService.cs:97`、`:111` `DateTime.UtcNow` |
 | `Memo` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
 | `WeeklyReport` | `WeekStart` / `WeekEnd` | datetime2 | date | 纯日期 | 保持 date | `WeeklyReportService.cs:83-84` `request.WeekStart.Date` / `WeekEnd.Date` |
@@ -125,7 +125,7 @@ ORDER BY LOWER(LTRIM(RTRIM(u.Username))), u.Id;
 | `InboxItems` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
 | `AIActionLogs` | `DecidedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `InboxTriageService.cs:238`、`:277`、`:310`、`:326`；`BriefingService.cs:151` `DateTime.UtcNow` |
 | `AIActionLogs` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
-| `ScheduledTask` | `ExecuteAt` | datetime2 | timestamptz | 待核对 | 待核对。确认旧主机时区后决定。中国标准时间主机上 `ToUniversalTime()` 的结果已是 UTC，导入原样标记为 UTC，不减 8 小时 | `ScheduledTaskService.cs:42` 原样保存传入值；工具 `ServerScheduleTaskTools.cs:56` 对解析结果调用 `ToUniversalTime()`。带 `Z` 的字符串是 UTC。无偏移字符串取决于旧进程时区 |
+| `ScheduledTask` | `ExecuteAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC，不减 8 小时 | `ScheduledTaskService.cs:42` 原样保存传入值；工具 `ServerScheduleTaskTools.cs:56` 对解析结果调用 `ToUniversalTime()`。带 `Z` 的字符串是 UTC。无偏移字符串取决于旧进程时区 |
 | `ScheduledTask` | `ExecutedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ScheduledTaskService.cs:89`、`:99` `DateTime.UtcNow` |
 | `ScheduledTask` | `CreatedAt` / `UpdatedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `ApplyAudit` |
 | `AgentMemories` | `LastAccessedAt` | datetime2 | timestamptz | UTC | 原样标记为 UTC | `AgentMemoryService.cs:76`、`:97`、`:111`、`:128` `DateTime.UtcNow` |
