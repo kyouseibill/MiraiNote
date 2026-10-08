@@ -1,8 +1,10 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services;
+using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
 using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
@@ -167,8 +169,23 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.DoesNotContain("2099", body2.Data!.Content);
         Assert.Null(body1.Data.FeatureNote);
         Assert.Equal(
-            ShanghaiClock.Today(utcNow).ToString("M月d日", CultureInfo.InvariantCulture),
-            "10月9日");
+            "10月9日",
+            ShanghaiClock.Today(utcNow).ToString("M月d日", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void WelcomeGreetingService_DiUsesTheReleaseCatalog()
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<MiraiNoteDbContext>(options => options.UseSqlite(_fx.ConnectionString));
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IWelcomeGreetingService, WelcomeGreetingService>();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolved = scope.ServiceProvider.GetRequiredService<IWelcomeGreetingService>();
+
+        Assert.IsType<WelcomeGreetingService>(resolved);
     }
 
     private static WelcomeGreetingService Greeting(MiraiNote.Data.Context.MiraiNoteDbContext db) =>
