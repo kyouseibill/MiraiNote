@@ -87,3 +87,12 @@ export interface ChangePasswordRequest {
   newPassword: string
   confirmPassword: string
 }
+
+/** 备忘手机提醒。接口不返回 key 本身。 */
+export interface MemoReminderSettings {
+  barkConfigured: boolean
+}
+
+export interface UpdateMemoReminderSettingsRequest {
+  barkKey: string
+}

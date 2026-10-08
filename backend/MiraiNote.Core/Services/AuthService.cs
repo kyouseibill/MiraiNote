@@ -413,18 +413,8 @@ public class AuthService : IAuthService
 
     private DateTime UtcNow() => DateTime.SpecifyKind(UtcNowProvider(), DateTimeKind.Utc);
 
-    private string BuildAbsoluteLink(string pathAndQuery)
-    {
-        var baseUrl = string.IsNullOrWhiteSpace(_appOptions.PublicBaseUrl)
-            ? _appOptions.FrontendBaseUrl
-            : _appOptions.PublicBaseUrl;
-        baseUrl = baseUrl.Trim().TrimEnd('/');
-        if (!baseUrl.Contains("://", StringComparison.Ordinal))
-        {
-            baseUrl = "https://" + baseUrl;
-        }
-        return baseUrl + pathAndQuery;
-    }
+    private string BuildAbsoluteLink(string pathAndQuery) =>
+        AppLinks.Absolute(_appOptions, pathAndQuery);
 
     // ============================================================
     // 忘记密码 / 重置密码

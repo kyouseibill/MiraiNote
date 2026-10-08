@@ -278,13 +278,14 @@ watch(keyword, () => {
         </div>
         <div>
           <label class="block text-xs text-gray-500 mb-1">提醒方式</label>
-          <div class="flex items-center gap-4 h-8 text-sm">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 min-h-8 text-sm">
             <label class="flex items-center gap-1 cursor-pointer">
               <input v-model="newForm.popup" type="checkbox" /> 弹窗
             </label>
             <label class="flex items-center gap-1 cursor-pointer">
               <input v-model="newForm.email" type="checkbox" /> 邮件
             </label>
+            <span class="text-xs text-gray-400" data-testid="email-spam-hint">没收到请看垃圾箱</span>
           </div>
         </div>
       </div>
@@ -366,13 +367,14 @@ watch(keyword, () => {
                   </div>
                   <div>
                     <label class="block text-xs text-gray-500 mb-1">提醒方式</label>
-                    <div class="flex items-center gap-4 h-8 text-xs">
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 min-h-8 text-xs">
                       <label class="flex items-center gap-1 cursor-pointer">
                         <input v-model="editForm.popup" type="checkbox" :disabled="!editForm.remindLocal" /> 弹窗
                       </label>
                       <label class="flex items-center gap-1 cursor-pointer">
                         <input v-model="editForm.email" type="checkbox" :disabled="!editForm.remindLocal" /> 邮件
                       </label>
+                      <span class="text-xs text-gray-400" data-testid="email-spam-hint">没收到请看垃圾箱</span>
                     </div>
                   </div>
                 </div>

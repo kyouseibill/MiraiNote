@@ -39,6 +39,11 @@ public class Memo : BaseEntity
     /// <summary>邮件提醒是否已发送（避免重复发送）。</summary>
     public bool EmailReminderSent { get; set; } = false;
 
+    /// <summary>
+    /// Bark 提醒是否已处理。成功、失败或超过 2 小时放弃都记为 true，避免失败后无限重试。
+    /// </summary>
+    public bool BarkReminderSent { get; set; } = false;
+
     /// <summary>弹窗提醒是否已被用户确认（避免重复弹出）。</summary>
     public bool PopupAcknowledged { get; set; } = false;
 

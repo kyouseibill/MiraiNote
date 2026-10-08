@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
@@ -56,6 +56,33 @@ function fmtDate(iso: string | null): string {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
   })
+}
+
+const barkKey = ref('')
+const barkConfigured = ref(false)
+const barkSubmitting = ref(false)
+
+onMounted(async () => {
+  try {
+    const settings = await authApi.getMemoReminderSettings()
+    barkConfigured.value = settings.barkConfigured
+  } catch {
+    // 拦截器已 toast
+  }
+})
+
+async function saveBark() {
+  barkSubmitting.value = true
+  try {
+    const settings = await authApi.updateMemoReminderSettings({ barkKey: barkKey.value.trim() })
+    barkConfigured.value = settings.barkConfigured
+    barkKey.value = ''
+    toast.success(barkConfigured.value ? 'Bark key 已保存' : '已关闭手机推送')
+  } catch {
+    // 拦截器已 toast
+  } finally {
+    barkSubmitting.value = false
+  }
 }
 
 async function handleLogout() {
@@ -131,6 +158,40 @@ async function handleLogout() {
           <dd class="text-sm text-gray-800">{{ fmtDate(auth.user?.lastLoginAt ?? null) }}</dd>
         </div>
       </dl>
+    </section>
+
+    <!-- 手机提醒 -->
+    <section class="surface-card">
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-900">手机提醒</h2>
+        <p class="text-sm text-gray-500 mt-0.5">备忘到点后推到手机。留空则不推送，邮件提醒照常。</p>
+      </div>
+      <form class="px-6 py-5 space-y-3" @submit.prevent="saveBark">
+        <div>
+          <label class="block text-sm text-gray-700 mb-1" for="bark-key">Bark key</label>
+          <input
+            id="bark-key"
+            v-model="barkKey"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            data-testid="bark-key-input"
+            placeholder="只填 key，留空表示不推送"
+            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+          />
+          <p class="mt-1 text-xs text-gray-400">推送地址固定为 api.day.app，不用填写服务器地址。</p>
+          <p class="mt-1 text-xs text-gray-500" data-testid="bark-key-status">
+            当前：{{ barkConfigured ? '已填写' : '未填写' }}。留空并保存会关闭推送。
+          </p>
+        </div>
+        <button
+          type="submit"
+          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
+          :disabled="barkSubmitting"
+        >
+          {{ barkSubmitting ? '保存中…' : '保存' }}
+        </button>
+      </form>
     </section>
 
     <!-- 修改密码卡 -->

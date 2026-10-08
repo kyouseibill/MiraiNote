@@ -29,6 +29,12 @@ public static class DependencyInjection
         services.AddSingleton<Services.ChatModels.IChatModelProviderResolver, Services.ChatModels.ChatModelProviderResolver>();
         services.AddScoped<Services.ChatFileParserService>();
         services.AddSingleton<Services.IEmailService, Services.SmtpEmailService>();
+        services.AddHttpClient(Services.BarkNotifier.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+        services.AddSingleton<Services.IBarkNotifier, Services.BarkNotifier>();
+        services.AddScoped<Services.IMemoReminderSettingsService, Services.MemoReminderSettingsService>();
         services.AddScoped<Services.IScheduledTaskService, Services.ScheduledTaskService>();
         services.AddHostedService<Services.MemoReminderBackgroundService>();
         services.AddHostedService<Services.MemoryDecayBackgroundService>();

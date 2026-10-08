@@ -85,6 +85,13 @@ public class SmtpEmailService : IEmailService
 
     public Task SendMemoReminderAsync(string toEmail, string username, string content, DateTime remindAtLocal, string section, CancellationToken ct = default)
     {
+        var mail = ComposeMemoReminder(username, content, remindAtLocal, section);
+        return SendAsync(toEmail, mail.Subject, mail.Html, ct);
+    }
+
+    /// <summary>备忘提醒邮件的标题和正文。标题与正文都带上备忘内容，收件人能看出是哪一条。</summary>
+    internal static MemoReminderMail ComposeMemoReminder(string username, string content, DateTime remindAtLocal, string section)
+    {
         var sectionLabel = string.Equals(section, "life", StringComparison.OrdinalIgnoreCase) ? "生活" : "工作";
         var subject = $"【未来ノート · {sectionLabel}提醒】{TrimForSubject(content)}";
         // 内容按行 escape + 换行，避免 HTML 注入并保留换行
@@ -103,8 +110,10 @@ public class SmtpEmailService : IEmailService
             buttonText: null,
             buttonLink: null,
             footer: "您可登录未来ノート将其标记为已完成或归档。");
-        return SendAsync(toEmail, subject, html, ct);
+        return new MemoReminderMail(subject, html);
     }
+
+    internal readonly record struct MemoReminderMail(string Subject, string Html);
 
     private static string TrimForSubject(string content)
     {

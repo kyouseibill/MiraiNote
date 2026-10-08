@@ -44,4 +44,11 @@ public class User : BaseEntity
 
     /// <summary>最后登录时间（UTC）。</summary>
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// Bark 设备 key。只存在数据库里；为空表示不推送。
+    /// 不要写入日志、配置文件或异常消息。
+    /// </summary>
+    [MaxLength(64)]
+    public string? BarkDeviceKey { get; set; }
 }
