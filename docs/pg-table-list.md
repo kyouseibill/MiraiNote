@@ -35,7 +35,7 @@
 - `Email` 继续小写存放。导入时写成 `lower(btrim(Email))`。没有 `NormalizedEmail`。
 - `bit` 改为 `boolean`。`0` → `false`，`1` → `true`。
 - 从旧库导入的已有用户，`IsEmailVerified` 一律写成 `true`。新环境里种子管理员本身也是已验证。
-- 不建 `WelcomeGreeting`。旧模型里有过这张表，但没有应用写入入口，文案只走内置文案池。旧库如果碰巧有这张表，不要导入。
+- 不建 `WelcomeGreeting`。旧模型里有过这张表，但没有应用写入入口。欢迎语不再使用文案池或这张表。旧库如果碰巧有这张表，不要导入。
 - 已删除、不要导入的家务表：`Household`、`HouseholdMember`、`HouseholdItem`、`HouseholdItemTemplate`、`HouseholdConsumable`、`HouseholdConsumableReminder`、`HouseholdCompletionRecord`、`HouseholdInvitation`、`HouseholdNotificationSetting`、`HouseholdReminderLog`、`HouseholdChatDraft`。
 
 ## 建议的外键导入顺序

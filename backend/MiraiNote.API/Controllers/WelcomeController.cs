@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MiraiNote.Core.Services;
-using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 
 namespace MiraiNote.API.Controllers;
@@ -13,29 +12,32 @@ public sealed class WelcomeController : ControllerBase
 {
     private readonly IWelcomeGreetingService _greetingService;
     private readonly ICurrentUserService _currentUser;
+    private readonly TimeProvider _clock;
 
-    public WelcomeController(IWelcomeGreetingService greetingService, ICurrentUserService currentUser)
+    public WelcomeController(
+        IWelcomeGreetingService greetingService,
+        ICurrentUserService currentUser,
+        TimeProvider clock)
     {
         _greetingService = greetingService;
         _currentUser = currentUser;
+        _clock = clock;
     }
 
     /// <summary>
-    /// 首页欢迎语。日期固定为服务器的 Asia/Shanghai 今天，忽略客户端传入的 date。
-    /// exclude 只给以后的「换一句」用：从文案池挑选且不调模型。正常首页不要传。
+    /// 工作台欢迎语。日期用服务器时钟换算成 Asia/Shanghai 的今天，忽略客户端传入的 date。
     /// </summary>
     [HttpGet("greeting")]
     public async Task<ActionResult<ApiResponse<WelcomeGreetingResponse>>> GetGreeting(
         [FromQuery] string? date,
-        [FromQuery] string? exclude,
         CancellationToken ct)
     {
         _ = date;
-        var localDate = ShanghaiClock.ToShanghaiDate(DateTimeOffset.UtcNow);
-        var content = await _greetingService.GetGreetingAsync(
-            _currentUser.UserId, localDate, exclude, ct);
-        return Ok(ApiResponse<WelcomeGreetingResponse>.Ok(new WelcomeGreetingResponse(content)));
+        var greeting = await _greetingService.GetGreetingAsync(
+            _currentUser.UserId, _clock.GetUtcNow(), ct);
+        return Ok(ApiResponse<WelcomeGreetingResponse>.Ok(
+            new WelcomeGreetingResponse(greeting.Content, greeting.FeatureNote)));
     }
 }
 
-public sealed record WelcomeGreetingResponse(string Content);
+public sealed record WelcomeGreetingResponse(string Content, string? FeatureNote);

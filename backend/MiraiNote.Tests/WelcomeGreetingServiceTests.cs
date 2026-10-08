@@ -1,11 +1,12 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
+using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
 using Xunit;
 
@@ -14,246 +15,210 @@ namespace MiraiNote.Tests;
 public class WelcomeGreetingServiceTests : IDisposable
 {
     private readonly MiraiTestFixture _fx = new();
-    private readonly List<IMemoryCache> _caches = [];
 
-    private WelcomeGreetingService CreateService(
-        string? apiKey,
-        IHttpClientFactory factory)
+    [Fact]
+    public async Task GetGreeting_WhenMemosAreDueToday_SaysHowMany()
     {
-        var cache = new MemoryCache(new MemoryCacheOptions());
-        _caches.Add(cache);
-        return new(
-            cache,
-            Options.Create(new DeepSeekOptions
-            {
-                ApiKey = apiKey ?? "",
-                BaseUrl = "https://example.test/v1/",
-                Model = "deepseek-test"
-            }),
-            factory,
-            NullLogger<WelcomeGreetingService>.Instance);
+        var utcNow = new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero);
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        var otherId = await AddUserAsync(db, "other", "other@example.com");
+
+        db.Memos.AddRange(
+            Memo(userId, "今天要处理", ShanghaiClock.ParseToUtc("2026-10-09 15:00")),
+            Memo(userId, "已经做完", ShanghaiClock.ParseToUtc("2026-10-09 11:00"), isDone: true),
+            Memo(userId, "已归档", ShanghaiClock.ParseToUtc("2026-10-09 12:00"), isArchived: true),
+            Memo(otherId, "别人的", ShanghaiClock.ParseToUtc("2026-10-09 15:00")));
+        await db.SaveChangesAsync();
+
+        var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
+
+        Assert.Equal("tester，10月9日。今天有 1 条备忘到期。", greeting.Content);
+        Assert.Null(greeting.FeatureNote);
     }
 
     [Fact]
-    public async Task GetGreeting_ReturnsOriginalGreetingFromAiResponse()
+    public async Task GetGreeting_WhenNothingIsDueOrUnfinished_KeepsNameAndDate()
     {
-        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ =>
-            Task.FromResult("今天，把重要的一件事做好。"));
-        var service = CreateService("test-key", factory);
-        var day = new DateOnly(2026, 9, 3);
+        var utcNow = new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero);
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        db.Memos.Add(Memo(userId, "已经做完", ShanghaiClock.ParseToUtc("2026-10-09 09:00"), isDone: true));
+        await db.SaveChangesAsync();
 
-        var greeting = await service.GetGreetingAsync(userId: 1013, day);
+        var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Equal("今天，把重要的一件事做好。", greeting);
-        var prompt = MiraiTestFixture.DecodeMessageText(captured.Single());
-        Assert.Contains("AI 前沿观察者与未来预言者", prompt);
-        Assert.Contains("真实进展", prompt);
-        Assert.Contains("OpenAI、Anthropic、Google、SpaceX", prompt);
-        Assert.Contains("不要捏造未经确认的新闻", prompt);
-        Assert.Contains("不超过 60 个汉字", prompt);
-
-        using var request = System.Text.Json.JsonDocument.Parse(captured.Single());
-        Assert.Equal(256, request.RootElement.GetProperty("max_tokens").GetInt32());
-        Assert.Equal("disabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.DoesNotContain("到期", greeting.Content);
+        Assert.DoesNotContain("没做完", greeting.Content);
+        Assert.Null(greeting.FeatureNote);
     }
 
     [Fact]
-    public async Task GetGreeting_ReturnsPoolPickWhenAiResponseIsTooLong()
+    public async Task GetGreeting_OpenMemoWithoutTodayReminder_MentionsUnfinished()
     {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ =>
-            Task.FromResult(new string('好', 61)));
-        var service = CreateService("test-key", factory);
-        var day = new DateOnly(2026, 9, 3);
+        var utcNow = new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero);
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        db.Memos.Add(Memo(userId, "还没安排时间", remindAt: null));
+        await db.SaveChangesAsync();
 
-        var greeting = await service.GetGreetingAsync(userId: 1013, day, exclude: "今天，安静地推进");
+        var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
-        Assert.NotEqual("今天，安静地推进", greeting);
+        Assert.Equal("tester，10月9日。还有 1 条备忘没做完。", greeting.Content);
+        Assert.DoesNotContain("到期", greeting.Content);
     }
 
     [Fact]
-    public async Task GetGreeting_ReturnsPoolPickWhenApiKeyMissing()
+    public async Task GetGreeting_ShanghaiMorningWhileUtcIsPreviousDay_CountsShanghaiDay()
     {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
-        var service = CreateService(apiKey: null, factory);
-        var day = new DateOnly(2026, 9, 3);
+        // 上海 2026-10-09 00:30，UTC 仍是 2026-10-08 16:30。
+        var utcNow = new DateTimeOffset(2026, 10, 8, 16, 30, 0, TimeSpan.Zero);
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        var otherId = await AddUserAsync(db, "other", "other@example.com");
 
-        var greeting = await service.GetGreetingAsync(userId: 42, day);
+        db.Memos.AddRange(
+            Memo(userId, "上海今天上午", ShanghaiClock.ParseToUtc("2026-10-09 09:00")),
+            Memo(userId, "UTC 仍是 8 日，上海已是 9 日", new DateTime(2026, 10, 8, 18, 0, 0, DateTimeKind.Utc)),
+            Memo(userId, "上海昨天晚上", ShanghaiClock.ParseToUtc("2026-10-08 23:00")),
+            Memo(userId, "已完成的今天", ShanghaiClock.ParseToUtc("2026-10-09 08:00"), isDone: true),
+            Memo(userId, "已归档的今天", ShanghaiClock.ParseToUtc("2026-10-09 10:00"), isArchived: true),
+            Memo(otherId, "别人今天的", ShanghaiClock.ParseToUtc("2026-10-09 09:00")));
+        await db.SaveChangesAsync();
 
-        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
+        var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
+
+        Assert.Equal("tester，10月9日。今天有 2 条备忘到期，还有 1 条备忘没做完。", greeting.Content);
+        Assert.DoesNotContain("10月8日", greeting.Content);
+        Assert.Null(greeting.FeatureNote);
     }
 
     [Fact]
-    public async Task GetGreeting_PassesExcludeToPoolFallback()
+    public async Task GetGreeting_FeatureNote_DisappearsAfterSevenDays()
     {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
-        var service = CreateService(apiKey: null, factory);
-        var day = new DateOnly(2026, 9, 3);
-        var exclude = WelcomeGreetingService.GreetingPool[0];
-
-        var greeting = await service.GetGreetingAsync(userId: 42, day, exclude);
-
-        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
-        Assert.NotEqual(exclude, greeting);
-    }
-
-    [Fact]
-    public void PickRandomFromPool_ExcludesLastWhenPoolHasMultiple()
-    {
-        var pool = new[] { "甲", "乙", "丙" };
-        var rng = new Random(12345);
-        for (var i = 0; i < 40; i++)
+        var notes = new[]
         {
-            var pick = WelcomeGreetingService.PickRandomFromPool(pool, exclude: "乙", random: rng);
-            Assert.Contains(pick, pool);
-            Assert.NotEqual("乙", pick);
-        }
+            new FeatureLaunchNote(new DateOnly(2026, 10, 2), "MiraiAI 可以在对话里接着上次的文件继续做。"),
+        };
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        var service = new WelcomeGreetingService(db, new FeatureLaunchCatalog(notes));
+
+        var before = await service.GetGreetingAsync(
+            userId, new DateTimeOffset(2026, 10, 1, 15, 59, 0, TimeSpan.Zero));
+        var firstDay = await service.GetGreetingAsync(
+            userId, new DateTimeOffset(2026, 10, 1, 16, 0, 0, TimeSpan.Zero));
+        var lastDay = await service.GetGreetingAsync(
+            userId, new DateTimeOffset(2026, 10, 8, 15, 59, 0, TimeSpan.Zero));
+        var expired = await service.GetGreetingAsync(
+            userId, new DateTimeOffset(2026, 10, 8, 16, 0, 0, TimeSpan.Zero));
+
+        Assert.Null(before.FeatureNote);
+        Assert.Equal("tester，10月1日", before.Content);
+
+        Assert.Equal("MiraiAI 可以在对话里接着上次的文件继续做。", firstDay.FeatureNote);
+        Assert.Equal("tester，10月2日", firstDay.Content);
+        Assert.DoesNotContain("MiraiAI", firstDay.Content);
+
+        Assert.Equal(notes[0].Text, lastDay.FeatureNote);
+        Assert.Equal("tester，10月8日", lastDay.Content);
+
+        Assert.Null(expired.FeatureNote);
+        Assert.Equal("tester，10月9日", expired.Content);
+        Assert.DoesNotContain("MiraiAI", expired.Content);
     }
 
     [Fact]
-    public void PickRandomFromPool_AllowsRepeatWhenPoolSizeIsOne()
+    public void FeatureNote_UsesNewestStartDateInsideSevenDayWindow()
     {
-        var pool = new[] { "唯一一句" };
-        var pick = WelcomeGreetingService.PickRandomFromPool(pool, exclude: "唯一一句");
-        Assert.Equal("唯一一句", pick);
-    }
-
-    [Fact]
-    public void PickRandomFromPool_VariesAcrossCalls()
-    {
-        var pool = WelcomeGreetingService.GreetingPool;
-        var distinct = new HashSet<string>();
-        var rng = new Random(7);
-        for (var i = 0; i < 80; i++)
-            distinct.Add(WelcomeGreetingService.PickRandomFromPool(pool, random: rng));
-
-        Assert.True(distinct.Count >= 5, $"随机 80 次 distinct 应为 ≥5，实际 {distinct.Count}");
-    }
-
-    [Fact]
-    public void GreetingPool_HasExpectedSizeAndFallbackAsFirst()
-    {
-        Assert.Equal(40, WelcomeGreetingService.GreetingPool.Length);
-        Assert.Equal(WelcomeGreetingService.FallbackGreeting, WelcomeGreetingService.GreetingPool[0]);
-        Assert.All(WelcomeGreetingService.GreetingPool, g =>
+        var notes = new[]
         {
-            Assert.False(string.IsNullOrWhiteSpace(g));
-            Assert.True(g.Length <= 60);
-            Assert.DoesNotContain('\n', g);
-        });
+            new FeatureLaunchNote(new DateOnly(2026, 10, 1), "旧功能"),
+            new FeatureLaunchNote(new DateOnly(2026, 10, 3), "新功能"),
+        };
+
+        Assert.Equal("新功能", FeatureLaunchNotes.Select(notes, new DateOnly(2026, 10, 4)));
+        Assert.Equal("新功能", FeatureLaunchNotes.Select(notes, new DateOnly(2026, 10, 8)));
+        Assert.Null(FeatureLaunchNotes.Select(notes, new DateOnly(2026, 10, 10)));
+        Assert.Null(FeatureLaunchNotes.Select([], new DateOnly(2026, 10, 4)));
     }
 
     [Fact]
-    public void PickRandomFromPool_UsesExplicitListWhenProvided()
+    public async Task GetGreeting_IgnoresClientDate_AndUsesShanghaiClock()
     {
-        var pool = new[] { "甲", "乙", "丙" };
-        var pick = WelcomeGreetingService.PickRandomFromPool(pool, random: new Random(1));
+        var utcNow = new DateTimeOffset(2026, 10, 8, 16, 30, 0, TimeSpan.Zero);
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        db.Memos.Add(Memo(userId, "上海今天", ShanghaiClock.ParseToUtc("2026-10-09 09:00")));
+        await db.SaveChangesAsync();
 
-        Assert.Contains(pick, pool);
-        Assert.DoesNotContain(pick, WelcomeGreetingService.GreetingPool);
-    }
+        var controller = new WelcomeController(
+            Greeting(db),
+            new FixedUser(userId),
+            new FixedClock(utcNow));
 
-    [Fact]
-    public void PickRandomFromPool_FallsBackToHardcodedWhenListEmpty()
-    {
-        var pick = WelcomeGreetingService.PickRandomFromPool(Array.Empty<string>(), random: new Random(2));
+        var first = await controller.GetGreeting("2001-01-01", CancellationToken.None);
+        var second = await controller.GetGreeting("2099-06-06", CancellationToken.None);
 
-        Assert.Contains(pick, WelcomeGreetingService.GreetingPool);
-    }
-
-    [Fact]
-    public async Task PickFromPoolAsync_UsesBuiltinPoolAndHonorsExclude()
-    {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
-        var service = CreateService(apiKey: null, factory);
-        var exclude = WelcomeGreetingService.GreetingPool[1];
-
-        for (var i = 0; i < 20; i++)
-        {
-            var greeting = await service.PickFromPoolAsync(exclude);
-            Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
-            Assert.NotEqual(exclude, greeting);
-        }
-    }
-
-    [Fact]
-    public async Task PickFromPoolAsync_UsesBuiltinPoolWhenNoDatabase()
-    {
-        var (factory, _) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("不应调用"));
-        var service = CreateService(apiKey: null, factory);
-
-        var greeting = await service.PickFromPoolAsync();
-
-        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
-    }
-
-    [Fact]
-    public async Task GetGreeting_SameDate_CallsTheModelOnceAcrossUsers()
-    {
-        var (factory, captured) = MiraiTestFixture.MockDeepSeek(async _ =>
-        {
-            await Task.Delay(40);
-            return "今天，把重要的一件事做好。";
-        });
-        var service = CreateService("test-key", factory);
-        var day = new DateOnly(2026, 9, 3);
-
-        var results = await Task.WhenAll(Enumerable.Range(1, 8).Select(id => service.GetGreetingAsync(id, day)));
-
-        Assert.Single(captured);
-        Assert.All(results, greeting => Assert.Equal("今天，把重要的一件事做好。", greeting));
-    }
-
-    [Fact]
-    public async Task GetGreeting_Exclude_DoesNotCallTheModel()
-    {
-        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ => Task.FromResult("模型不该被叫到"));
-        var service = CreateService("test-key", factory);
-        var exclude = WelcomeGreetingService.GreetingPool[0];
-
-        var greeting = await service.GetGreetingAsync(7, new DateOnly(2026, 9, 3), exclude);
-
-        Assert.Empty(captured);
-        Assert.Contains(greeting, WelcomeGreetingService.GreetingPool);
-        Assert.NotEqual(exclude, greeting);
-    }
-
-    [Fact]
-    public async Task GetGreeting_IgnoresClientDate_SoOneShanghaiDayCallsTheModelOnce()
-    {
-        var (factory, captured) = MiraiTestFixture.MockDeepSeek(_ =>
-            Task.FromResult("今天，把重要的一件事做好。"));
-        var service = CreateService("test-key", factory);
-        var controller = new WelcomeController(service, new FixedUser(3));
-
-        var first = await controller.GetGreeting("2001-01-01", null, CancellationToken.None);
-        var second = await controller.GetGreeting("2099-06-06", null, CancellationToken.None);
-
-        Assert.Single(captured);
         var body1 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(first.Result).Value);
         var body2 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(second.Result).Value);
-        Assert.Equal("今天，把重要的一件事做好。", body1.Data!.Content);
+        Assert.Equal("tester，10月9日。今天有 1 条备忘到期。", body1.Data!.Content);
         Assert.Equal(body1.Data.Content, body2.Data!.Content);
+        Assert.DoesNotContain("2001", body1.Data!.Content);
+        Assert.DoesNotContain("2099", body2.Data!.Content);
+        Assert.Null(body1.Data.FeatureNote);
+        Assert.Equal(
+            "10月9日",
+            ShanghaiClock.Today(utcNow).ToString("M月d日", CultureInfo.InvariantCulture));
     }
 
     [Fact]
-    public async Task GetGreeting_Failure_UsesThePoolAndDoesNotRetryThatDay()
+    public void WelcomeGreetingService_DiUsesTheReleaseCatalog()
     {
-        var calls = 0;
-        var factory = MiraiTestFixture.MockDeepSeekFactory(_ =>
+        var services = new ServiceCollection();
+        services.AddDbContext<MiraiNoteDbContext>(options => options.UseSqlite(_fx.ConnectionString));
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IWelcomeGreetingService, WelcomeGreetingService>();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolved = scope.ServiceProvider.GetRequiredService<IWelcomeGreetingService>();
+
+        Assert.IsType<WelcomeGreetingService>(resolved);
+    }
+
+    private static WelcomeGreetingService Greeting(MiraiNote.Data.Context.MiraiNoteDbContext db) =>
+        new(db, new FeatureLaunchCatalog([]));
+
+    private static Memo Memo(
+        int userId,
+        string content,
+        DateTime? remindAt,
+        bool isDone = false,
+        bool isArchived = false) =>
+        new()
         {
-            Interlocked.Increment(ref calls);
-            return MiraiTestFixture.DeepSeekError();
-        });
-        var service = CreateService("test-key", factory);
-        var day = new DateOnly(2026, 9, 3);
+            UserId = userId,
+            Section = "work",
+            Content = content,
+            RemindAt = remindAt,
+            IsDone = isDone,
+            IsArchived = isArchived,
+        };
 
-        var first = await service.GetGreetingAsync(1, day);
-        var second = await service.GetGreetingAsync(2, day);
-
-        Assert.Equal(1, calls);
-        Assert.Equal(first, second);
-        Assert.Contains(first, WelcomeGreetingService.GreetingPool);
+    private static async Task<int> AddUserAsync(MiraiNote.Data.Context.MiraiNoteDbContext db, string username, string email)
+    {
+        var user = new User
+        {
+            Username = username,
+            NormalizedUserName = username,
+            Email = email,
+            PasswordHash = "hash",
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        return user.Id;
     }
 
     private sealed class FixedUser(int userId) : ICurrentUserService
@@ -262,10 +227,10 @@ public class WelcomeGreetingServiceTests : IDisposable
         public bool IsAuthenticated => true;
     }
 
-    public void Dispose()
+    private sealed class FixedClock(DateTimeOffset utcNow) : TimeProvider
     {
-        foreach (var cache in _caches)
-            cache.Dispose();
-        _fx.Dispose();
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
+
+    public void Dispose() => _fx.Dispose();
 }

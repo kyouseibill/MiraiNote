@@ -1,19 +1,10 @@
 import { http, unwrap } from './auth'
 
-interface WelcomeGreetingResponse {
+export interface WelcomeGreeting {
   content: string
-}
-
-export interface GetWelcomeGreetingOptions {
-  /** 预留。传了就会改走文案池且不调模型。正常首页不要传。 */
-  exclude?: string
+  featureNote: string | null
 }
 
 export const welcomeApi = {
-  getGreeting: (opts: GetWelcomeGreetingOptions = {}) =>
-    unwrap<WelcomeGreetingResponse>(
-      http.get('/welcome/greeting', {
-        params: opts.exclude ? { exclude: opts.exclude } : {},
-      }),
-    ),
+  getGreeting: () => unwrap<WelcomeGreeting>(http.get('/welcome/greeting')),
 }

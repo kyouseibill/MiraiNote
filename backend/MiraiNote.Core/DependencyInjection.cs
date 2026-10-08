@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<Services.Mirai.IBriefingService, Services.Mirai.BriefingService>();
         services.AddScoped<Services.Mirai.IDayOverviewService, Services.Mirai.DayOverviewService>();
         services.AddScoped<Services.Mirai.IMiraiStatsService, Services.Mirai.MiraiStatsService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
         services.AddScoped<Services.Mirai.IMiraiContextProvider, Services.Mirai.MiraiContextProvider>();
         services.AddHostedService<Services.TempCleanupBackgroundService>();
