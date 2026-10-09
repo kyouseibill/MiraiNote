@@ -75,6 +75,7 @@ public static class DependencyInjection
         services.AddSingleton<Services.ISevereWeatherWarningSource>(sp => sp.GetRequiredService<Services.QWeatherWarningClient>());
         services.AddSingleton<Services.IWelcomeWeatherSource>(sp => sp.GetRequiredService<Services.QWeatherWarningClient>());
         services.AddSingleton<Services.IWelcomeTitleTranslator, Services.DeepSeekWelcomeTitleTranslator>();
+        services.AddSingleton<Services.IWelcomeNewsSeenStore, Services.WelcomeNewsSeenStore>();
         services.AddSingleton<Services.IWelcomeNewsSource, Services.WelcomeNewsClient>();
         services.AddScoped<Services.IWelcomePlaceSettingsService, Services.WelcomePlaceSettingsService>();
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
