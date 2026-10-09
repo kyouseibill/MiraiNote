@@ -1,6 +1,9 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using MiraiNote.Data.Context;
+using MiraiNote.Data.Entities;
 using MiraiNote.Shared;
 
 namespace MiraiNote.Core.Services;
@@ -22,7 +25,12 @@ public sealed record WelcomeGreeting(
     string DisplayName,
     string DateLine,
     string? WeatherBrief,
-    string? MemoSummary);
+    string? MemoSummary,
+    string? GreetingLine,
+    WelcomePoemLine? Poem);
+
+/// <summary>当天的一句诗词。没有可用行时为 null，前端不留空行。</summary>
+public sealed record WelcomePoemLine(string Text, string? Author, string? Source);
 
 /// <summary>称呼、日期行、实况和备忘摘要拆开，避免大标题重复日期和天气。</summary>
 public sealed record WelcomeLines(
@@ -105,6 +113,11 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         await Task.WhenAll(weatherTask, newsTask);
         var weather = await weatherTask;
         var lines = Arrange(name, today, dueToday, unfinishedElsewhere, weather.NowText, weather.NowTemp);
+        var wall = ShanghaiClock.ToShanghaiWall(utcNow);
+        var slot = ResolveSlot(wall, weather.NowText, today);
+        // 每次现查。停用和软删立刻生效，不在这里做长时间缓存。
+        var greetingLine = await ReadGreetingLineAsync(slot, name, today, ct);
+        var poem = await ReadPoemAsync(today, ct);
 
         return new WelcomeGreeting(
             lines.DisplayName,
@@ -114,7 +127,9 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
             lines.DisplayName,
             lines.DateLine,
             lines.WeatherBrief,
-            lines.MemoSummary);
+            lines.MemoSummary,
+            greetingLine,
+            poem);
     }
 
     private async Task<WelcomeWeather> ReadWeatherAsync(string? place, CancellationToken ct)
@@ -218,6 +233,161 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         var collapsed = string.Join(' ', weatherText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         return collapsed.Length == 0 ? null : collapsed;
     }
+
+    /// <summary>
+    /// 上海墙钟时段，起点含、终点不含：05–11 早晨，11–13 中午，13–18 下午，18–23 晚上，23–05 深夜。
+    /// </summary>
+    public static string PeriodOf(DateTime shanghaiWall)
+    {
+        var hour = shanghaiWall.Hour;
+        if (hour >= 5 && hour < 11) return WelcomePhrasePeriod.Morning;
+        if (hour >= 11 && hour < 13) return WelcomePhrasePeriod.Noon;
+        if (hour >= 13 && hour < 18) return WelcomePhrasePeriod.Afternoon;
+        if (hour >= 18 && hour < 23) return WelcomePhrasePeriod.Evening;
+        return WelcomePhrasePeriod.LateNight;
+    }
+
+    /// <summary>
+    /// 深夜只用深夜池。其余：实况文字含「雨」用下雨池；没有实况则不算下雨。
+    /// 再否则周五用周五池，最后才用时段池。
+    /// </summary>
+    public static string ResolveSlot(DateTime shanghaiWall, string? weatherNowText, DateOnly shanghaiDate)
+    {
+        var period = PeriodOf(shanghaiWall);
+        if (period == WelcomePhrasePeriod.LateNight)
+            return WelcomePhrasePeriod.LateNight;
+        if (IsRainNow(weatherNowText))
+            return WelcomePhraseSpecial.Rain;
+        if (shanghaiDate.DayOfWeek == DayOfWeek.Friday)
+            return WelcomePhraseSpecial.Friday;
+        return period;
+    }
+
+    public static bool IsRainNow(string? weatherNowText) =>
+        !string.IsNullOrWhiteSpace(weatherNowText) && weatherNowText.Contains('雨');
+
+    /// <summary>3–5 春，6–8 夏，9–11 秋，12、1、2 冬。</summary>
+    public static string SeasonOf(DateOnly shanghaiDate) => shanghaiDate.Month switch
+    {
+        >= 3 and <= 5 => WelcomePhraseSeason.Spring,
+        >= 6 and <= 8 => WelcomePhraseSeason.Summer,
+        >= 9 and <= 11 => WelcomePhraseSeason.Autumn,
+        _ => WelcomePhraseSeason.Winter,
+    };
+
+    /// <summary>
+    /// 同一上海日期、同一槽位得到同一个下标。按 Id 排序后的列表用这个下标。
+    /// 日期加一天，下标也前进一步。
+    /// </summary>
+    public static int PickIndex(DateOnly shanghaiDate, string slot, int count)
+    {
+        if (count <= 0)
+            throw new ArgumentOutOfRangeException(nameof(count));
+
+        var bias = slot switch
+        {
+            WelcomePhrasePeriod.Morning => 0,
+            WelcomePhrasePeriod.Noon => 1,
+            WelcomePhrasePeriod.Afternoon => 2,
+            WelcomePhrasePeriod.Evening => 3,
+            WelcomePhrasePeriod.LateNight => 4,
+            WelcomePhraseSpecial.Rain => 5,
+            WelcomePhraseSpecial.Friday => 6,
+            "poem" => 7,
+            _ => 8,
+        };
+        var mixed = shanghaiDate.DayNumber + bias;
+        var index = mixed % count;
+        return index < 0 ? index + count : index;
+    }
+
+    public static T? Pick<T>(IReadOnlyList<T> orderedById, DateOnly shanghaiDate, string slot)
+    {
+        if (orderedById.Count == 0)
+            return default;
+        return orderedById[PickIndex(shanghaiDate, slot, orderedById.Count)];
+    }
+
+    /// <summary>优先当前季节。该季没有启用的诗词时，退回任意启用诗词。</summary>
+    public static T? PickPoem<T>(IReadOnlyList<T> enabledOrderedById, DateOnly shanghaiDate, Func<T, string?> season)
+    {
+        if (enabledOrderedById.Count == 0)
+            return default;
+
+        var current = SeasonOf(shanghaiDate);
+        var seasonal = new List<T>();
+        foreach (var item in enabledOrderedById)
+        {
+            if (string.Equals(season(item), current, StringComparison.Ordinal))
+                seasonal.Add(item);
+        }
+
+        var pool = seasonal.Count > 0 ? (IReadOnlyList<T>)seasonal : enabledOrderedById;
+        return pool[PickIndex(shanghaiDate, "poem", pool.Count)];
+    }
+
+    public static string FillName(string text, string name)
+    {
+        var safe = string.IsNullOrWhiteSpace(name) ? "你" : name.Trim();
+        return text.Replace("{name}", safe, StringComparison.Ordinal);
+    }
+
+    /// <summary>只有 Development 和 Test 接受 now。Production 永远忽略。</summary>
+    public static bool AllowsWelcomeNowOverride(IHostEnvironment env) =>
+        env.IsDevelopment() || env.IsEnvironment("Test");
+
+    private static readonly Regex OffsetSwallowedAsSpace = new(@" (\d{2}:\d{2})$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 解析 QA 传入的时刻。带 Z 或数字偏移的按偏移换算；没有偏移的按上海墙钟。
+    /// 查询串里的加号有时会变成空格，这里把末尾的「 08:00」补回「+08:00」。
+    /// </summary>
+    public static bool TryParseWelcomeNow(string? text, out DateTimeOffset utcNow)
+    {
+        utcNow = default;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var repaired = OffsetSwallowedAsSpace.Replace(text.Trim(), "+$1");
+        var utc = ShanghaiClock.ParseToUtc(repaired);
+        if (utc == null)
+            return false;
+
+        utcNow = new DateTimeOffset(DateTime.SpecifyKind(utc.Value, DateTimeKind.Utc));
+        return true;
+    }
+
+    private async Task<string?> ReadGreetingLineAsync(string slot, string name, DateOnly today, CancellationToken ct)
+    {
+        var query = _db.WelcomePhrases.AsNoTracking()
+            .Where(row => row.Kind == WelcomePhraseKind.Greeting && row.IsEnabled);
+        query = slot is WelcomePhraseSpecial.Rain or WelcomePhraseSpecial.Friday
+            ? query.Where(row => row.Special == slot)
+            : query.Where(row => row.Period == slot && (row.Special == null || row.Special == ""));
+
+        var rows = await query
+            .OrderBy(row => row.Id)
+            .Select(row => row.Text)
+            .ToListAsync(ct);
+        var picked = Pick(rows, today, slot);
+        return string.IsNullOrWhiteSpace(picked) ? null : FillName(picked, name);
+    }
+
+    private async Task<WelcomePoemLine?> ReadPoemAsync(DateOnly today, CancellationToken ct)
+    {
+        var rows = await _db.WelcomePhrases.AsNoTracking()
+            .Where(row => row.Kind == WelcomePhraseKind.Poem && row.IsEnabled)
+            .OrderBy(row => row.Id)
+            .Select(row => new { row.Text, row.Author, row.Source, row.Season })
+            .ToListAsync(ct);
+        var picked = PickPoem(rows, today, row => row.Season);
+        if (picked == null || string.IsNullOrWhiteSpace(picked.Text))
+            return null;
+        return new WelcomePoemLine(picked.Text.Trim(), BlankToNull(picked.Author), BlankToNull(picked.Source));
+    }
+
+    private static string? BlankToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private sealed class DisabledSevereWeather : ISevereWeatherWarningSource
     {

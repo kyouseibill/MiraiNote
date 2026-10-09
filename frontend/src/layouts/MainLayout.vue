@@ -9,15 +9,18 @@ import {
   IconMenu2,
   IconMessageCircle,
   IconNotebook,
+  IconQuote,
   IconReportAnalytics,
   IconSettings,
   IconSparkles,
   IconX,
 } from '@tabler/icons-vue'
 import { useReminderStore } from '@/stores/reminder'
+import { useAuthStore } from '@/stores/auth'
 import ReminderPopup from '@/components/ReminderPopup.vue'
 
 const reminder = useReminderStore()
+const auth = useAuthStore()
 const route = useRoute()
 
 interface NavItem {
@@ -31,7 +34,7 @@ interface NavGroup {
   items: NavItem[]
 }
 
-const groups: NavGroup[] = [
+const baseGroups: NavGroup[] = [
   {
     title: '工作',
     items: [
@@ -56,6 +59,17 @@ const groups: NavGroup[] = [
     ],
   },
 ]
+
+const groups = computed(() => {
+  if (!auth.isAdmin) return baseGroups
+  return [
+    ...baseGroups,
+    {
+      title: '管理',
+      items: [{ to: '/admin/welcome-phrases', label: '欢迎语', icon: IconQuote }],
+    },
+  ]
+})
 
 const currentTitle = computed(() => (route.meta.title as string) || '未来ノート')
 const isChatRoute = computed(() => route.name === 'chat')

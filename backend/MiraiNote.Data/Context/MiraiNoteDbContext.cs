@@ -43,6 +43,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
     public DbSet<WelcomeNewsSeen> WelcomeNewsSeens => Set<WelcomeNewsSeen>();
+    public DbSet<WelcomePhrase> WelcomePhrases => Set<WelcomePhrase>();
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
         : base(options)
@@ -327,6 +328,44 @@ public class MiraiNoteDbContext : DbContext
             .WithMany()
             .HasForeignKey(row => row.UserId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // 欢迎文案库。停用和软删都立刻排除，挑选按 Id，不按 SortOrder。
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Kind)
+            .HasMaxLength(WelcomePhrase.MaxKindLength)
+            .IsRequired();
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Text)
+            .HasMaxLength(WelcomePhrase.MaxTextLength)
+            .IsRequired();
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Author)
+            .HasMaxLength(WelcomePhrase.MaxAuthorLength);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Source)
+            .HasMaxLength(WelcomePhrase.MaxSourceLength);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Period)
+            .HasMaxLength(WelcomePhrase.MaxPeriodLength);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Special)
+            .HasMaxLength(WelcomePhrase.MaxSpecialLength);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.Season)
+            .HasMaxLength(WelcomePhrase.MaxSeasonLength);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .Property(row => row.IsEnabled)
+            .HasDefaultValue(true);
+
+        modelBuilder.Entity<WelcomePhrase>()
+            .HasIndex(row => row.Kind);
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())

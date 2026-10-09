@@ -69,6 +69,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/ProfileView.vue'),
         meta: { requiresAuth: true, title: '个人设置' },
       },
+      {
+        path: 'admin/welcome-phrases',
+        name: 'admin-welcome-phrases',
+        component: () => import('@/views/admin/WelcomePhrasesView.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, title: '欢迎语' },
+      },
     ],
   },
   {
@@ -150,6 +156,9 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'dashboard' }
   }
   if (to.meta.guestOnly && auth.isAuthenticated) {
     // 深链下载：/login?redirect=/export-download?path=... 在静默刷新成功后应继续目标页

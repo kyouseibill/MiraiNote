@@ -177,10 +177,11 @@ public class WelcomeGreetingServiceTests : IDisposable
         var controller = new WelcomeController(
             Greeting(db),
             new FixedUser(userId),
-            new FixedClock(utcNow));
+            new FixedClock(utcNow),
+            new TestHostEnvironment("Production"));
 
-        var first = await controller.GetGreeting("2001-01-01", CancellationToken.None);
-        var second = await controller.GetGreeting("2099-06-06", CancellationToken.None);
+        var first = await controller.GetGreeting("2001-01-01", null, CancellationToken.None);
+        var second = await controller.GetGreeting("2099-06-06", "2020-01-01T08:00:00+08:00", CancellationToken.None);
 
         var body1 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(first.Result).Value);
         var body2 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(second.Result).Value);

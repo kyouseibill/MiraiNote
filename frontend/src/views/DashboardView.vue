@@ -11,7 +11,8 @@ import {
 import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
-import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
+import { welcomeApi, type WelcomeNewsItem, type WelcomePoem } from '@/api/welcome'
+import { welcomeNowParam } from '@/utils/welcomeNow'
 import { useAuthStore } from '@/stores/auth'
 import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
 import type { Memo } from '@/types/memo'
@@ -25,6 +26,7 @@ const auth = useAuthStore()
 const loading = ref(true)
 /** 初始必须为空，避免把上一句欢迎语留在首屏。 */
 const greeting = ref('')
+const poemLine = ref('')
 const featureNote = ref('')
 const weatherWarning = ref('')
 const memoSummary = ref('')
@@ -71,16 +73,17 @@ function fallbackName(): string {
   return auth.user?.username?.trim() || '你'
 }
 
-/** 开发或非 production 构建可用 `?welcomeNow=2026-10-09T10:59`。生产构建这段会被去掉。 */
+/**
+ * 开发或非 production 构建把 `?welcomeNow=` 同时交给本地问候和接口。
+ * 生产构建里 `import.meta.env.DEV` 为 false，这段会被去掉。
+ */
+function welcomeNowRaw(): string | undefined {
+  if (!import.meta.env.DEV || import.meta.env.MODE === 'production') return undefined
+  return welcomeNowParam(route.query.welcomeNow, false)
+}
+
 function greetingNow(): Date {
-  if (import.meta.env.DEV && import.meta.env.MODE !== 'production') {
-    const raw = route.query.welcomeNow
-    const value = Array.isArray(raw) ? raw[0] : raw
-    if (typeof value === 'string' && value.trim() !== '') {
-      return resolveGreetingNow(value, new Date())
-    }
-  }
-  return new Date()
+  return resolveGreetingNow(welcomeNowRaw(), new Date())
 }
 
 const now = new Date()
@@ -241,6 +244,17 @@ function visibleNews(items: WelcomeNewsItem[] | null | undefined): WelcomeNewsIt
   return result
 }
 
+function formatPoem(poem: WelcomePoem | null | undefined): string {
+  const text = poem?.text?.trim()
+  if (!text) return ''
+  const author = poem?.author?.trim() ?? ''
+  const source = poem?.source?.trim() ?? ''
+  if (author && source) return `「${text}」— ${author}《${source}》`
+  if (author) return `「${text}」— ${author}`
+  if (source) return `「${text}」— 《${source}》`
+  return `「${text}」`
+}
+
 function greetingName(welcome: {
   displayName?: string | null
   content?: string | null
@@ -258,6 +272,8 @@ async function applyWelcome(
   welcome: {
     content?: string | null
     displayName?: string | null
+    greetingLine?: string | null
+    poem?: WelcomePoem | null
     dateLine?: string | null
     weatherBrief?: string | null
     memoSummary?: string | null
@@ -268,19 +284,21 @@ async function applyWelcome(
   signal: AbortSignal,
 ) {
   const name = greetingName(welcome)
-  const now = greetingNow()
+  const serverLine = welcome?.greetingLine?.trim() ?? ''
+  const line = serverLine || composeGreeting({
+    name: name || fallbackName(),
+    now: greetingNow(),
+    weatherBrief: welcome?.weatherBrief,
+  })
   const feature = (welcome?.featureNote ?? '').trim()
   const weather = (welcome?.weatherWarning ?? '').trim()
   const memo = (welcome?.memoSummary ?? '').trim()
+  const poem = formatPoem(welcome?.poem)
   const headlines = visibleNews(welcome?.news)
-  const line = composeGreeting({
-    name: name || fallbackName(),
-    now,
-    weatherBrief: welcome?.weatherBrief,
-  })
-  if (!name) {
+  if (!name && !serverLine) {
     if (!signal.aborted) {
       greeting.value = line
+      poemLine.value = ''
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -291,6 +309,7 @@ async function applyWelcome(
     return
   }
   if (!signal.aborted) {
+    poemLine.value = poem
     featureNote.value = feature
     weatherWarning.value = weather
     memoSummary.value = memo
@@ -307,6 +326,7 @@ async function load() {
 
   loading.value = true
   greeting.value = ''
+  poemLine.value = ''
   featureNote.value = ''
   weatherWarning.value = ''
   memoSummary.value = ''
@@ -322,6 +342,7 @@ async function load() {
     await applyWelcome({
       content: '林晓',
       displayName: '林晓',
+      poem: { text: '空山新雨后，天气晚来秋。', author: '王维', source: '山居秋暝' },
       dateLine: `${shanghaiDateLabel(now)} · 多云 24°C`,
       weatherBrief: '多云 24°C',
       memoSummary: '今天有 2 条备忘到期。',
@@ -337,7 +358,7 @@ async function load() {
       memoApi.list({ section: 'work', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       memoApi.list({ section: 'life', includeDone: false, includeArchived: false, page: 1, pageSize: 20 }),
       workLogApi.list({ page: 1, pageSize: 5, dateFrom: weekStart(), dateTo: todayStr }),
-      welcomeApi.getGreeting().catch(() => null),
+      welcomeApi.getGreeting(welcomeNowRaw()).catch(() => null),
     ])
     if (signal.aborted) return
     workMemos.value = wm.items
@@ -349,6 +370,7 @@ async function load() {
     if (!signal.aborted) {
       loading.value = false
       greeting.value = composeGreeting({ name: fallbackName(), now: greetingNow(), weatherBrief: null })
+      poemLine.value = ''
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -429,6 +451,9 @@ onUnmounted(cancelWelcomeTypewriter)
             <p v-if="weatherWarning" class="mt-3 max-w-[720px] text-[13px] leading-6 text-[#6a3d38]" data-testid="weather-warning">
               {{ weatherWarning }}
               <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
+            </p>
+            <p v-if="poemLine" class="mt-3 max-w-[720px] font-serif text-[13px] leading-6 text-[#8a847c]" data-testid="welcome-poem">
+              {{ poemLine }}
             </p>
             <p v-if="memoSummary" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]" data-testid="welcome-memo">
               {{ memoSummary }}

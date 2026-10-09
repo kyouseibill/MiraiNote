@@ -79,6 +79,7 @@ public static class DependencyInjection
         services.AddSingleton<Services.IWelcomeNewsSource, Services.WelcomeNewsClient>();
         services.AddScoped<Services.IWelcomePlaceSettingsService, Services.WelcomePlaceSettingsService>();
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
+        services.AddScoped<Services.IWelcomePhraseAdminService, Services.WelcomePhraseAdminService>();
         services.AddScoped<Services.Mirai.IMiraiContextProvider, Services.Mirai.MiraiContextProvider>();
         services.AddHostedService<Services.TempCleanupBackgroundService>();
         services.AddScoped<Services.ServerAgentToolRegistry>();
