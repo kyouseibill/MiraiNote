@@ -13,6 +13,7 @@ export type AgentSseEventType =
   | 'confirm'
   | 'context'
   | 'recoverable'
+  | 'queued'
   | 'done'
   | 'stopped'
   | 'error'
@@ -51,6 +52,16 @@ export interface AgentRun {
   lastSequence: number
   failureMessage?: string
   recoverableAt?: string
+  queuePosition?: number | null
+}
+
+const terminalAgentStatuses = new Set(['completed', 'failed', 'stopped'])
+
+/** 终态或可恢复状态不再按“连接中断”自动重连。可恢复由调用方单独轮询。 */
+export function shouldReconnectAgentStream(status: string | undefined): boolean {
+  if (!status) return true
+  if (status === 'recoverable') return false
+  return !terminalAgentStatuses.has(status)
 }
 
 /** Agent 模式消息请求 */
@@ -115,6 +126,9 @@ export const agentApi = {
       } catch (error: any) {
         if (signal?.aborted || error?.name === 'AbortError') throw error
         const latest = await unwrap<AgentRun>(http.get(`/chat/agent-runs/${encodeURIComponent(run.runId)}`))
+        if (!shouldReconnectAgentStream(latest.status)) {
+          if (latest.status !== 'recoverable') return
+        }
         if (latest.status === 'recoverable') {
           onEvent({ type: 'recoverable', data: { runId: run.runId } })
           while (!signal?.aborted) {

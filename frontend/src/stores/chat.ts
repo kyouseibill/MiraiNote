@@ -46,6 +46,9 @@ export const useChatStore = defineStore('chat', () => {
 
   // 当前正在进行的工具调用描述
   const currentToolCall = ref<string>('')
+  /** 工作模式还在排队时为 true，开始执行后回到「正在思考」。 */
+  const agentQueued = ref(false)
+  const agentQueuePosition = ref<number | null>(null)
 
   // Agent 控制开关
   const autoMode = ref(true)
@@ -364,6 +367,8 @@ export const useChatStore = defineStore('chat', () => {
     pendingConfirmTemporaryId = null
     const stoppedEvents = snapshotToolEvents()
     currentToolCall.value = ''
+    agentQueued.value = false
+    agentQueuePosition.value = null
     toolCalls.value = []
     streamMessage.value = null
     streamSessionId.value = null
@@ -729,6 +734,8 @@ export const useChatStore = defineStore('chat', () => {
 
     sending.value = true
     currentToolCall.value = ''
+    agentQueued.value = false
+    agentQueuePosition.value = null
     toolCalls.value = []
     contextUsage.value = null
     pendingConfirm.value = null
@@ -774,10 +781,21 @@ export const useChatStore = defineStore('chat', () => {
           skipConfirmation: autoMode.value,
           attachments: attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
       }
+      const noteAgentStarted = () => {
+        agentQueued.value = false
+        agentQueuePosition.value = null
+      }
       const onEvent = (event: { type: string; data: any }) => {
         if (runId !== activeRunId || abortController.signal.aborted) return
         switch (event.type) {
+          case 'queued':
+            agentQueued.value = true
+            const rawPosition = event.data?.position
+            agentQueuePosition.value = typeof rawPosition === 'number' && rawPosition > 0 ? rawPosition : null
+            currentToolCall.value = ''
+            break
           case 'user_msg':
+            noteAgentStarted()
             persistedUserMessage = true
             const userIdx = targetSession.messages.findIndex(
               (m) => m.id === tempUserMsg.id,
@@ -788,6 +806,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'token':
+            noteAgentStarted()
             streamedContent += String(event.data?.content ?? '')
             if (streamMessage.value?.id === activeStreamMessage.id) {
               streamMessage.value.content = streamedContent
@@ -795,6 +814,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'tool_call': {
+            noteAgentStarted()
             const label = getToolLabel(event.data.name)
             currentToolCall.value = `🔧 正在${label}…`
             upsertRunningToolCall(event.data, label)
@@ -802,6 +822,7 @@ export const useChatStore = defineStore('chat', () => {
           }
 
           case 'tool_progress':
+            noteAgentStarted()
             updateToolProgress(event.data)
             currentToolCall.value = String(event.data?.message || '任务仍在处理中…')
             break
@@ -811,12 +832,14 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'tool_result':
+            noteAgentStarted()
             currentToolCall.value = ''
             collectExportedFile(event.data, exportedFiles)
             completeToolCall(event.data)
             break
 
           case 'confirm':
+            noteAgentStarted()
             // 暂停流，等待用户确认
             if (temporary) {
               pendingConfirmTemporaryId = temporaryId.value
@@ -831,8 +854,10 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'context':
+            noteAgentStarted()
             contextUsage.value = event.data
-            if (event.data?.message) currentToolCall.value = String(event.data.message)
+            if (event.data?.message && event.data.message !== '任务开始执行')
+              currentToolCall.value = String(event.data.message)
             break
 
           case 'recoverable':
@@ -841,6 +866,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'done':
+            noteAgentStarted()
             result.outcome = 'completed'
             const finalMsg: ChatMessage = {
               id: temporary ? nextTemporaryMessageId-- : event.data.messageId,
@@ -879,6 +905,7 @@ export const useChatStore = defineStore('chat', () => {
             break
 
           case 'stopped':
+            noteAgentStarted()
             result.outcome = 'stopped'
             commitStoppedAssistant(
               targetSession,
@@ -893,6 +920,7 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
           case 'error':
+            noteAgentStarted()
             result.outcome = 'failed'
             lastSendError.value = event.data?.message || '对话出错，请重试'
             if (streamMessage.value?.id === activeStreamMessage.id) {
@@ -919,6 +947,10 @@ export const useChatStore = defineStore('chat', () => {
           (persistentRun) => {
             activeAgentRunId = persistentRun.runId
             recoverableAgentRunId.value = null
+            if (persistentRun.status === 'queued') {
+              agentQueued.value = true
+              agentQueuePosition.value = persistentRun.queuePosition ?? null
+            }
           },
         )
       }
@@ -955,6 +987,8 @@ export const useChatStore = defineStore('chat', () => {
       if (runId === activeRunId) {
       sending.value = false
       currentToolCall.value = ''
+      agentQueued.value = false
+      agentQueuePosition.value = null
       toolCalls.value = []
       if (streamMessage.value?.id === activeStreamMessage.id) {
         streamMessage.value = null
@@ -1194,6 +1228,8 @@ export const useChatStore = defineStore('chat', () => {
     streamMessage,
     streamSessionId,
     currentToolCall,
+    agentQueued,
+    agentQueuePosition,
     toolCalls,
     autoMode,
     contextUsage,

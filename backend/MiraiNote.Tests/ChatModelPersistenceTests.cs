@@ -24,7 +24,7 @@ public class ChatModelPersistenceTests
         var session = new ChatSession { UserId = 1, Title = "看图", AiProvider = "deepseek", AiModel = "deepseek-v4-flash" };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
-        var service = new AgentRunService(db, new AgentRunDispatcher(), Mock.Of<IChatService>(),
+        var service = new AgentRunService(db, new AgentRunDispatcher(), new AgentRunAdmissionQueue(2, 1), Mock.Of<IChatService>(),
             CreateRegistry("deepseek", "deepseek-v4-flash"), NullLogger<AgentRunService>.Instance);
 
         await service.CreateAsync(1, session.Id, ImageOnlyRequest(), default);
@@ -40,7 +40,7 @@ public class ChatModelPersistenceTests
         var session = new ChatSession { UserId = 1, Title = "看图", AiProvider = "deepseek", AiModel = "deepseek-v4-pro" };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
-        var service = new AgentRunService(db, new AgentRunDispatcher(), Mock.Of<IChatService>(),
+        var service = new AgentRunService(db, new AgentRunDispatcher(), new AgentRunAdmissionQueue(2, 1), Mock.Of<IChatService>(),
             CreateRegistry("deepseek", "deepseek-v4-pro"), NullLogger<AgentRunService>.Instance);
 
         var request = ImageOnlyRequest();
@@ -90,6 +90,7 @@ public class ChatModelPersistenceTests
         var service = new AgentRunService(
             db,
             new AgentRunDispatcher(),
+            new AgentRunAdmissionQueue(2, 1),
             Mock.Of<IChatService>(),
             CreateRegistry("minimax", "MiniMax-M2.7"),
             NullLogger<AgentRunService>.Instance);
@@ -112,6 +113,7 @@ public class ChatModelPersistenceTests
         var service = new AgentRunService(
             db,
             new AgentRunDispatcher(),
+            new AgentRunAdmissionQueue(2, 1),
             Mock.Of<IChatService>(),
             CreateRegistry("deepseek", "deepseek-v4-flash"),
             NullLogger<AgentRunService>.Instance);
