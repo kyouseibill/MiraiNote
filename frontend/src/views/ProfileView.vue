@@ -239,11 +239,11 @@ async function handleLogout() {
       </form>
     </section>
 
-    <!-- 欢迎语称呼。只影响工作台第一行，账户名仍是用户名。 -->
+    <!-- 欢迎语称呼。只影响工作台大标题，账户名仍是用户名。 -->
     <section class="surface-card">
       <div class="px-6 py-4 border-b border-gray-100">
         <h2 class="font-semibold text-gray-900">欢迎语称呼</h2>
-        <p class="text-sm text-gray-500 mt-0.5">只改工作台第一行。留空则继续用用户名，其他页面不变。</p>
+        <p class="text-sm text-gray-500 mt-0.5">只改工作台大标题。留空则继续用用户名，其他页面不变。</p>
       </div>
       <form class="px-6 py-5 space-y-3" data-testid="nickname-form" @submit.prevent="saveNickname">
         <div>
@@ -276,7 +276,7 @@ async function handleLogout() {
     <section class="surface-card">
       <div class="px-6 py-4 border-b border-gray-100">
         <h2 class="font-semibold text-gray-900">天气位置</h2>
-        <p class="text-sm text-gray-500 mt-0.5">填写后，工作台第一行会带上当天实况；有特别预警时另起一行。留空则不查询、不显示。</p>
+        <p class="text-sm text-gray-500 mt-0.5">填写后，工作台日期行会带上当天实况和气温；有特别预警时另起一行。留空则不查询、不显示。</p>
       </div>
       <form class="px-6 py-5 space-y-3" data-testid="weather-place-form" @submit.prevent="saveWeatherPlace">
         <div>

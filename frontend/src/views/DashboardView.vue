@@ -26,6 +26,7 @@ const loading = ref(true)
 const greeting = ref('')
 const featureNote = ref('')
 const weatherWarning = ref('')
+const memoSummary = ref('')
 const news = ref<WelcomeNewsItem[]>([])
 /** 欢迎语所在区域始终占据固定高度，避免异步返回和逐字显示推动下面内容。 */
 const greetingRevealing = ref(false)
@@ -65,15 +66,24 @@ function shanghaiDateLabel(date: Date): string {
   return `${shanghaiPart(date, 'month')}月${shanghaiPart(date, 'day')}日 · ${weekday}`
 }
 
-function fallbackGreeting(date = new Date()): string {
-  const label = `${shanghaiPart(date, 'month')}月${shanghaiPart(date, 'day')}日`
-  const name = auth.user?.username?.trim()
-  return name ? `${name}，${label}` : label
+function fallbackName(): string {
+  return auth.user?.username?.trim() || '你'
 }
 
 const now = new Date()
 const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-const dateLabel = shanghaiDateLabel(now)
+const dateLabel = ref(shanghaiDateLabel(now))
+
+function applyDateLine(line: string | null | undefined, brief: string | null | undefined) {
+  const server = (line ?? '').trim()
+  if (server) {
+    dateLabel.value = server
+    return
+  }
+  const local = shanghaiDateLabel(now)
+  const weather = (brief ?? '').replace(/\s+/g, ' ').trim()
+  dateLabel.value = weather ? `${local} · ${weather}` : local
+}
 
 const previewWorkMemos: Memo[] = [
   {
@@ -218,23 +228,45 @@ function visibleNews(items: WelcomeNewsItem[] | null | undefined): WelcomeNewsIt
   return result
 }
 
-async function applyWelcomeContent(
-  content: string | null | undefined,
-  note: string | null | undefined,
-  warning: string | null | undefined,
-  items: WelcomeNewsItem[] | null | undefined,
+function greetingName(welcome: {
+  displayName?: string | null
+  content?: string | null
+} | null): string {
+  const display = welcome?.displayName?.trim()
+  if (display) return display
+  const content = welcome?.content?.trim() ?? ''
+  if (!content) return ''
+  // 旧接口把日期和天气接在称呼后面。没有 displayName 时只留下称呼。
+  const head = content.split('，')[0]?.trim() ?? ''
+  return head
+}
+
+async function applyWelcome(
+  welcome: {
+    content?: string | null
+    displayName?: string | null
+    dateLine?: string | null
+    weatherBrief?: string | null
+    memoSummary?: string | null
+    featureNote?: string | null
+    weatherWarning?: string | null
+    news?: WelcomeNewsItem[] | null
+  } | null,
   signal: AbortSignal,
 ) {
-  const text = (content ?? '').trim()
-  const feature = (note ?? '').trim()
-  const weather = (warning ?? '').trim()
-  const headlines = visibleNews(items)
-  if (!text) {
+  const name = greetingName(welcome)
+  const feature = (welcome?.featureNote ?? '').trim()
+  const weather = (welcome?.weatherWarning ?? '').trim()
+  const memo = (welcome?.memoSummary ?? '').trim()
+  const headlines = visibleNews(welcome?.news)
+  if (!name) {
     if (!signal.aborted) {
-      greeting.value = fallbackGreeting()
+      greeting.value = fallbackName()
       featureNote.value = ''
       weatherWarning.value = ''
+      memoSummary.value = ''
       news.value = []
+      applyDateLine(null, null)
       greetingRevealing.value = false
     }
     return
@@ -242,9 +274,11 @@ async function applyWelcomeContent(
   if (!signal.aborted) {
     featureNote.value = feature
     weatherWarning.value = weather
+    memoSummary.value = memo
     news.value = headlines
+    applyDateLine(welcome?.dateLine, welcome?.weatherBrief)
   }
-  await typewriterReveal(text, signal)
+  await typewriterReveal(name, signal)
 }
 
 async function load() {
@@ -256,7 +290,9 @@ async function load() {
   greeting.value = ''
   featureNote.value = ''
   weatherWarning.value = ''
+  memoSummary.value = ''
   news.value = []
+  dateLabel.value = shanghaiDateLabel(now)
   greetingRevealing.value = false
 
   if (isDesignPreview.value) {
@@ -264,7 +300,16 @@ async function load() {
     lifeMemos.value = previewLifeMemos
     recentLogs.value = previewLogs
     loading.value = false
-    await applyWelcomeContent('林晓，10月9日。今天有 2 条备忘到期。', null, null, [], signal)
+    await applyWelcome({
+      content: '林晓',
+      displayName: '林晓',
+      dateLine: `${shanghaiDateLabel(now)} · 多云 24°C`,
+      weatherBrief: '多云 24°C',
+      memoSummary: '今天有 2 条备忘到期。',
+      featureNote: null,
+      weatherWarning: null,
+      news: [],
+    }, signal)
     return
   }
 
@@ -280,20 +325,16 @@ async function load() {
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
     loading.value = false
-    await applyWelcomeContent(
-      welcome?.content,
-      welcome?.featureNote,
-      welcome?.weatherWarning,
-      welcome?.news,
-      signal,
-    )
+    await applyWelcome(welcome, signal)
   } catch {
     if (!signal.aborted) {
       loading.value = false
-      greeting.value = fallbackGreeting()
+      greeting.value = fallbackName()
       featureNote.value = ''
       weatherWarning.value = ''
+      memoSummary.value = ''
       news.value = []
+      dateLabel.value = shanghaiDateLabel(now)
       greetingRevealing.value = false
     }
   }
@@ -350,7 +391,7 @@ onUnmounted(cancelWelcomeTypewriter)
         <header>
           <div class="flex items-center gap-3 font-serif text-[15px] text-[#4a4945]">
             <span class="h-[9px] w-[9px] shrink-0 rounded-full bg-[#b4493f]" />
-            <span>{{ dateLabel }}</span>
+            <span data-testid="welcome-date">{{ dateLabel }}</span>
           </div>
           <div class="mt-4" aria-live="polite" aria-atomic="true">
             <div class="greeting-stage">
@@ -361,10 +402,14 @@ onUnmounted(cancelWelcomeTypewriter)
                 v-else
                 class="greeting-copy font-serif text-[27px] font-medium tracking-[0.04em] text-[#262521] sm:text-[30px]"
                 :title="greeting"
+                data-testid="welcome-greeting"
               >
                 {{ greeting }}<span v-if="greetingRevealing" class="greeting-caret" aria-hidden="true" />
               </h1>
             </div>
+            <p v-if="memoSummary" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]" data-testid="welcome-memo">
+              {{ memoSummary }}
+            </p>
             <p v-if="featureNote" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]">
               {{ featureNote }}
             </p>

@@ -10,16 +10,30 @@ public interface IWelcomeGreetingService
     Task<WelcomeGreeting> GetGreetingAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default);
 }
 
-/// <summary>工作台欢迎语：名字、上海日历日，以及今天的备忘情况。</summary>
+/// <summary>
+/// 工作台欢迎语。Content 与 DisplayName 都只是称呼。
+/// 日期和实况在 DateLine，备忘摘要在 MemoSummary。
+/// </summary>
 public sealed record WelcomeGreeting(
     string Content,
     string? FeatureNote,
     string? WeatherWarning,
-    IReadOnlyList<WelcomeNewsItem> News);
+    IReadOnlyList<WelcomeNewsItem> News,
+    string DisplayName,
+    string DateLine,
+    string? WeatherBrief,
+    string? MemoSummary);
+
+/// <summary>称呼、日期行、实况和备忘摘要拆开，避免大标题重复日期和天气。</summary>
+public sealed record WelcomeLines(
+    string DisplayName,
+    string DateLine,
+    string? WeatherBrief,
+    string? MemoSummary);
 
 /// <summary>
-/// 工作台欢迎语。名字、日期和备忘摘要始终本地生成。
-/// 实况、特别预警和新闻失败、超时或未配置时直接省略，不影响名字和日期。
+/// 工作台欢迎语。称呼、上海日历日和备忘摘要始终本地生成。
+/// 实况、特别预警和新闻失败、超时或未配置时直接省略，不影响称呼和日期。
 /// </summary>
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
@@ -90,9 +104,17 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         var weatherTask = ReadWeatherAsync(user?.WeatherPlace, ct);
         await Task.WhenAll(weatherTask, newsTask);
         var weather = await weatherTask;
-        var content = Compose(name, today, dueToday, unfinishedElsewhere, weather.NowText);
+        var lines = Arrange(name, today, dueToday, unfinishedElsewhere, weather.NowText, weather.NowTemp);
 
-        return new WelcomeGreeting(content, featureNote, weather.Warning, newsTask.Result);
+        return new WelcomeGreeting(
+            lines.DisplayName,
+            featureNote,
+            weather.Warning,
+            newsTask.Result,
+            lines.DisplayName,
+            lines.DateLine,
+            lines.WeatherBrief,
+            lines.MemoSummary);
     }
 
     private async Task<WelcomeWeather> ReadWeatherAsync(string? place, CancellationToken ct)
@@ -131,30 +153,31 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     }
 
     /// <summary>
-    /// 没有今天到期的备忘、也没有其他未完成备忘时，只留名字和日期。
-    /// 到期只统计上海当天、尚未完成的备忘；其余未完成备忘另说。
-    /// 实况文本非空时，第一行写成「名字，M月d日 · 周几 · 天气」。周几取上海日历日，不取天气接口。
+    /// 大标题只有称呼。日期行固定为上海日历日「M月d日 · 周几」。
+    /// 实况接在后面：文字和气温都有时是「 · 多云 24°C」；缺气温只留文字；
+    /// 缺文字只留「24°C」；都没有则不加天气后缀。周几和气温都不取每日预报。
+    /// 没有今天到期的备忘、也没有其他未完成备忘时，备忘摘要为空。
     /// </summary>
-    public static string Compose(
+    public static WelcomeLines Arrange(
         string name,
         DateOnly today,
         int dueToday,
         int unfinishedElsewhere,
-        string? weatherText = null)
+        string? weatherText = null,
+        string? weatherTemp = null)
     {
-        var head = $"{name}，{today.ToString("M月d日", CultureInfo.InvariantCulture)}";
-        var brief = NormalizeWeatherText(weatherText);
+        var brief = FormatLiveCondition(weatherText, weatherTemp);
+        var dateLine = $"{today.ToString("M月d日", CultureInfo.InvariantCulture)} · {ShanghaiWeekday(today)}";
         if (brief != null)
-            head = $"{head} · {ShanghaiWeekday(today)} · {brief}";
+            dateLine = $"{dateLine} · {brief}";
 
         var parts = new List<string>(2);
         if (dueToday > 0)
             parts.Add($"今天有 {dueToday} 条备忘到期");
         if (unfinishedElsewhere > 0)
             parts.Add($"还有 {unfinishedElsewhere} 条备忘没做完");
-        if (parts.Count == 0)
-            return head;
-        return $"{head}。{string.Join("，", parts)}。";
+        var memo = parts.Count == 0 ? null : $"{string.Join("，", parts)}。";
+        return new WelcomeLines(name, dateLine, brief, memo);
     }
 
     /// <summary>上海日历日的中文星期。调用方须先用 <see cref="ShanghaiClock"/> 换成上海日期。</summary>
@@ -168,6 +191,22 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         DayOfWeek.Saturday => "周六",
         _ => "周日"
     };
+
+    /// <summary>
+    /// 日期行上的实况片段。文字来自 now.text，气温来自 now.temp，单位固定 °C。
+    /// </summary>
+    public static string? FormatLiveCondition(string? weatherText, string? weatherTemp)
+    {
+        var brief = NormalizeWeatherText(weatherText);
+        var temp = QWeatherNow.NormalizeTemp(weatherTemp);
+        if (brief == null && temp == null)
+            return null;
+        if (brief == null)
+            return temp + "°C";
+        if (temp == null)
+            return brief;
+        return brief + " " + temp + "°C";
+    }
 
     private static string? NormalizeWeatherText(string? weatherText)
     {

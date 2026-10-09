@@ -6,7 +6,7 @@ public class WelcomeSettingsDto
     /// <summary>「国家-城市」，例如「中国-上海」。空表示不查天气。</summary>
     public string? Place { get; set; }
 
-    /// <summary>欢迎语第一行的称呼。空表示继续用用户名。</summary>
+    /// <summary>欢迎语大标题的称呼。空表示继续用用户名。</summary>
     public string? Nickname { get; set; }
 }
 
