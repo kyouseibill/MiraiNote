@@ -578,9 +578,10 @@ public class WelcomeDashboardTests : IDisposable
         var controller = new WelcomeController(
             new WelcomeGreetingService(db, new FeatureLaunchCatalog([])),
             new FixedUser(userId),
-            new FixedClock(When));
+            new FixedClock(When),
+            new TestHostEnvironment("Production"));
 
-        var result = await controller.GetGreeting(null, CancellationToken.None);
+        var result = await controller.GetGreeting(null, "2001-01-01T08:00:00+08:00", CancellationToken.None);
         var body = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result).Value);
 
         Assert.Equal("tester", body.Data!.Content);

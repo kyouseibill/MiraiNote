@@ -51,6 +51,8 @@ function greeting(partial: Partial<WelcomeGreeting> & Pick<WelcomeGreeting, 'dis
     dateLine: '10月9日 · 周五',
     weatherBrief: null,
     memoSummary: null,
+    greetingLine: null,
+    poem: null,
     ...partial,
   }
 }
@@ -90,8 +92,73 @@ describe('工作台欢迎语挂载', () => {
 
     expect(wrapper.get('[data-testid="welcome-date"]').text()).toBe('10月9日 · 周五')
     expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe(expectedGreeting('tester'))
+    expect(wrapper.find('[data-testid="welcome-poem"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="weather-warning"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="welcome-news"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('有问候和诗词时，大标题用问候，小字在下面', async () => {
+    vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({
+      displayName: '雅美',
+      greetingLine: '下午好，雅美',
+      poem: { text: '空山新雨后，天气晚来秋。', author: '王维', source: '山居秋暝' },
+      memoSummary: '今天有 1 条备忘到期。',
+      weatherWarning: '上海中心气象台发布暴雨红色预警',
+      news: [{ title: 'OpenAI 更新', url: 'https://openai.com/news/b' }],
+    }))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: DashboardView }],
+    })
+    await router.push('/?welcomeNow=2026-10-09T04:59:00')
+    await router.isReady()
+
+    const wrapper = mount(DashboardView, {
+      global: { plugins: [createPinia(), router] },
+    })
+    await reveal()
+
+    expect(welcomeApi.getGreeting).toHaveBeenCalledWith('2026-10-09T04:59:00')
+    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe('下午好，雅美')
+    expect(wrapper.get('[data-testid="welcome-poem"]').text()).toBe('「空山新雨后，天气晚来秋。」— 王维《山居秋暝》')
+    expect(wrapper.get('[data-testid="welcome-memo"]').text()).toBe('今天有 1 条备忘到期。')
+    expect(wrapper.findAll('[data-testid="weather-warning"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="weather-warning"]').text()).toContain('暴雨红色预警')
+    const order = wrapper.findAll('[data-testid]').map((node) => node.attributes('data-testid'))
+    expect(order.indexOf('welcome-greeting')).toBeLessThan(order.indexOf('weather-warning'))
+    expect(order.indexOf('weather-warning')).toBeLessThan(order.indexOf('welcome-poem'))
+    expect(order.indexOf('welcome-poem')).toBeLessThan(order.indexOf('welcome-memo'))
+    expect(wrapper.get('[data-testid="welcome-news-link"]').text()).toBe('OpenAI 更新')
+    wrapper.unmount()
+  })
+
+  it('诗词为空时不留空行，并把 welcomeNow 传给接口', async () => {
+    vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({
+      displayName: '雅美',
+      greetingLine: null,
+      poem: null,
+    }))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: DashboardView }],
+    })
+    await router.push('/?welcomeNow=2026-10-09T04:59:00')
+    await router.isReady()
+
+    const wrapper = mount(DashboardView, {
+      global: { plugins: [createPinia(), router] },
+    })
+    await reveal()
+
+    expect(welcomeApi.getGreeting).toHaveBeenCalledWith('2026-10-09T04:59:00')
+    const heading = wrapper.get('[data-testid="welcome-greeting"]').text()
+    const lateNight = greetingPools.lateNight.map((line) => line.replaceAll('{name}', '雅美'))
+    expect(lateNight).toContain(heading)
+    expect(heading).not.toBe('周五了，雅美')
+    expect(wrapper.find('[data-testid="welcome-poem"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
