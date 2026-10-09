@@ -302,6 +302,27 @@ public class WelcomeDashboardTests : IDisposable
     }
 
     [Fact]
+    public void CityLookup_TakesTheFirstValidHit_WhenSeveralPlacesMatch()
+    {
+        const string json = """
+        {
+          "code": "200",
+          "location": [
+            {"name": "坏坐标", "lat": "31.00", "lon": "999", "country": "中国", "rank": "1"},
+            {"name": "上海", "lat": "31.23170", "lon": "121.47264", "country": "中国", "rank": "15"},
+            {"name": "rank更小的同名地", "lat": "30.11000", "lon": "120.11000", "country": "中国", "rank": "2"},
+            {"name": "rank更大的同名地", "lat": "29.22000", "lon": "119.22000", "country": "中国", "rank": "90"}
+          ]
+        }
+        """;
+
+        using var document = JsonDocument.Parse(json);
+        var point = QWeatherCities.Pick(document.RootElement, "中国", rangeWasApplied: true);
+
+        Assert.Equal((31.23, 121.47), point);
+    }
+
+    [Fact]
     public void UnparsedPlace_DoesNotCountAsACity()
     {
         Assert.False(WelcomePlace.TrySplit(null, out _, out _));

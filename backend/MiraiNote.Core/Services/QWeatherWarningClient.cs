@@ -216,7 +216,7 @@ internal static class QWeatherCities
         if (!root.TryGetProperty("location", out var locations) || locations.ValueKind != JsonValueKind.Array)
             return null;
 
-        (double Lat, double Lon, int Rank)? best = null;
+        // 和风按相关度排好序，rank 数字越小越重要。这里跟接口顺序走，取第一条坐标有效的结果，不再比 rank 大小。
         foreach (var location in locations.EnumerateArray())
         {
             if (!rangeWasApplied && !CountryMatches(location, country))
@@ -226,18 +226,12 @@ internal static class QWeatherCities
             if (!TryCoordinate(location, "lon", -180, 180, out var lon))
                 continue;
 
-            var rank = 0;
-            if (location.TryGetProperty("rank", out var rankElement)
-                && int.TryParse(rankElement.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-            {
-                rank = parsed;
-            }
-
-            if (best == null || rank > best.Value.Rank)
-                best = (Math.Round(lat, 2, MidpointRounding.AwayFromZero), Math.Round(lon, 2, MidpointRounding.AwayFromZero), rank);
+            return (
+                Math.Round(lat, 2, MidpointRounding.AwayFromZero),
+                Math.Round(lon, 2, MidpointRounding.AwayFromZero));
         }
 
-        return best == null ? null : (best.Value.Lat, best.Value.Lon);
+        return null;
     }
 
     private static bool CountryMatches(JsonElement location, string country)
