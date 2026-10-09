@@ -116,9 +116,9 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            _logger.LogInformation("欢迎语新闻已读记录暂不可用");
+            _logger.LogWarning(ex, "欢迎语新闻已读记录暂不可用（{ExceptionType}）", ex.GetType().Name);
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
     }
@@ -140,9 +140,9 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            _logger.LogInformation("欢迎语新闻已读记录暂不可用");
+            _logger.LogWarning(ex, "欢迎语新闻已读记录暂不可用（{ExceptionType}）", ex.GetType().Name);
         }
     }
 

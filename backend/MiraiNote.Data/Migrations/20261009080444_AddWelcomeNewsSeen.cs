@@ -49,6 +49,21 @@ namespace MiraiNote.Data.Migrations
                 columns: new[] { "UserId", "Url" },
                 unique: true,
                 filter: "\"IsDeleted\" = false");
+
+            // 运行账户 appuser 不是建表角色。漏了表和 identity 序列的授权时，
+            // SELECT/INSERT/UPDATE/DELETE 都会失败，已读记录写不进去。
+            // 仓库里此前没有 GRANT appuser。角色还不存在时跳过，避免 CI 空库（只有 postgres）迁移失败。
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'appuser') THEN
+                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "WelcomeNewsSeen" TO appuser;
+                        GRANT USAGE, SELECT ON SEQUENCE "WelcomeNewsSeen_Id_seq" TO appuser;
+                    END IF;
+                END
+                $$;
+                """);
         }
 
         /// <inheritdoc />

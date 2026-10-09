@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MiraiNote.Core.Services;
 using MiraiNote.Data.Entities;
@@ -135,6 +136,49 @@ public class WelcomeNewsRotationTests : IDisposable
             },
             shown);
         Assert.Equal(2, await db.WelcomeNewsSeens.CountAsync(row => row.UserId == otherId));
+    }
+
+    [Fact]
+    public async Task SeenStore_RecordThenRead_UsesTheSameDedupeKey()
+    {
+        await using var write = _fx.CreateContext();
+        var userId = await ResetSeenAsync(write);
+        await new WelcomeNewsSeenStore(write).RecordAsync(
+            userId,
+            [
+                "https://www.TheVerge.com/ai/one/",
+                "https://techcrunch.com/2026/10/07/one#section"
+            ],
+            When);
+
+        await using var read = _fx.CreateContext();
+        var recent = await new WelcomeNewsSeenStore(read).GetRecentUrlsAsync(userId, When);
+
+        Assert.Equal(2, recent.Count);
+        Assert.Contains("https://www.theverge.com/ai/one", recent);
+        Assert.Contains("https://techcrunch.com/2026/10/07/one", recent);
+    }
+
+    [Fact]
+    public async Task SeenStoreFailure_StaysFailSoft_AndLogsWarningWithExceptionType()
+    {
+        var logger = new ListLogger<WelcomeNewsClient>();
+        var news = Client(
+            new RecordingHandler(FiveFeeds),
+            new MemoryCache(new MemoryCacheOptions()),
+            new BrokenSeen(),
+            logger: logger);
+
+        var items = await news.GetLatestAsync(4, When);
+
+        Assert.Equal(["OpenAI 最新", "DeepMind 一条"], items.Select(item => item.Title).ToArray());
+        var warnings = logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ToArray();
+        Assert.Equal(2, warnings.Length);
+        Assert.All(warnings, entry =>
+        {
+            Assert.Contains(nameof(InvalidOperationException), entry.Message);
+            Assert.IsType<InvalidOperationException>(entry.Exception);
+        });
     }
 
     [Fact]
@@ -301,8 +345,9 @@ public class WelcomeNewsRotationTests : IDisposable
         IMemoryCache cache,
         IWelcomeNewsSeenStore? seen = null,
         IWelcomeTitleTranslator? translator = null,
-        TimeSpan? timeout = null) =>
-        new(Factory(handler, timeout), cache, NullLogger<WelcomeNewsClient>.Instance, translator, seen);
+        TimeSpan? timeout = null,
+        ILogger<WelcomeNewsClient>? logger = null) =>
+        new(Factory(handler, timeout), cache, logger ?? NullLogger<WelcomeNewsClient>.Instance, translator, seen);
 
     private static IHttpClientFactory Factory(RecordingHandler handler, TimeSpan? timeout)
     {
@@ -401,6 +446,31 @@ public class WelcomeNewsRotationTests : IDisposable
             IReadOnlyList<WelcomeNewsItem> items,
             CancellationToken ct = default) =>
             throw new HttpRequestException("翻译超时");
+    }
+
+    private sealed class ListLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception), exception));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose()
+            {
+            }
+        }
     }
 
     private sealed class BrokenSeen : IWelcomeNewsSeenStore
