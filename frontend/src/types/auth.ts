@@ -96,3 +96,12 @@ export interface MemoReminderSettings {
 export interface UpdateMemoReminderSettingsRequest {
   barkKey: string
 }
+
+/** 工作台「国家-城市」。不是密钥，接口会回显。 */
+export interface WelcomeSettings {
+  place: string | null
+}
+
+export interface UpdateWelcomeSettingsRequest {
+  place: string
+}

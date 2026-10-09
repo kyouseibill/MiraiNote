@@ -48,7 +48,32 @@ public static class DependencyInjection
         services.AddScoped<Services.Mirai.IBriefingService, Services.Mirai.BriefingService>();
         services.AddScoped<Services.Mirai.IDayOverviewService, Services.Mirai.DayOverviewService>();
         services.AddScoped<Services.Mirai.IMiraiStatsService, Services.Mirai.MiraiStatsService>();
+        services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
+        services.AddHttpClient(Services.QWeatherWarningClient.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(4);
+        }).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        services.AddHttpClient(Services.WelcomeNewsClient.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(4);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("MiraiNote/1.0");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/rss+xml");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/atom+xml");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/xml");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/xml");
+        }).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        services.AddSingleton<Services.ISevereWeatherWarningSource, Services.QWeatherWarningClient>();
+        services.AddSingleton<Services.IWelcomeNewsSource, Services.WelcomeNewsClient>();
+        services.AddScoped<Services.IWelcomePlaceSettingsService, Services.WelcomePlaceSettingsService>();
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
         services.AddScoped<Services.Mirai.IMiraiContextProvider, Services.Mirai.MiraiContextProvider>();
         services.AddHostedService<Services.TempCleanupBackgroundService>();

@@ -11,7 +11,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
-import { welcomeApi } from '@/api/welcome'
+import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
 import { useAuthStore } from '@/stores/auth'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
@@ -25,6 +25,8 @@ const loading = ref(true)
 /** 初始必须为空，避免把上一句欢迎语留在首屏。 */
 const greeting = ref('')
 const featureNote = ref('')
+const weatherWarning = ref('')
+const news = ref<WelcomeNewsItem[]>([])
 /** 欢迎语所在区域始终占据固定高度，避免异步返回和逐字显示推动下面内容。 */
 const greetingRevealing = ref(false)
 let welcomeAbort: AbortController | null = null
@@ -195,22 +197,53 @@ async function typewriterReveal(text: string, signal: AbortSignal) {
   if (!signal.aborted) greetingRevealing.value = false
 }
 
+function visibleNews(items: WelcomeNewsItem[] | null | undefined): WelcomeNewsItem[] {
+  if (!items) return []
+  const seen = new Set<string>()
+  const result: WelcomeNewsItem[] = []
+  for (const item of items) {
+    const title = item?.title?.trim()
+    const url = item?.url?.trim()
+    if (!title || !url || seen.has(url)) continue
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue
+    } catch {
+      continue
+    }
+    seen.add(url)
+    result.push({ title, url })
+    if (result.length === 2) break
+  }
+  return result
+}
+
 async function applyWelcomeContent(
   content: string | null | undefined,
   note: string | null | undefined,
+  warning: string | null | undefined,
+  items: WelcomeNewsItem[] | null | undefined,
   signal: AbortSignal,
 ) {
   const text = (content ?? '').trim()
   const feature = (note ?? '').trim()
+  const weather = (warning ?? '').trim()
+  const headlines = visibleNews(items)
   if (!text) {
     if (!signal.aborted) {
       greeting.value = fallbackGreeting()
       featureNote.value = ''
+      weatherWarning.value = ''
+      news.value = []
       greetingRevealing.value = false
     }
     return
   }
-  if (!signal.aborted) featureNote.value = feature
+  if (!signal.aborted) {
+    featureNote.value = feature
+    weatherWarning.value = weather
+    news.value = headlines
+  }
   await typewriterReveal(text, signal)
 }
 
@@ -222,6 +255,8 @@ async function load() {
   loading.value = true
   greeting.value = ''
   featureNote.value = ''
+  weatherWarning.value = ''
+  news.value = []
   greetingRevealing.value = false
 
   if (isDesignPreview.value) {
@@ -229,7 +264,7 @@ async function load() {
     lifeMemos.value = previewLifeMemos
     recentLogs.value = previewLogs
     loading.value = false
-    await applyWelcomeContent('林晓，10月9日。今天有 2 条备忘到期。', null, signal)
+    await applyWelcomeContent('林晓，10月9日。今天有 2 条备忘到期。', null, null, [], signal)
     return
   }
 
@@ -245,12 +280,20 @@ async function load() {
     lifeMemos.value = lm.items
     recentLogs.value = wl.items
     loading.value = false
-    await applyWelcomeContent(welcome?.content, welcome?.featureNote, signal)
+    await applyWelcomeContent(
+      welcome?.content,
+      welcome?.featureNote,
+      welcome?.weatherWarning,
+      welcome?.news,
+      signal,
+    )
   } catch {
     if (!signal.aborted) {
       loading.value = false
       greeting.value = fallbackGreeting()
       featureNote.value = ''
+      weatherWarning.value = ''
+      news.value = []
       greetingRevealing.value = false
     }
   }
@@ -326,6 +369,21 @@ onUnmounted(cancelWelcomeTypewriter)
               {{ featureNote }}
             </p>
           </div>
+          <p v-if="weatherWarning" class="mt-3 max-w-[720px] text-[13px] leading-6 text-[#6a3d38]" data-testid="weather-warning">
+            {{ weatherWarning }}
+            <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
+          </p>
+          <ul v-if="news.length" class="mt-3 max-w-[720px] space-y-1" data-testid="welcome-news">
+            <li v-for="item in news" :key="item.url">
+              <a
+                :href="item.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-[13px] leading-6 text-[#4c6178] hover:underline"
+                data-testid="welcome-news-link"
+              >{{ item.title }}</a>
+            </li>
+          </ul>
         </header>
 
         <form class="mt-12 flex h-[52px] w-full" @submit.prevent="createQuickMemo">

@@ -61,6 +61,8 @@ function fmtDate(iso: string | null): string {
 const barkKey = ref('')
 const barkConfigured = ref(false)
 const barkSubmitting = ref(false)
+const weatherPlace = ref('')
+const weatherSubmitting = ref(false)
 
 onMounted(async () => {
   try {
@@ -69,7 +71,26 @@ onMounted(async () => {
   } catch {
     // 拦截器已 toast
   }
+  try {
+    const settings = await authApi.getWelcomeSettings()
+    weatherPlace.value = settings.place ?? ''
+  } catch {
+    // 拦截器已 toast
+  }
 })
+
+async function saveWeatherPlace() {
+  weatherSubmitting.value = true
+  try {
+    const settings = await authApi.updateWelcomeSettings({ place: weatherPlace.value.trim() })
+    weatherPlace.value = settings.place ?? ''
+    toast.success(weatherPlace.value ? '国家-城市已保存' : '已关闭天气')
+  } catch {
+    // 拦截器已 toast
+  } finally {
+    weatherSubmitting.value = false
+  }
+}
 
 async function saveBark() {
   barkSubmitting.value = true
@@ -190,6 +211,40 @@ async function handleLogout() {
           :disabled="barkSubmitting"
         >
           {{ barkSubmitting ? '保存中…' : '保存' }}
+        </button>
+      </form>
+    </section>
+
+    <!-- 天气位置 -->
+    <section class="surface-card">
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-900">天气位置</h2>
+        <p class="text-sm text-gray-500 mt-0.5">只在有特别预警时显示在工作台。留空则不查询、不显示。</p>
+      </div>
+      <form class="px-6 py-5 space-y-3" data-testid="weather-place-form" @submit.prevent="saveWeatherPlace">
+        <div>
+          <label class="block text-sm text-gray-700 mb-1" for="weather-place">国家-城市</label>
+          <input
+            id="weather-place"
+            v-model="weatherPlace"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="80"
+            data-testid="weather-place-input"
+            placeholder="例如 中国-上海"
+            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+          />
+          <p class="mt-1 text-xs text-gray-500" data-testid="weather-place-status">
+            当前：{{ weatherPlace ? weatherPlace : '未填写' }}。留空并保存后，工作台不显示天气。
+          </p>
+        </div>
+        <button
+          type="submit"
+          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
+          :disabled="weatherSubmitting"
+        >
+          {{ weatherSubmitting ? '保存中…' : '保存' }}
         </button>
       </form>
     </section>

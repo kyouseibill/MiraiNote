@@ -52,6 +52,8 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.DoesNotContain("到期", greeting.Content);
         Assert.DoesNotContain("没做完", greeting.Content);
         Assert.Null(greeting.FeatureNote);
+        Assert.Null(greeting.WeatherWarning);
+        Assert.Empty(greeting.News);
     }
 
     [Fact]
@@ -168,24 +170,49 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.DoesNotContain("2001", body1.Data!.Content);
         Assert.DoesNotContain("2099", body2.Data!.Content);
         Assert.Null(body1.Data.FeatureNote);
+        Assert.Null(body1.Data.WeatherWarning);
+        Assert.Empty(body1.Data.News);
         Assert.Equal(
             "10月9日",
             ShanghaiClock.Today(utcNow).ToString("M月d日", CultureInfo.InvariantCulture));
     }
 
     [Fact]
-    public void WelcomeGreetingService_DiUsesTheReleaseCatalog()
+    public async Task WelcomeGreetingService_DiUsesTheReleaseCatalog()
     {
         var services = new ServiceCollection();
         services.AddDbContext<MiraiNoteDbContext>(options => options.UseSqlite(_fx.ConnectionString));
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<ISevereWeatherWarningSource>(new OfflineWeather());
+        services.AddSingleton<IWelcomeNewsSource>(new OfflineNews());
         services.AddScoped<IWelcomeGreetingService, WelcomeGreetingService>();
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
 
         var resolved = scope.ServiceProvider.GetRequiredService<IWelcomeGreetingService>();
-
         Assert.IsType<WelcomeGreetingService>(resolved);
+
+        await using var db = _fx.CreateContext();
+        var userId = await db.Users.Select(u => u.Id).SingleAsync();
+        var greeting = await resolved.GetGreetingAsync(
+            userId, new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("备忘到点可以发 Bark 手机提醒了，工作台也会显示当天备忘摘要。", greeting.FeatureNote);
+        Assert.Null(greeting.WeatherWarning);
+        Assert.Empty(greeting.News);
+    }
+
+    private sealed class OfflineWeather : ISevereWeatherWarningSource
+    {
+        public Task<string?> GetWarningAsync(string? place, CancellationToken ct = default) =>
+            Task.FromResult<string?>(null);
+    }
+
+    private sealed class OfflineNews : IWelcomeNewsSource
+    {
+        public Task<IReadOnlyList<WelcomeNewsItem>> GetLatestAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<WelcomeNewsItem>>([]);
     }
 
     private static WelcomeGreetingService Greeting(MiraiNote.Data.Context.MiraiNoteDbContext db) =>
