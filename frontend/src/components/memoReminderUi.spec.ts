@@ -21,6 +21,10 @@ vi.mock('@/api/auth', () => ({
     updateMemoReminderSettings: vi.fn().mockImplementation(async (payload: { barkKey: string }) => ({
       barkConfigured: payload.barkKey.length > 0,
     })),
+    getWelcomeSettings: vi.fn().mockResolvedValue({ place: '' }),
+    updateWelcomeSettings: vi.fn().mockImplementation(async (payload: { place: string }) => ({
+      place: payload.place.trim() || null,
+    })),
     changePassword: vi.fn(),
     logout: vi.fn(),
   },
@@ -82,5 +86,36 @@ describe('备忘提醒界面', () => {
     await flushPromises()
     expect(authApi.updateMemoReminderSettings).toHaveBeenLastCalledWith({ barkKey: '' })
     expect(wrapper.get('[data-testid="bark-key-status"]').text()).toContain('未填写')
+  })
+
+  it('个人设置可以填写或清空国家-城市', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: Passthrough, children: [{ path: '', component: ProfileView }] },
+        { path: '/login', component: { template: '<div>login</div>' } },
+      ],
+    })
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(Passthrough, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('未填写')
+    const input = wrapper.get('[data-testid="weather-place-input"]')
+    await input.setValue('  中国-上海  ')
+    await wrapper.get('[data-testid="weather-place-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(authApi.updateWelcomeSettings).toHaveBeenCalledWith({ place: '中国-上海' })
+    expect((input.element as HTMLInputElement).value).toBe('中国-上海')
+    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('中国-上海')
+
+    await input.setValue('   ')
+    await wrapper.get('[data-testid="weather-place-form"]').trigger('submit')
+    await flushPromises()
+    expect(authApi.updateWelcomeSettings).toHaveBeenLastCalledWith({ place: '' })
+    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('未填写')
   })
 })

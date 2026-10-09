@@ -36,8 +36,18 @@ public sealed class WelcomeController : ControllerBase
         var greeting = await _greetingService.GetGreetingAsync(
             _currentUser.UserId, _clock.GetUtcNow(), ct);
         return Ok(ApiResponse<WelcomeGreetingResponse>.Ok(
-            new WelcomeGreetingResponse(greeting.Content, greeting.FeatureNote)));
+            new WelcomeGreetingResponse(
+                greeting.Content,
+                greeting.FeatureNote,
+                greeting.WeatherWarning,
+                greeting.News.Select(item => new WelcomeNewsItemResponse(item.Title, item.Url)).ToArray())));
     }
 }
 
-public sealed record WelcomeGreetingResponse(string Content, string? FeatureNote);
+public sealed record WelcomeGreetingResponse(
+    string Content,
+    string? FeatureNote,
+    string? WeatherWarning,
+    IReadOnlyList<WelcomeNewsItemResponse> News);
+
+public sealed record WelcomeNewsItemResponse(string Title, string Url);

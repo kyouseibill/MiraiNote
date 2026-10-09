@@ -40,6 +40,7 @@ public static class ApiDependencyInjection
         services.Configure<UploadOptions>(configuration.GetSection(UploadOptions.SectionName));
         services.Configure<TavilyOptions>(configuration.GetSection(TavilyOptions.SectionName));
         services.Configure<WeatherOptions>(configuration.GetSection(WeatherOptions.SectionName));
+        services.Configure<QWeatherOptions>(configuration.GetSection(QWeatherOptions.SectionName));
         services.Configure<FileSystemOptions>(configuration.GetSection(FileSystemOptions.SectionName));
 
         // 当前用户上下文

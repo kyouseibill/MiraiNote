@@ -88,6 +88,27 @@ public class WeatherOptions
 }
 
 /// <summary>
+/// 工作台特别预警用的和风天气配置。两个值都只来自服务器配置或环境变量，不要写入前端。
+/// Host 或 Key 任一为空，就不请求天气。
+/// </summary>
+public class QWeatherOptions
+{
+    public const string SectionName = "QWeather";
+
+    /// <summary>
+    /// 控制台里的 API Host。可写 https://abcxyz.qweatherapi.com，或只写 abcxyz.qweatherapi.com。
+    /// 不要带路径或密钥。环境变量名：QWeather__ApiHost。
+    /// </summary>
+    public string ApiHost { get; set; } = "";
+
+    /// <summary>
+    /// 和风 API Key，或控制台生成的 JWT。环境变量名：QWeather__ApiKey。
+    /// 与 <see cref="ApiHost"/> 任一为空则不请求天气。
+    /// </summary>
+    public string ApiKey { get; set; } = "";
+}
+
+/// <summary>
 /// Tavily 互联网搜索 API 配置。
 /// </summary>
 public class TavilyOptions

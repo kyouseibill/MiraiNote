@@ -11,25 +11,46 @@ public interface IWelcomeGreetingService
 }
 
 /// <summary>工作台欢迎语：名字、上海日历日，以及今天的备忘情况。</summary>
-public sealed record WelcomeGreeting(string Content, string? FeatureNote);
+public sealed record WelcomeGreeting(
+    string Content,
+    string? FeatureNote,
+    string? WeatherWarning,
+    IReadOnlyList<WelcomeNewsItem> News);
 
 /// <summary>
-/// 工作台欢迎语。只根据当前用户的备忘和随发版写入的功能句生成，不调用外部接口。
+/// 工作台欢迎语。名字、日期和备忘摘要始终本地生成。
+/// 特别预警和新闻失败、超时或未配置时直接省略，不影响前面两句。
 /// </summary>
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
     private readonly MiraiNoteDbContext _db;
     private readonly IReadOnlyList<FeatureLaunchNote> _featureNotes;
+    private readonly ISevereWeatherWarningSource _weather;
+    private readonly IWelcomeNewsSource _news;
 
-    public WelcomeGreetingService(MiraiNoteDbContext db)
-        : this(db, FeatureLaunchCatalog.Release)
+    public WelcomeGreetingService(
+        MiraiNoteDbContext db,
+        ISevereWeatherWarningSource weather,
+        IWelcomeNewsSource news)
+        : this(db, FeatureLaunchCatalog.Release, weather, news)
     {
     }
 
     public WelcomeGreetingService(MiraiNoteDbContext db, FeatureLaunchCatalog catalog)
+        : this(db, catalog, DisabledSevereWeather.Instance, DisabledWelcomeNews.Instance)
+    {
+    }
+
+    public WelcomeGreetingService(
+        MiraiNoteDbContext db,
+        FeatureLaunchCatalog catalog,
+        ISevereWeatherWarningSource weather,
+        IWelcomeNewsSource news)
     {
         _db = db;
         _featureNotes = catalog.Notes;
+        _weather = weather;
+        _news = news;
     }
 
     public async Task<WelcomeGreeting> GetGreetingAsync(
@@ -37,14 +58,15 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         DateTimeOffset utcNow,
         CancellationToken ct = default)
     {
+        var newsTask = ReadNewsAsync(ct);
         var today = ShanghaiClock.Today(utcNow);
         var (startUtc, endUtc) = ShanghaiClock.DayRangeUtc(today);
 
-        var username = await _db.Users.AsNoTracking()
+        var user = await _db.Users.AsNoTracking()
             .Where(u => u.Id == userId)
-            .Select(u => u.Username)
+            .Select(u => new { u.Username, u.WeatherPlace })
             .FirstOrDefaultAsync(ct);
-        var name = string.IsNullOrWhiteSpace(username) ? "你" : username.Trim();
+        var name = string.IsNullOrWhiteSpace(user?.Username) ? "你" : user!.Username.Trim();
 
         var reminds = await _db.Memos.AsNoTracking()
             .Where(m => m.UserId == userId && !m.IsDone && !m.IsArchived)
@@ -61,9 +83,47 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
                 unfinishedElsewhere++;
         }
 
-        return new WelcomeGreeting(
-            Compose(name, today, dueToday, unfinishedElsewhere),
-            FeatureLaunchNotes.Select(_featureNotes, today));
+        var content = Compose(name, today, dueToday, unfinishedElsewhere);
+        var featureNote = FeatureLaunchNotes.Select(_featureNotes, today);
+        var weatherTask = ReadWeatherAsync(user?.WeatherPlace, ct);
+        await Task.WhenAll(weatherTask, newsTask);
+
+        return new WelcomeGreeting(content, featureNote, weatherTask.Result, newsTask.Result);
+    }
+
+    private async Task<string?> ReadWeatherAsync(string? place, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(place))
+            return null;
+
+        try
+        {
+            return await _weather.GetWarningAsync(place, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<WelcomeNewsItem>> ReadNewsAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _news.GetLatestAsync(ct) ?? [];
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return [];
+        }
     }
 
     /// <summary>
@@ -81,5 +141,19 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         if (parts.Count == 0)
             return head;
         return $"{head}。{string.Join("，", parts)}。";
+    }
+
+    private sealed class DisabledSevereWeather : ISevereWeatherWarningSource
+    {
+        public static readonly DisabledSevereWeather Instance = new();
+        public Task<string?> GetWarningAsync(string? place, CancellationToken ct = default) =>
+            Task.FromResult<string?>(null);
+    }
+
+    private sealed class DisabledWelcomeNews : IWelcomeNewsSource
+    {
+        public static readonly DisabledWelcomeNews Instance = new();
+        public Task<IReadOnlyList<WelcomeNewsItem>> GetLatestAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<WelcomeNewsItem>>([]);
     }
 }
