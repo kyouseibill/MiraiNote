@@ -13,11 +13,20 @@ public interface ISevereWeatherWarningSource
     Task<string?> GetWarningAsync(string? place, CancellationToken ct = default);
 }
 
+/// <summary>欢迎语第一行的实况，以及单独一行的特别预警。任一失败都不影响另一边。</summary>
+public readonly record struct WelcomeWeather(string? NowText, string? Warning);
+
+public interface IWelcomeWeatherSource
+{
+    /// <summary>没有城市、没有 Host、没有密钥，或外部失败时对应字段为 null。不抛给欢迎语。</summary>
+    Task<WelcomeWeather> GetAsync(string? place, CancellationToken ct = default);
+}
+
 /// <summary>
-/// 和风实时特别预警。只使用天气预警接口，不请求每日预报。
-/// 旧的 /v7/warning/now 已于 2026-10-01 停服，这里走城市搜索拿到经纬度，再查现行预警。
+/// 和风实况与特别预警。实况只读 /v7/weather/now 的 now.text，不请求每日预报。
+/// 预警走城市搜索拿到经纬度后再查现行预警；旧的 /v7/warning/now 已于 2026-10-01 停服。
 /// </summary>
-public sealed class QWeatherWarningClient : ISevereWeatherWarningSource
+public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcomeWeatherSource
 {
     public const string HttpClientName = "QWeather";
     public static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(8);
@@ -44,12 +53,18 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource
 
     public async Task<string?> GetWarningAsync(string? place, CancellationToken ct = default)
     {
+        var weather = await GetAsync(place, ct);
+        return weather.Warning;
+    }
+
+    public async Task<WelcomeWeather> GetAsync(string? place, CancellationToken ct = default)
+    {
         if (!WelcomePlace.TrySplit(place, out _, out _))
-            return null;
+            return default;
         if (string.IsNullOrWhiteSpace(_options.Value.ApiKey))
-            return null;
+            return default;
         if (!TryHost(_options.Value.ApiHost, out _))
-            return null;
+            return default;
 
         var cacheKey = "welcome:qweather:" + WelcomePlace.CacheKey(place!);
         var pending = _cache.GetOrCreateAsync(cacheKey, async entry =>
@@ -57,44 +72,51 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource
             entry.AbsoluteExpirationRelativeToNow = CacheTtl;
             return await FetchAsync(place!, CancellationToken.None);
         });
-        var text = await pending.WaitAsync(ct);
-        return string.IsNullOrEmpty(text) ? null : text;
+        var snapshot = await pending.WaitAsync(ct) ?? WeatherSnapshot.Empty;
+        return new WelcomeWeather(
+            string.IsNullOrEmpty(snapshot.NowText) ? null : snapshot.NowText,
+            string.IsNullOrEmpty(snapshot.Warning) ? null : snapshot.Warning);
     }
 
-    private async Task<string> FetchAsync(string place, CancellationToken ct)
+    private async Task<WeatherSnapshot> FetchAsync(string place, CancellationToken ct)
     {
         try
         {
             if (!WelcomePlace.TrySplit(place, out var country, out var city))
-                return "";
+                return WeatherSnapshot.Empty;
 
             var options = _options.Value;
             var apiKey = options.ApiKey.Trim();
             if (!TryHost(options.ApiHost, out var host))
-                return "";
+                return WeatherSnapshot.Empty;
 
             var point = await LookupAsync(host, apiKey, country, city, ct);
             if (point is null)
-                return "";
+                return WeatherSnapshot.Empty;
 
-            var warning = await ReadWarningAsync(host, apiKey, point.Value, ct);
-            if (warning != null && warning.Contains(apiKey, StringComparison.Ordinal))
-                return "";
-            return warning ?? "";
+            var nowTask = ReadNowAsync(host, apiKey, point.Value, ct);
+            var warningTask = ReadWarningAsync(host, apiKey, point.Value, ct);
+            await Task.WhenAll(nowTask, warningTask);
+            return new WeatherSnapshot(nowTask.Result, warningTask.Result);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _logger.LogInformation("和风特别预警暂不可用");
-            return "";
+            _logger.LogInformation("和风天气暂不可用");
+            return WeatherSnapshot.Empty;
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException)
         {
-            _logger.LogInformation("和风特别预警暂不可用");
-            return "";
+            _logger.LogInformation("和风天气暂不可用");
+            return WeatherSnapshot.Empty;
         }
     }
 
-    private async Task<(double Lat, double Lon)?> LookupAsync(
+    private sealed record WeatherSnapshot(string NowText, string Warning)
+    {
+        public static readonly WeatherSnapshot Empty = new("", "");
+    }
+
+    private async Task<QWeatherCity?> LookupAsync(
         Uri host,
         string apiKey,
         string country,
@@ -110,19 +132,69 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource
         return document is null ? null : QWeatherCities.Pick(document.RootElement, country, code != null);
     }
 
-    private async Task<string?> ReadWarningAsync(
+    private async Task<string> ReadNowAsync(
         Uri host,
         string apiKey,
-        (double Lat, double Lon) point,
+        QWeatherCity point,
         CancellationToken ct)
     {
-        var lat = point.Lat.ToString("0.00", CultureInfo.InvariantCulture);
-        var lon = point.Lon.ToString("0.00", CultureInfo.InvariantCulture);
-        var path = "/weatheralert/v1/current/" + lat + "/" + lon + "?lang=zh";
-        using var document = await GetJsonAsync(host, path, apiKey, ct);
-        if (document is null)
-            return null;
-        return QWeatherAlerts.SelectHeadline(document.RootElement, _clock.GetUtcNow());
+        try
+        {
+            var location = QWeatherNow.Location(point, apiKey);
+            if (location == null)
+                return "";
+
+            var path = "/v7/weather/now?location=" + location + "&lang=zh";
+            using var document = await GetJsonAsync(host, path, apiKey, ct);
+            if (document is null)
+                return "";
+
+            var text = QWeatherNow.ReadText(document.RootElement);
+            if (string.IsNullOrEmpty(text) || text.Contains(apiKey, StringComparison.Ordinal))
+                return "";
+            return text;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("和风实况暂不可用");
+            return "";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException)
+        {
+            _logger.LogInformation("和风实况暂不可用");
+            return "";
+        }
+    }
+
+    private async Task<string> ReadWarningAsync(
+        Uri host,
+        string apiKey,
+        QWeatherCity point,
+        CancellationToken ct)
+    {
+        try
+        {
+            var lat = point.Lat.ToString("0.00", CultureInfo.InvariantCulture);
+            var lon = point.Lon.ToString("0.00", CultureInfo.InvariantCulture);
+            var path = "/weatheralert/v1/current/" + lat + "/" + lon + "?lang=zh";
+            using var document = await GetJsonAsync(host, path, apiKey, ct);
+            if (document is null)
+                return "";
+            var warning = QWeatherAlerts.SelectHeadline(document.RootElement, _clock.GetUtcNow());
+            if (string.IsNullOrEmpty(warning) || warning.Contains(apiKey, StringComparison.Ordinal))
+                return "";
+            return warning;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("和风特别预警暂不可用");
+            return "";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException)
+        {
+            _logger.LogInformation("和风特别预警暂不可用");
+            return "";
+        }
     }
 
     private async Task<JsonDocument?> GetJsonAsync(Uri host, string pathAndQuery, string apiKey, CancellationToken ct)
@@ -202,9 +274,51 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource
     }
 }
 
+internal readonly record struct QWeatherCity(string LocationId, double Lat, double Lon);
+
+internal static class QWeatherNow
+{
+    /// <summary>优先用城市 ID。没有 ID 时用「经度,纬度」，和风实况接口只认这个顺序。</summary>
+    public static string? Location(QWeatherCity city, string apiKey)
+    {
+        var id = city.LocationId.Trim();
+        if (id.Length is > 0 and <= 32 && id.All(char.IsAsciiLetterOrDigit))
+            return id.Contains(apiKey, StringComparison.Ordinal) ? null : id;
+
+        var lon = city.Lon.ToString("0.00", CultureInfo.InvariantCulture);
+        var lat = city.Lat.ToString("0.00", CultureInfo.InvariantCulture);
+        var coordinate = lon + "," + lat;
+        return coordinate.Contains(apiKey, StringComparison.Ordinal) ? null : coordinate;
+    }
+
+    /// <summary>只读 now.text。不读温度，也不读 daily。</summary>
+    public static string? ReadText(JsonElement root)
+    {
+        if (root.TryGetProperty("code", out var code))
+        {
+            var value = code.ValueKind == JsonValueKind.String ? code.GetString() : code.ToString();
+            if (!string.Equals(value, "200", StringComparison.Ordinal))
+                return null;
+        }
+
+        if (!root.TryGetProperty("now", out var now) || now.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!now.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String)
+            return null;
+
+        var raw = text.GetString();
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var collapsed = string.Join(' ', raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        const int max = 32;
+        return collapsed.Length <= max ? collapsed : collapsed[..max];
+    }
+}
+
 internal static class QWeatherCities
 {
-    public static (double Lat, double Lon)? Pick(JsonElement root, string country, bool rangeWasApplied)
+    public static QWeatherCity? Pick(JsonElement root, string country, bool rangeWasApplied)
     {
         if (root.TryGetProperty("code", out var code))
         {
@@ -226,7 +340,12 @@ internal static class QWeatherCities
             if (!TryCoordinate(location, "lon", -180, 180, out var lon))
                 continue;
 
-            return (
+            var id = "";
+            if (location.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String)
+                id = idElement.GetString()?.Trim() ?? "";
+
+            return new QWeatherCity(
+                id,
                 Math.Round(lat, 2, MidpointRounding.AwayFromZero),
                 Math.Round(lon, 2, MidpointRounding.AwayFromZero));
         }

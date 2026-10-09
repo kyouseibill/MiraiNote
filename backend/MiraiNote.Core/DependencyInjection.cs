@@ -71,7 +71,10 @@ public static class DependencyInjection
             AutomaticDecompression = System.Net.DecompressionMethods.All,
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
-        services.AddSingleton<Services.ISevereWeatherWarningSource, Services.QWeatherWarningClient>();
+        services.AddSingleton<Services.QWeatherWarningClient>();
+        services.AddSingleton<Services.ISevereWeatherWarningSource>(sp => sp.GetRequiredService<Services.QWeatherWarningClient>());
+        services.AddSingleton<Services.IWelcomeWeatherSource>(sp => sp.GetRequiredService<Services.QWeatherWarningClient>());
+        services.AddSingleton<Services.IWelcomeTitleTranslator, Services.DeepSeekWelcomeTitleTranslator>();
         services.AddSingleton<Services.IWelcomeNewsSource, Services.WelcomeNewsClient>();
         services.AddScoped<Services.IWelcomePlaceSettingsService, Services.WelcomePlaceSettingsService>();
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();

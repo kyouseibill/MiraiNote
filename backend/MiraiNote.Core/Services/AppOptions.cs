@@ -88,8 +88,8 @@ public class WeatherOptions
 }
 
 /// <summary>
-/// 工作台特别预警用的和风天气配置。两个值都只来自服务器配置或环境变量，不要写入前端。
-/// Host 或 Key 任一为空，就不请求天气。
+/// 工作台特别预警和首行实况共用的和风天气配置。两个值都只来自服务器配置或环境变量，不要写入前端。
+/// Host 或 Key 任一为空，就不请求天气。实况只读 /v7/weather/now 的 now.text，不另加环境变量。
 /// </summary>
 public class QWeatherOptions
 {

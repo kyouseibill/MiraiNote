@@ -97,11 +97,13 @@ export interface UpdateMemoReminderSettingsRequest {
   barkKey: string
 }
 
-/** 工作台「国家-城市」。不是密钥，接口会回显。 */
+/** 工作台欢迎语设置。不是密钥，接口会回显。不含 Bark key。 */
 export interface WelcomeSettings {
   place: string | null
+  nickname: string | null
 }
 
 export interface UpdateWelcomeSettingsRequest {
   place: string
+  nickname: string
 }
