@@ -13,7 +13,10 @@ public static class FeatureLaunchNotes
     /// 发版时在这里追加。例如：
     /// new(new DateOnly(2026, 10, 8), "MiraiAI 可以在对话里接着上次的文件继续做。")
     /// </summary>
-    public static readonly IReadOnlyList<FeatureLaunchNote> All = [];
+    public static readonly IReadOnlyList<FeatureLaunchNote> All =
+    [
+        new(new DateOnly(2026, 10, 9), "备忘到点可以发 Bark 手机提醒了，工作台也会显示当天备忘摘要。"),
+    ];
 
     /// <summary>
     /// 选出仍在有效期内的一句。多条重叠时用开始日最晚的那条。没有则返回 null。
