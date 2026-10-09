@@ -63,6 +63,8 @@ const barkConfigured = ref(false)
 const barkSubmitting = ref(false)
 const weatherPlace = ref('')
 const weatherSubmitting = ref(false)
+const nickname = ref('')
+const nicknameSubmitting = ref(false)
 
 onMounted(async () => {
   try {
@@ -74,6 +76,7 @@ onMounted(async () => {
   try {
     const settings = await authApi.getWelcomeSettings()
     weatherPlace.value = settings.place ?? ''
+    nickname.value = settings.nickname ?? ''
   } catch {
     // 拦截器已 toast
   }
@@ -82,13 +85,34 @@ onMounted(async () => {
 async function saveWeatherPlace() {
   weatherSubmitting.value = true
   try {
-    const settings = await authApi.updateWelcomeSettings({ place: weatherPlace.value.trim() })
+    const settings = await authApi.updateWelcomeSettings({
+      place: weatherPlace.value.trim(),
+      nickname: nickname.value.trim(),
+    })
     weatherPlace.value = settings.place ?? ''
+    nickname.value = settings.nickname ?? ''
     toast.success(weatherPlace.value ? '国家-城市已保存' : '已关闭天气')
   } catch {
     // 拦截器已 toast
   } finally {
     weatherSubmitting.value = false
+  }
+}
+
+async function saveNickname() {
+  nicknameSubmitting.value = true
+  try {
+    const settings = await authApi.updateWelcomeSettings({
+      place: weatherPlace.value.trim(),
+      nickname: nickname.value.trim(),
+    })
+    weatherPlace.value = settings.place ?? ''
+    nickname.value = settings.nickname ?? ''
+    toast.success(nickname.value ? '昵称已保存' : '已改回用户名')
+  } catch {
+    // 拦截器已 toast
+  } finally {
+    nicknameSubmitting.value = false
   }
 }
 
@@ -215,11 +239,44 @@ async function handleLogout() {
       </form>
     </section>
 
+    <!-- 欢迎语称呼。只影响工作台第一行，账户名仍是用户名。 -->
+    <section class="surface-card">
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-900">欢迎语称呼</h2>
+        <p class="text-sm text-gray-500 mt-0.5">只改工作台第一行。留空则继续用用户名，其他页面不变。</p>
+      </div>
+      <form class="px-6 py-5 space-y-3" data-testid="nickname-form" @submit.prevent="saveNickname">
+        <div>
+          <label class="block text-sm text-gray-700 mb-1" for="welcome-nickname">昵称</label>
+          <input
+            id="welcome-nickname"
+            v-model="nickname"
+            type="text"
+            autocomplete="off"
+            maxlength="20"
+            data-testid="nickname-input"
+            placeholder="例如 雅美"
+            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+          />
+          <p class="mt-1 text-xs text-gray-500" data-testid="nickname-status">
+            当前：{{ nickname ? nickname : '使用用户名' }}。最多 20 个字。
+          </p>
+        </div>
+        <button
+          type="submit"
+          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
+          :disabled="nicknameSubmitting"
+        >
+          {{ nicknameSubmitting ? '保存中…' : '保存' }}
+        </button>
+      </form>
+    </section>
+
     <!-- 天气位置 -->
     <section class="surface-card">
       <div class="px-6 py-4 border-b border-gray-100">
         <h2 class="font-semibold text-gray-900">天气位置</h2>
-        <p class="text-sm text-gray-500 mt-0.5">只在有特别预警时显示在工作台。留空则不查询、不显示。</p>
+        <p class="text-sm text-gray-500 mt-0.5">填写后，工作台第一行会带上当天实况；有特别预警时另起一行。留空则不查询、不显示。</p>
       </div>
       <form class="px-6 py-5 space-y-3" data-testid="weather-place-form" @submit.prevent="saveWeatherPlace">
         <div>

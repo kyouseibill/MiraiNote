@@ -33,6 +33,7 @@ public class WelcomeDashboardTests : IDisposable
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
         Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.DoesNotContain("·", greeting.Content);
         Assert.Equal(2, greeting.News.Count);
     }
 
@@ -45,6 +46,8 @@ public class WelcomeDashboardTests : IDisposable
 
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.DoesNotContain("·", greeting.Content);
         Assert.Equal(2, greeting.News.Count);
         Assert.Equal("TechCrunch 最新", greeting.News[0].Title);
         Assert.Equal("https://techcrunch.com/2026/10/09/newest", greeting.News[0].Url);
@@ -60,6 +63,8 @@ public class WelcomeDashboardTests : IDisposable
 
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.DoesNotContain("晴", greeting.Content);
         Assert.NotEmpty(greeting.News);
     }
 
@@ -91,9 +96,10 @@ public class WelcomeDashboardTests : IDisposable
             Weather(handler, WithKey(ApiKey)),
             News(handler)).GetGreetingAsync(userId, When);
 
-        Assert.Equal("tester，10月9日。今天有 1 条备忘到期。", greeting.Content);
+        Assert.Equal("tester，10月9日 · 周五 · 晴。今天有 1 条备忘到期。", greeting.Content);
         Assert.Equal("功能句还在。", greeting.FeatureNote);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
+        Assert.DoesNotContain("暴雨", greeting.Content);
         Assert.Empty(greeting.News);
     }
 
@@ -103,8 +109,12 @@ public class WelcomeDashboardTests : IDisposable
         var handler = new RecordingHandler(RouteHappy);
         await SetPlace(" 中国 - 上海 ");
         var logs = new List<string>();
-        var greeting = await Greet(handler, WithKey(ApiKey), logs);
+        var greeting = await Greet(handler, WithKey(ApiKey), logs, cache: _cache);
 
+        Assert.Equal("tester，10月9日 · 周五 · 晴", greeting.Content);
+        Assert.DoesNotContain("暴雨", greeting.Content);
+        Assert.DoesNotContain("大雨", greeting.Content);
+        Assert.DoesNotContain("22", greeting.Content);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
         Assert.Equal(
             ["TechCrunch 最新", "OpenAI 更新"],
@@ -122,10 +132,15 @@ public class WelcomeDashboardTests : IDisposable
         Assert.Equal(ApiKey, geo.ApiKeyHeader);
         Assert.DoesNotContain(ApiKey, geo.Uri.AbsoluteUri, StringComparison.Ordinal);
         Assert.Contains(handler.Calls, call => call.Uri.AbsolutePath == "/weatheralert/v1/current/31.23/121.47");
+        var now = Assert.Single(handler.Calls, call => call.Uri.AbsolutePath == "/v7/weather/now");
+        Assert.Equal("101020100", now.Query["location"]);
+        Assert.Equal("zh", now.Query["lang"]);
+        Assert.Equal(ApiKey, now.ApiKeyHeader);
+        Assert.DoesNotContain(ApiKey, now.Uri.AbsoluteUri, StringComparison.Ordinal);
         Assert.DoesNotContain(handler.Calls, call =>
-            call.Uri.AbsolutePath.Contains("/v7/weather", StringComparison.Ordinal)
-            || call.Uri.AbsolutePath.Contains("/weather/3d", StringComparison.Ordinal)
-            || call.Uri.AbsolutePath.Contains("/weather/now", StringComparison.Ordinal));
+            call.Uri.AbsolutePath.Contains("/weather/3d", StringComparison.Ordinal)
+            || call.Uri.AbsolutePath.Contains("/v7/weather/7d", StringComparison.Ordinal)
+            || call.Uri.AbsolutePath.Contains("/v7/weather/24h", StringComparison.Ordinal));
         Assert.Equal(
             new[] { WelcomeNewsClient.OpenAiFeed.AbsoluteUri, WelcomeNewsClient.TechCrunchFeed.AbsoluteUri }.OrderBy(item => item),
             handler.Calls
@@ -133,9 +148,11 @@ public class WelcomeDashboardTests : IDisposable
                 .Where(uri => uri.Contains("openai.com", StringComparison.Ordinal) || uri.Contains("techcrunch.com", StringComparison.Ordinal))
                 .OrderBy(item => item));
 
-        var again = await Greet(handler, WithKey(ApiKey), logs);
+        var again = await Greet(handler, WithKey(ApiKey), logs, cache: _cache);
         Assert.Equal(greeting.WeatherWarning, again.WeatherWarning);
+        Assert.Equal(greeting.Content, again.Content);
         Assert.Equal(1, handler.Calls.Count(call => call.Uri.AbsolutePath == "/geo/v2/city/lookup"));
+        Assert.Equal(1, handler.Calls.Count(call => call.Uri.AbsolutePath == "/v7/weather/now"));
         Assert.DoesNotContain(logs, line => line.Contains(ApiKey, StringComparison.Ordinal));
         Assert.DoesNotContain(ApiKey, JsonSerializer.Serialize(greeting), StringComparison.Ordinal);
     }
@@ -275,12 +292,15 @@ public class WelcomeDashboardTests : IDisposable
         await using var lookup = _fx.CreateContext();
         var userId = await lookup.Users.Select(u => u.Id).SingleAsync();
 
-        var saved = await service.UpdateAsync(userId, "  中国 - 上海  ");
+        var saved = await service.UpdateAsync(userId, "  中国 - 上海  ", "  雅美  ");
         Assert.Equal("中国 - 上海", saved.Place);
+        Assert.Equal("雅美", saved.Nickname);
         Assert.Equal("中国 - 上海", (await service.GetAsync(userId)).Place);
+        Assert.Equal("雅美", (await service.GetAsync(userId)).Nickname);
 
-        var cleared = await service.UpdateAsync(userId, "   ");
+        var cleared = await service.UpdateAsync(userId, "   ", "   ");
         Assert.Null(cleared.Place);
+        Assert.Null(cleared.Nickname);
         await using var db = _fx.CreateContext();
         Assert.Null(await db.Users.Select(u => u.WeatherPlace).SingleAsync());
     }
@@ -293,7 +313,7 @@ public class WelcomeDashboardTests : IDisposable
         var userId = await lookup.Users.Select(u => u.Id).SingleAsync();
         var raw = new string('城', 81) + ApiKey;
 
-        var ex = await Assert.ThrowsAsync<BusinessException>(() => service.UpdateAsync(userId, raw));
+        var ex = await Assert.ThrowsAsync<BusinessException>(() => service.UpdateAsync(userId, raw, null));
 
         Assert.Equal("国家-城市请控制在 80 个字以内", ex.Message);
         Assert.DoesNotContain(ApiKey, ex.Message, StringComparison.Ordinal);
@@ -309,7 +329,7 @@ public class WelcomeDashboardTests : IDisposable
           "code": "200",
           "location": [
             {"name": "坏坐标", "lat": "31.00", "lon": "999", "country": "中国", "rank": "1"},
-            {"name": "上海", "lat": "31.23170", "lon": "121.47264", "country": "中国", "rank": "15"},
+            {"name": "上海", "id": "101020100", "lat": "31.23170", "lon": "121.47264", "country": "中国", "rank": "15"},
             {"name": "rank更小的同名地", "lat": "30.11000", "lon": "120.11000", "country": "中国", "rank": "2"},
             {"name": "rank更大的同名地", "lat": "29.22000", "lon": "119.22000", "country": "中国", "rank": "90"}
           ]
@@ -319,7 +339,162 @@ public class WelcomeDashboardTests : IDisposable
         using var document = JsonDocument.Parse(json);
         var point = QWeatherCities.Pick(document.RootElement, "中国", rangeWasApplied: true);
 
-        Assert.Equal((31.23, 121.47), point);
+        Assert.Equal(new QWeatherCity("101020100", 31.23, 121.47), point);
+    }
+
+    [Fact]
+    public void NowText_ReadsOnlyTheCurrentCondition()
+    {
+        using var ok = JsonDocument.Parse(NowJson);
+        Assert.Equal("晴", QWeatherNow.ReadText(ok.RootElement));
+        Assert.Equal("101020100", QWeatherNow.Location(new QWeatherCity("101020100", 31.23, 121.47), ApiKey));
+        Assert.Equal("121.47,31.23", QWeatherNow.Location(new QWeatherCity("", 31.231, 121.472), ApiKey));
+
+        using var denied = JsonDocument.Parse("""{"code":"204","now":{"text":"晴"}}""");
+        Assert.Null(QWeatherNow.ReadText(denied.RootElement));
+        using var dailyOnly = JsonDocument.Parse("""{"code":"200","daily":[{"textDay":"大雨"}]}""");
+        Assert.Null(QWeatherNow.ReadText(dailyOnly.RootElement));
+        Assert.Equal("121.47,31.23", QWeatherNow.Location(new QWeatherCity(ApiKey, 31.23, 121.47), ApiKey));
+        Assert.Null(QWeatherNow.Location(new QWeatherCity("unitTestKey", 31.23, 121.47), "unitTestKey"));
+    }
+
+    [Fact]
+    public async Task NowBrief_WeekdayFollowsShanghaiCalendar_NotTheApi()
+    {
+        var handler = new RecordingHandler(RouteHappy);
+        await SetPlace("日本-东京");
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+
+        // 上海 2026-10-09 00:30，UTC 仍是 10 月 8 日（周四）。
+        var friday = await Greet(
+            handler,
+            WithKey(ApiKey),
+            cache: cache,
+            moment: new DateTimeOffset(2026, 10, 8, 16, 30, 0, TimeSpan.Zero));
+        var saturday = await Greet(
+            handler,
+            WithKey(ApiKey),
+            cache: cache,
+            moment: new DateTimeOffset(2026, 10, 9, 16, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal("tester，10月9日 · 周五 · 晴", friday.Content);
+        Assert.DoesNotContain("周四", friday.Content);
+        Assert.Equal("tester，10月10日 · 周六 · 晴", saturday.Content);
+        Assert.Equal(1, handler.Calls.Count(call => call.Uri.AbsolutePath == "/v7/weather/now"));
+        Assert.Equal("上海中心气象台发布暴雨红色预警", friday.WeatherWarning);
+        Assert.DoesNotContain("暴雨", friday.Content);
+        Assert.Equal(friday.WeatherWarning, saturday.WeatherWarning);
+    }
+
+    [Fact]
+    public async Task NowFailure_OmitsTheSuffix_AndKeepsWarningAndNews()
+    {
+        var handler = new RecordingHandler((request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/v7/weather/now")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.GatewayTimeout));
+            if (path == "/geo/v2/city/lookup")
+                return Task.FromResult(Json(CityJson));
+            if (path.StartsWith("/weatheralert/", StringComparison.Ordinal))
+                return Task.FromResult(Json(AlertJson));
+            if (request.RequestUri.Host == "openai.com")
+                return Task.FromResult(Xml(OpenAiRss));
+            if (request.RequestUri.Host == "techcrunch.com")
+                return Task.FromResult(Xml(TechCrunchRss));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
+        await SetPlace("中国-上海");
+
+        var greeting = await Greet(handler, WithKey(ApiKey));
+
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.DoesNotContain("·", greeting.Content);
+        Assert.DoesNotContain("晴", greeting.Content);
+        Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
+        Assert.Equal(2, greeting.News.Count);
+        Assert.DoesNotContain(handler.Calls, call => call.Uri.AbsolutePath.Contains("/weather/3d", StringComparison.Ordinal));
+        Assert.DoesNotContain(ApiKey, JsonSerializer.Serialize(greeting), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NowTimeout_OmitsTheSuffix_AndKeepsTheWarning()
+    {
+        var handler = new RecordingHandler((request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v7/weather/now")
+                return Delay(ct);
+            if (request.RequestUri.AbsolutePath.Contains("/geo/", StringComparison.Ordinal))
+                return Task.FromResult(Json(CityJson));
+            if (request.RequestUri.AbsolutePath.Contains("weatheralert", StringComparison.Ordinal))
+                return Task.FromResult(Json(AlertJson));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
+        await SetPlace("中国-上海");
+
+        var greeting = await Greet(handler, WithKey(ApiKey), timeout: TimeSpan.FromMilliseconds(200));
+
+        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
+    }
+
+    [Fact]
+    public async Task Nickname_IsUsedOnTheGreeting_AndEmptyFallsBackToUsername()
+    {
+        await SetNickname("  雅美  ");
+        var named = await Greet(new RecordingHandler(RouteHappy), new QWeatherOptions());
+        Assert.Equal("雅美，10月9日", named.Content);
+        Assert.DoesNotContain("tester", named.Content);
+
+        await SetNickname("   ");
+        var fallback = await Greet(new RecordingHandler(RouteHappy), new QWeatherOptions());
+        Assert.Equal("tester，10月9日", fallback.Content);
+    }
+
+    [Fact]
+    public async Task Nickname_WithWeather_StaysOnTheFirstLine()
+    {
+        await SetNickname("雅美");
+        await SetPlace("中国-上海");
+        var greeting = await Greet(new RecordingHandler(RouteHappy), WithKey(ApiKey));
+
+        Assert.Equal("雅美，10月9日 · 周五 · 晴", greeting.Content);
+        Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
+        Assert.DoesNotContain("tester", greeting.Content);
+        Assert.DoesNotContain("暴雨", greeting.Content);
+    }
+
+    [Fact]
+    public async Task Nickname_LengthCap_RejectsWithoutEchoingOrSaving()
+    {
+        var service = new WelcomePlaceSettingsService(_fx.CreateContext());
+        await using var lookup = _fx.CreateContext();
+        var userId = await lookup.Users.Select(u => u.Id).SingleAsync();
+        await using (var seed = _fx.CreateContext())
+        {
+            var user = await seed.Users.SingleAsync();
+            user.BarkDeviceKey = "unitTestBarkKey1";
+            user.WeatherPlace = "中国-上海";
+            user.Nickname = "雅美";
+            await seed.SaveChangesAsync();
+        }
+
+        var twenty = new string('名', WelcomeNickname.MaxLength);
+        var saved = await service.UpdateAsync(userId, "中国-上海", "  " + twenty + "  ");
+        Assert.Equal(twenty, saved.Nickname);
+
+        var raw = new string('名', WelcomeNickname.MaxLength + 1) + "unit-test-secret";
+        var ex = await Assert.ThrowsAsync<BusinessException>(() => service.UpdateAsync(userId, "日本-东京", raw));
+        Assert.Equal("昵称请控制在 20 个字以内", ex.Message);
+        Assert.DoesNotContain("unit-test-secret", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(raw, ex.Message, StringComparison.Ordinal);
+
+        var current = await service.GetAsync(userId);
+        Assert.Equal(twenty, current.Nickname);
+        Assert.Equal("中国-上海", current.Place);
+        var json = JsonSerializer.Serialize(current);
+        Assert.DoesNotContain("unitTestBarkKey1", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("Password", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -354,6 +529,141 @@ public class WelcomeDashboardTests : IDisposable
         Assert.DoesNotContain(ApiKey, JsonSerializer.Serialize(body), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task NewsTitles_TranslateWithDeepSeek_AndStayCached()
+    {
+        const string deepSeekKey = "unit-test-deepseek-key-SHOULD-NOT-LEAK";
+        string? posted = null;
+        var chats = 0;
+        var handler = new RecordingHandler(async (request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v1/chat/completions")
+            {
+                chats++;
+                posted = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
+                var inner = """{"titles":["人工智能融资再创新高","OpenAI 发布新模型"]}""";
+                return Json(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { message = new { content = inner } } }
+                }));
+            }
+
+            if (request.RequestUri.Host == "openai.com")
+                return Xml(EnglishOpenAiRss);
+            if (request.RequestUri.Host == "techcrunch.com")
+                return Xml(EnglishTechCrunchRss);
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var logs = new List<string>();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var translator = Translator(handler, deepSeekKey, logs, cache);
+        var news = News(handler, cache, translator: translator);
+
+        var first = await news.GetLatestAsync();
+        var second = await news.GetLatestAsync();
+
+        Assert.Equal(
+            ["人工智能融资再创新高", "OpenAI 发布新模型"],
+            first.Select(item => item.Title).ToArray());
+        Assert.Equal("https://techcrunch.com/2026/10/09/funding", first[0].Url);
+        Assert.Equal("https://openai.com/news/model", first[1].Url);
+        Assert.Equal(first.Select(item => item.Title), second.Select(item => item.Title));
+        Assert.Equal(1, chats);
+        Assert.NotNull(posted);
+        Assert.DoesNotContain(deepSeekKey, posted, StringComparison.Ordinal);
+        Assert.Equal(1, handler.Calls.Count(call => call.Uri.AbsolutePath == "/v1/chat/completions"));
+        var chat = Assert.Single(handler.Calls, call => call.Uri.AbsolutePath == "/v1/chat/completions");
+        Assert.DoesNotContain(deepSeekKey, chat.Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal("Bearer " + deepSeekKey, chat.Authorization);
+        Assert.DoesNotContain(logs, line => line.Contains(deepSeekKey, StringComparison.Ordinal));
+        Assert.DoesNotContain(deepSeekKey, JsonSerializer.Serialize(first), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NewsTitles_KeepEnglishWhenTranslationFails()
+    {
+        const string deepSeekKey = "unit-test-deepseek-key-SHOULD-NOT-LEAK";
+        var chats = 0;
+        var handler = new RecordingHandler((request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v1/chat/completions")
+            {
+                chats++;
+                if (chats == 1)
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway)
+                    {
+                        Content = new StringContent(deepSeekKey, Encoding.UTF8, "text/plain")
+                    });
+                }
+
+                var inner = """{"titles":["中文标题"]}""";
+                return Task.FromResult(Json(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { message = new { content = inner } } }
+                })));
+            }
+
+            if (request.RequestUri.Host == "openai.com")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            if (request.RequestUri.Host == "techcrunch.com")
+                return Task.FromResult(Xml(EnglishTechCrunchRss));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
+        var logs = new List<string>();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var translator = Translator(handler, deepSeekKey, logs, cache, TimeSpan.FromMilliseconds(200));
+        var hanging = new RecordingHandler((request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v1/chat/completions")
+                return Delay(ct);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
+
+        var failed = await translator.TranslateAsync(
+        [
+            new WelcomeNewsItem("AI labs raise a new round", "https://techcrunch.com/2026/10/09/funding"),
+            new WelcomeNewsItem("OpenAI ships a new model", "https://openai.com/news/model")
+        ]);
+        var retried = await translator.TranslateAsync(
+        [
+            new WelcomeNewsItem("AI labs raise a new round", "https://techcrunch.com/2026/10/09/funding")
+        ]);
+        var timedOut = await Translator(hanging, deepSeekKey, logs, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromMilliseconds(200))
+            .TranslateAsync([new WelcomeNewsItem("OpenAI ships a new model", "https://openai.com/news/model")]);
+
+        Assert.Equal(2, failed.Count);
+        Assert.Equal("AI labs raise a new round", failed[0].Title);
+        Assert.Equal("https://techcrunch.com/2026/10/09/funding", failed[0].Url);
+        Assert.Equal("OpenAI ships a new model", failed[1].Title);
+        Assert.Equal("https://openai.com/news/model", failed[1].Url);
+        Assert.Equal("中文标题", retried[0].Title);
+        Assert.Equal("https://techcrunch.com/2026/10/09/funding", retried[0].Url);
+        Assert.Equal("OpenAI ships a new model", timedOut[0].Title);
+        Assert.DoesNotContain(logs, line => line.Contains(deepSeekKey, StringComparison.Ordinal));
+        Assert.DoesNotContain(deepSeekKey, JsonSerializer.Serialize(failed), StringComparison.Ordinal);
+        Assert.DoesNotContain(deepSeekKey, JsonSerializer.Serialize(timedOut), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnvExample_DoesNotCommitSecretsOrExtraWeatherKeys()
+    {
+        var path = FindRepoFile(".env.example");
+        var text = File.ReadAllText(path);
+        Assert.Contains("QWeather__ApiHost=", text, StringComparison.Ordinal);
+        Assert.Contains("QWeather__ApiKey=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("QWeather__Now", text, StringComparison.Ordinal);
+        foreach (var line in text.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                continue;
+            var split = trimmed.IndexOf('=');
+            Assert.True(split > 0, trimmed);
+            Assert.Equal("", trimmed[(split + 1)..].Trim());
+        }
+    }
+
     public void Dispose()
     {
         _cache.Dispose();
@@ -366,16 +676,18 @@ public class WelcomeDashboardTests : IDisposable
         RecordingHandler handler,
         QWeatherOptions options,
         List<string>? logs = null,
-        TimeSpan? timeout = null)
+        IMemoryCache? cache = null,
+        TimeSpan? timeout = null,
+        DateTimeOffset? moment = null)
     {
         await using var db = _fx.CreateContext();
         var userId = await db.Users.Select(u => u.Id).SingleAsync();
         var service = new WelcomeGreetingService(
             db,
             new FeatureLaunchCatalog([]),
-            Weather(handler, options, logs, _cache, timeout),
-            News(handler, _cache, timeout));
-        return await service.GetGreetingAsync(userId, When);
+            Weather(handler, options, logs, cache, timeout),
+            News(handler, cache, timeout));
+        return await service.GetGreetingAsync(userId, moment ?? When);
     }
 
     private static QWeatherWarningClient Weather(
@@ -391,8 +703,48 @@ public class WelcomeDashboardTests : IDisposable
             new FixedClock(When),
             logs == null ? NullLogger<QWeatherWarningClient>.Instance : new ListLogger<QWeatherWarningClient>(logs));
 
-    private static WelcomeNewsClient News(RecordingHandler handler, IMemoryCache? cache = null, TimeSpan? timeout = null) =>
-        new(Factory(handler, timeout), cache ?? new MemoryCache(new MemoryCacheOptions()), NullLogger<WelcomeNewsClient>.Instance);
+    private static WelcomeNewsClient News(
+        RecordingHandler handler,
+        IMemoryCache? cache = null,
+        TimeSpan? timeout = null,
+        IWelcomeTitleTranslator? translator = null) =>
+        new(
+            Factory(handler, timeout),
+            cache ?? new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<WelcomeNewsClient>.Instance,
+            translator);
+
+    private static DeepSeekWelcomeTitleTranslator Translator(
+        RecordingHandler handler,
+        string apiKey,
+        List<string> logs,
+        IMemoryCache cache,
+        TimeSpan? timeout = null) =>
+        new(
+            Factory(handler, TimeSpan.FromSeconds(5)),
+            cache,
+            Options.Create(new DeepSeekOptions
+            {
+                ApiKey = apiKey,
+                BaseUrl = "https://ai.example.test",
+                Model = "deepseek-v4-flash"
+            }),
+            new ListLogger<DeepSeekWelcomeTitleTranslator>(logs),
+            timeout ?? DeepSeekWelcomeTitleTranslator.DefaultTimeout);
+
+    private static string FindRepoFile(string name)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, name);
+            if (File.Exists(candidate))
+                return candidate;
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException(name);
+    }
 
     private static QWeatherOptions WithKey(string apiKey) => new()
     {
@@ -405,6 +757,14 @@ public class WelcomeDashboardTests : IDisposable
         await using var db = _fx.CreateContext();
         var user = await db.Users.SingleAsync();
         user.WeatherPlace = place;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task SetNickname(string? nickname)
+    {
+        await using var db = _fx.CreateContext();
+        var user = await db.Users.SingleAsync();
+        user.Nickname = nickname;
         await db.SaveChangesAsync();
     }
 
@@ -427,6 +787,8 @@ public class WelcomeDashboardTests : IDisposable
         var path = request.RequestUri!.AbsolutePath;
         if (path == "/geo/v2/city/lookup")
             return Json(CityJson);
+        if (path == "/v7/weather/now")
+            return Json(NowJson);
         if (path.StartsWith("/weatheralert/v1/current/", StringComparison.Ordinal))
             return Json(AlertJson);
         if (request.RequestUri.Host == "openai.com")
@@ -441,6 +803,11 @@ public class WelcomeDashboardTests : IDisposable
 
     private static HttpResponseMessage Xml(string xml) =>
         new(HttpStatusCode.OK) { Content = new StringContent(xml, Encoding.UTF8, "application/xml") };
+
+    private const string NowJson =
+        """
+        {"code":"200","now":{"text":"晴","temp":"22","icon":"100"},"daily":[{"textDay":"大雨","tempMax":"31"}]}
+        """;
 
     private const string CityJson =
         """
@@ -504,6 +871,32 @@ public class WelcomeDashboardTests : IDisposable
             }
           ]
         }
+        """;
+
+    private const string EnglishOpenAiRss =
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <title>OpenAI ships a new model</title>
+            <link rel="alternate" href="https://openai.com/news/model"/>
+            <published>2026-10-08T00:00:00Z</published>
+          </entry>
+        </feed>
+        """;
+
+    private const string EnglishTechCrunchRss =
+        """
+        <?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0">
+          <channel>
+            <item>
+              <title>AI labs raise a new round</title>
+              <link>https://techcrunch.com/2026/10/09/funding</link>
+              <pubDate>Fri, 09 Oct 2026 01:00:00 GMT</pubDate>
+            </item>
+          </channel>
+        </rss>
         """;
 
     private const string OpenAiRss =

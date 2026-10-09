@@ -31,12 +31,18 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
     private readonly IHttpClientFactory _http;
     private readonly IMemoryCache _cache;
     private readonly ILogger<WelcomeNewsClient> _logger;
+    private readonly IWelcomeTitleTranslator? _translator;
 
-    public WelcomeNewsClient(IHttpClientFactory http, IMemoryCache cache, ILogger<WelcomeNewsClient> logger)
+    public WelcomeNewsClient(
+        IHttpClientFactory http,
+        IMemoryCache cache,
+        ILogger<WelcomeNewsClient> logger,
+        IWelcomeTitleTranslator? translator = null)
     {
         _http = http;
         _cache = cache;
         _logger = logger;
+        _translator = translator;
     }
 
     public async Task<IReadOnlyList<WelcomeNewsItem>> GetLatestAsync(CancellationToken ct = default)
@@ -46,7 +52,23 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
             entry.AbsoluteExpirationRelativeToNow = CacheTtl;
             return await FetchAsync(CancellationToken.None);
         });
-        return await pending.WaitAsync(ct) ?? [];
+        var items = await pending.WaitAsync(ct) ?? [];
+        if (_translator is null || items.Count == 0)
+            return items;
+
+        try
+        {
+            return await _translator.TranslateAsync(items, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            _logger.LogInformation("欢迎语新闻标题暂未译成中文");
+            return items;
+        }
     }
 
     private async Task<IReadOnlyList<WelcomeNewsItem>> FetchAsync(CancellationToken ct)

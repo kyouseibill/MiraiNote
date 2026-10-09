@@ -32,7 +32,7 @@ public sealed class WelcomeSettingsController : ControllerBase
         [FromBody] UpdateWelcomeSettingsRequest request,
         CancellationToken ct)
     {
-        var result = await _settings.UpdateAsync(_currentUser.UserId, request.Place, ct);
+        var result = await _settings.UpdateAsync(_currentUser.UserId, request.Place, request.Nickname, ct);
         return Ok(ApiResponse<WelcomeSettingsDto>.Ok(result, "已保存"));
     }
 }

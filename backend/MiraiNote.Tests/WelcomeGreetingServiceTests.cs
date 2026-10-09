@@ -184,6 +184,7 @@ public class WelcomeGreetingServiceTests : IDisposable
         services.AddDbContext<MiraiNoteDbContext>(options => options.UseSqlite(_fx.ConnectionString));
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ISevereWeatherWarningSource>(new OfflineWeather());
+        services.AddSingleton<IWelcomeWeatherSource>(new OfflineBrief());
         services.AddSingleton<IWelcomeNewsSource>(new OfflineNews());
         services.AddScoped<IWelcomeGreetingService, WelcomeGreetingService>();
         using var provider = services.BuildServiceProvider();
@@ -203,10 +204,33 @@ public class WelcomeGreetingServiceTests : IDisposable
         Assert.Empty(greeting.News);
     }
 
+    [Fact]
+    public void Compose_AddsShanghaiWeekdayAndNowText_OnlyWhenWeatherIsPresent()
+    {
+        var friday = new DateOnly(2026, 10, 9);
+        Assert.Equal(
+            "Bill.Gong，10月9日 · 周五 · 晴",
+            WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0, "晴"));
+        Assert.Equal(
+            "Bill.Gong，10月9日 · 周五 · 晴。今天有 1 条备忘到期，还有 2 条备忘没做完。",
+            WelcomeGreetingService.Compose("Bill.Gong", friday, 1, 2, " 晴 "));
+        Assert.Equal("Bill.Gong，10月9日", WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0));
+        Assert.Equal("Bill.Gong，10月9日", WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0, "   "));
+        Assert.Equal(
+            "Bill.Gong，10月11日 · 周日 · 阴",
+            WelcomeGreetingService.Compose("Bill.Gong", new DateOnly(2026, 10, 11), 0, 0, "阴"));
+    }
+
     private sealed class OfflineWeather : ISevereWeatherWarningSource
     {
         public Task<string?> GetWarningAsync(string? place, CancellationToken ct = default) =>
             Task.FromResult<string?>(null);
+    }
+
+    private sealed class OfflineBrief : IWelcomeWeatherSource
+    {
+        public Task<WelcomeWeather> GetAsync(string? place, CancellationToken ct = default) =>
+            Task.FromResult(default(WelcomeWeather));
     }
 
     private sealed class OfflineNews : IWelcomeNewsSource
