@@ -13,6 +13,7 @@ import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
 import { useAuthStore } from '@/stores/auth'
+import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
@@ -68,6 +69,18 @@ function shanghaiDateLabel(date: Date): string {
 
 function fallbackName(): string {
   return auth.user?.username?.trim() || '你'
+}
+
+/** 开发或非 production 构建可用 `?welcomeNow=2026-10-09T10:59`。生产构建这段会被去掉。 */
+function greetingNow(): Date {
+  if (import.meta.env.DEV && import.meta.env.MODE !== 'production') {
+    const raw = route.query.welcomeNow
+    const value = Array.isArray(raw) ? raw[0] : raw
+    if (typeof value === 'string' && value.trim() !== '') {
+      return resolveGreetingNow(value, new Date())
+    }
+  }
+  return new Date()
 }
 
 const now = new Date()
@@ -255,13 +268,19 @@ async function applyWelcome(
   signal: AbortSignal,
 ) {
   const name = greetingName(welcome)
+  const now = greetingNow()
   const feature = (welcome?.featureNote ?? '').trim()
   const weather = (welcome?.weatherWarning ?? '').trim()
   const memo = (welcome?.memoSummary ?? '').trim()
   const headlines = visibleNews(welcome?.news)
+  const line = composeGreeting({
+    name: name || fallbackName(),
+    now,
+    weatherBrief: welcome?.weatherBrief,
+  })
   if (!name) {
     if (!signal.aborted) {
-      greeting.value = fallbackName()
+      greeting.value = line
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -278,7 +297,7 @@ async function applyWelcome(
     news.value = headlines
     applyDateLine(welcome?.dateLine, welcome?.weatherBrief)
   }
-  await typewriterReveal(name, signal)
+  await typewriterReveal(line, signal)
 }
 
 async function load() {
@@ -329,7 +348,7 @@ async function load() {
   } catch {
     if (!signal.aborted) {
       loading.value = false
-      greeting.value = fallbackName()
+      greeting.value = composeGreeting({ name: fallbackName(), now: greetingNow(), weatherBrief: null })
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -407,6 +426,10 @@ onUnmounted(cancelWelcomeTypewriter)
                 {{ greeting }}<span v-if="greetingRevealing" class="greeting-caret" aria-hidden="true" />
               </h1>
             </div>
+            <p v-if="weatherWarning" class="mt-3 max-w-[720px] text-[13px] leading-6 text-[#6a3d38]" data-testid="weather-warning">
+              {{ weatherWarning }}
+              <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
+            </p>
             <p v-if="memoSummary" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]" data-testid="welcome-memo">
               {{ memoSummary }}
             </p>
@@ -414,10 +437,6 @@ onUnmounted(cancelWelcomeTypewriter)
               {{ featureNote }}
             </p>
           </div>
-          <p v-if="weatherWarning" class="mt-3 max-w-[720px] text-[13px] leading-6 text-[#6a3d38]" data-testid="weather-warning">
-            {{ weatherWarning }}
-            <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
-          </p>
           <ul v-if="news.length" class="mt-3 max-w-[720px] space-y-1" data-testid="welcome-news">
             <li v-for="item in news" :key="item.url">
               <a
