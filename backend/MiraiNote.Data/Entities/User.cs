@@ -60,7 +60,7 @@ public class User : BaseEntity
     public string? WeatherPlace { get; set; }
 
     /// <summary>
-    /// 工作台欢迎语第一行用的称呼。空则继续用 <see cref="Username"/>。
+    /// 工作台欢迎语大标题用的称呼。空则继续用 <see cref="Username"/>。
     /// 其他页面不读这一列。
     /// </summary>
     [MaxLength(20)]

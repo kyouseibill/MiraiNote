@@ -32,7 +32,10 @@ public class WelcomeDashboardTests : IDisposable
 
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("tester", greeting.DisplayName);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.DoesNotContain("·", greeting.Content);
         Assert.Equal(2, greeting.News.Count);
     }
@@ -46,7 +49,9 @@ public class WelcomeDashboardTests : IDisposable
 
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.DoesNotContain("·", greeting.Content);
         Assert.Equal(2, greeting.News.Count);
         Assert.Equal("TechCrunch 最新", greeting.News[0].Title);
@@ -63,8 +68,11 @@ public class WelcomeDashboardTests : IDisposable
 
         Assert.Null(greeting.WeatherWarning);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.Host == "weather.example.test");
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.DoesNotContain("晴", greeting.Content);
+        Assert.DoesNotContain("晴", greeting.DateLine);
         Assert.NotEmpty(greeting.News);
     }
 
@@ -96,10 +104,17 @@ public class WelcomeDashboardTests : IDisposable
             Weather(handler, WithKey(ApiKey)),
             News(handler)).GetGreetingAsync(userId, When);
 
-        Assert.Equal("tester，10月9日 · 周五 · 晴。今天有 1 条备忘到期。", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("tester", greeting.DisplayName);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", greeting.DateLine);
+        Assert.Equal("晴 22°C", greeting.WeatherBrief);
+        Assert.Equal("今天有 1 条备忘到期。", greeting.MemoSummary);
+        Assert.DoesNotContain("晴", greeting.Content);
+        Assert.DoesNotContain("10月", greeting.Content);
         Assert.Equal("功能句还在。", greeting.FeatureNote);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
         Assert.DoesNotContain("暴雨", greeting.Content);
+        Assert.DoesNotContain("暴雨", greeting.DateLine);
         Assert.Empty(greeting.News);
     }
 
@@ -111,10 +126,18 @@ public class WelcomeDashboardTests : IDisposable
         var logs = new List<string>();
         var greeting = await Greet(handler, WithKey(ApiKey), logs, cache: _cache);
 
-        Assert.Equal("tester，10月9日 · 周五 · 晴", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", greeting.DateLine);
+        Assert.Equal("晴 22°C", greeting.WeatherBrief);
+        Assert.Null(greeting.MemoSummary);
         Assert.DoesNotContain("暴雨", greeting.Content);
-        Assert.DoesNotContain("大雨", greeting.Content);
+        Assert.DoesNotContain("暴雨", greeting.DateLine);
+        Assert.DoesNotContain("大雨", greeting.DateLine);
+        Assert.Contains("22°C", greeting.DateLine);
+        Assert.DoesNotContain("31", greeting.DateLine);
         Assert.DoesNotContain("22", greeting.Content);
+        Assert.DoesNotContain("°", greeting.Content);
+        Assert.DoesNotContain("22", greeting.WeatherWarning);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
         Assert.Equal(
             ["TechCrunch 最新", "OpenAI 更新"],
@@ -172,7 +195,10 @@ public class WelcomeDashboardTests : IDisposable
         var greeting = await Greet(handler, WithKey(ApiKey), timeout: TimeSpan.FromMilliseconds(200));
 
         Assert.Null(greeting.WeatherWarning);
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
+        Assert.DoesNotContain("晴", greeting.DateLine);
         Assert.NotEmpty(greeting.News);
     }
 
@@ -347,13 +373,26 @@ public class WelcomeDashboardTests : IDisposable
     {
         using var ok = JsonDocument.Parse(NowJson);
         Assert.Equal("晴", QWeatherNow.ReadText(ok.RootElement));
+        Assert.Equal("22", QWeatherNow.ReadTemp(ok.RootElement));
         Assert.Equal("101020100", QWeatherNow.Location(new QWeatherCity("101020100", 31.23, 121.47), ApiKey));
         Assert.Equal("121.47,31.23", QWeatherNow.Location(new QWeatherCity("", 31.231, 121.472), ApiKey));
 
-        using var denied = JsonDocument.Parse("""{"code":"204","now":{"text":"晴"}}""");
+        using var denied = JsonDocument.Parse("""{"code":"204","now":{"text":"晴","temp":"22"}}""");
         Assert.Null(QWeatherNow.ReadText(denied.RootElement));
-        using var dailyOnly = JsonDocument.Parse("""{"code":"200","daily":[{"textDay":"大雨"}]}""");
+        Assert.Null(QWeatherNow.ReadTemp(denied.RootElement));
+        using var dailyOnly = JsonDocument.Parse("""{"code":"200","daily":[{"textDay":"大雨","tempMax":"31"}]}""");
         Assert.Null(QWeatherNow.ReadText(dailyOnly.RootElement));
+        Assert.Null(QWeatherNow.ReadTemp(dailyOnly.RootElement));
+        using var textOnly = JsonDocument.Parse("""{"code":"200","now":{"text":"多云"}}""");
+        Assert.Equal("多云", QWeatherNow.ReadText(textOnly.RootElement));
+        Assert.Null(QWeatherNow.ReadTemp(textOnly.RootElement));
+        using var tempOnly = JsonDocument.Parse("""{"code":"200","now":{"temp":"-3","feelsLike":"1"}}""");
+        Assert.Null(QWeatherNow.ReadText(tempOnly.RootElement));
+        Assert.Equal("-3", QWeatherNow.ReadTemp(tempOnly.RootElement));
+        using var numeric = JsonDocument.Parse("""{"code":"200","now":{"temp":24}}""");
+        Assert.Equal("24", QWeatherNow.ReadTemp(numeric.RootElement));
+        using var junk = JsonDocument.Parse("""{"code":"200","now":{"text":"多云","temp":"大雨"}}""");
+        Assert.Null(QWeatherNow.ReadTemp(junk.RootElement));
         Assert.Equal("121.47,31.23", QWeatherNow.Location(new QWeatherCity(ApiKey, 31.23, 121.47), ApiKey));
         Assert.Null(QWeatherNow.Location(new QWeatherCity("unitTestKey", 31.23, 121.47), "unitTestKey"));
     }
@@ -377,9 +416,13 @@ public class WelcomeDashboardTests : IDisposable
             cache: cache,
             moment: new DateTimeOffset(2026, 10, 9, 16, 0, 0, TimeSpan.Zero));
 
-        Assert.Equal("tester，10月9日 · 周五 · 晴", friday.Content);
+        Assert.Equal("tester", friday.Content);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", friday.DateLine);
+        Assert.Equal("晴 22°C", friday.WeatherBrief);
         Assert.DoesNotContain("周四", friday.Content);
-        Assert.Equal("tester，10月10日 · 周六 · 晴", saturday.Content);
+        Assert.DoesNotContain("周四", friday.DateLine);
+        Assert.Equal("tester", saturday.Content);
+        Assert.Equal("10月10日 · 周六 · 晴 22°C", saturday.DateLine);
         Assert.Equal(1, handler.Calls.Count(call => call.Uri.AbsolutePath == "/v7/weather/now"));
         Assert.Equal("上海中心气象台发布暴雨红色预警", friday.WeatherWarning);
         Assert.DoesNotContain("暴雨", friday.Content);
@@ -408,9 +451,12 @@ public class WelcomeDashboardTests : IDisposable
 
         var greeting = await Greet(handler, WithKey(ApiKey));
 
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.DoesNotContain("·", greeting.Content);
         Assert.DoesNotContain("晴", greeting.Content);
+        Assert.DoesNotContain("晴", greeting.DateLine);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
         Assert.Equal(2, greeting.News.Count);
         Assert.DoesNotContain(handler.Calls, call => call.Uri.AbsolutePath.Contains("/weather/3d", StringComparison.Ordinal));
@@ -434,7 +480,9 @@ public class WelcomeDashboardTests : IDisposable
 
         var greeting = await Greet(handler, WithKey(ApiKey), timeout: TimeSpan.FromMilliseconds(200));
 
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
     }
 
@@ -443,25 +491,38 @@ public class WelcomeDashboardTests : IDisposable
     {
         await SetNickname("  雅美  ");
         var named = await Greet(new RecordingHandler(RouteHappy), new QWeatherOptions());
-        Assert.Equal("雅美，10月9日", named.Content);
+        Assert.Equal("雅美", named.Content);
+        Assert.Equal("雅美", named.DisplayName);
+        Assert.Equal("10月9日 · 周五", named.DateLine);
+        Assert.Null(named.WeatherBrief);
         Assert.DoesNotContain("tester", named.Content);
+        Assert.DoesNotContain("10月", named.Content);
 
         await SetNickname("   ");
         var fallback = await Greet(new RecordingHandler(RouteHappy), new QWeatherOptions());
-        Assert.Equal("tester，10月9日", fallback.Content);
+        Assert.Equal("tester", fallback.Content);
+        Assert.Equal("tester", fallback.DisplayName);
+        Assert.Equal("10月9日 · 周五", fallback.DateLine);
     }
 
     [Fact]
-    public async Task Nickname_WithWeather_StaysOnTheFirstLine()
+    public async Task Nickname_WithWeather_StaysOnTheNameLine_NotTheDate()
     {
         await SetNickname("雅美");
         await SetPlace("中国-上海");
         var greeting = await Greet(new RecordingHandler(RouteHappy), WithKey(ApiKey));
 
-        Assert.Equal("雅美，10月9日 · 周五 · 晴", greeting.Content);
+        Assert.Equal("雅美", greeting.Content);
+        Assert.Equal("雅美", greeting.DisplayName);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", greeting.DateLine);
+        Assert.Equal("晴 22°C", greeting.WeatherBrief);
         Assert.Equal("上海中心气象台发布暴雨红色预警", greeting.WeatherWarning);
         Assert.DoesNotContain("tester", greeting.Content);
+        Assert.DoesNotContain("tester", greeting.DisplayName);
+        Assert.DoesNotContain("晴", greeting.Content);
+        Assert.DoesNotContain("10月", greeting.Content);
         Assert.DoesNotContain("暴雨", greeting.Content);
+        Assert.DoesNotContain("暴雨", greeting.DateLine);
     }
 
     [Fact]
@@ -522,7 +583,11 @@ public class WelcomeDashboardTests : IDisposable
         var result = await controller.GetGreeting(null, CancellationToken.None);
         var body = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result).Value);
 
-        Assert.Equal("tester，10月9日", body.Data!.Content);
+        Assert.Equal("tester", body.Data!.Content);
+        Assert.Equal("tester", body.Data.DisplayName);
+        Assert.Equal("10月9日 · 周五", body.Data.DateLine);
+        Assert.Null(body.Data.WeatherBrief);
+        Assert.Null(body.Data.MemoSummary);
         Assert.Null(body.Data.FeatureNote);
         Assert.Null(body.Data.WeatherWarning);
         Assert.Empty(body.Data.News);

@@ -13,8 +13,8 @@ public interface ISevereWeatherWarningSource
     Task<string?> GetWarningAsync(string? place, CancellationToken ct = default);
 }
 
-/// <summary>欢迎语第一行的实况，以及单独一行的特别预警。任一失败都不影响另一边。</summary>
-public readonly record struct WelcomeWeather(string? NowText, string? Warning);
+/// <summary>欢迎语日期行的实况（文字和气温），以及单独一行的特别预警。任一失败都不影响另一边。</summary>
+public readonly record struct WelcomeWeather(string? NowText, string? NowTemp, string? Warning);
 
 public interface IWelcomeWeatherSource
 {
@@ -23,7 +23,7 @@ public interface IWelcomeWeatherSource
 }
 
 /// <summary>
-/// 和风实况与特别预警。实况只读 /v7/weather/now 的 now.text，不请求每日预报。
+/// 和风实况与特别预警。实况只读 /v7/weather/now 的 now.text 和 now.temp，不请求每日预报。
 /// 预警走城市搜索拿到经纬度后再查现行预警；旧的 /v7/warning/now 已于 2026-10-01 停服。
 /// </summary>
 public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcomeWeatherSource
@@ -75,6 +75,7 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
         var snapshot = await pending.WaitAsync(ct) ?? WeatherSnapshot.Empty;
         return new WelcomeWeather(
             string.IsNullOrEmpty(snapshot.NowText) ? null : snapshot.NowText,
+            string.IsNullOrEmpty(snapshot.NowTemp) ? null : snapshot.NowTemp,
             string.IsNullOrEmpty(snapshot.Warning) ? null : snapshot.Warning);
     }
 
@@ -97,7 +98,7 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
             var nowTask = ReadNowAsync(host, apiKey, point.Value, ct);
             var warningTask = ReadWarningAsync(host, apiKey, point.Value, ct);
             await Task.WhenAll(nowTask, warningTask);
-            return new WeatherSnapshot(nowTask.Result, warningTask.Result);
+            return new WeatherSnapshot(nowTask.Result.Text, nowTask.Result.Temp, warningTask.Result);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -111,9 +112,9 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
         }
     }
 
-    private sealed record WeatherSnapshot(string NowText, string Warning)
+    private sealed record WeatherSnapshot(string NowText, string NowTemp, string Warning)
     {
-        public static readonly WeatherSnapshot Empty = new("", "");
+        public static readonly WeatherSnapshot Empty = new("", "", "");
     }
 
     private async Task<QWeatherCity?> LookupAsync(
@@ -132,7 +133,7 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
         return document is null ? null : QWeatherCities.Pick(document.RootElement, country, code != null);
     }
 
-    private async Task<string> ReadNowAsync(
+    private async Task<(string Text, string Temp)> ReadNowAsync(
         Uri host,
         string apiKey,
         QWeatherCity point,
@@ -142,27 +143,30 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
         {
             var location = QWeatherNow.Location(point, apiKey);
             if (location == null)
-                return "";
+                return ("", "");
 
             var path = "/v7/weather/now?location=" + location + "&lang=zh";
             using var document = await GetJsonAsync(host, path, apiKey, ct);
             if (document is null)
-                return "";
+                return ("", "");
 
-            var text = QWeatherNow.ReadText(document.RootElement);
-            if (string.IsNullOrEmpty(text) || text.Contains(apiKey, StringComparison.Ordinal))
-                return "";
-            return text;
+            var text = QWeatherNow.ReadText(document.RootElement) ?? "";
+            var temp = QWeatherNow.ReadTemp(document.RootElement) ?? "";
+            if (text.Contains(apiKey, StringComparison.Ordinal))
+                text = "";
+            if (temp.Contains(apiKey, StringComparison.Ordinal))
+                temp = "";
+            return (text, temp);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger.LogInformation("和风实况暂不可用");
-            return "";
+            return ("", "");
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException)
         {
             _logger.LogInformation("和风实况暂不可用");
-            return "";
+            return ("", "");
         }
     }
 
@@ -291,7 +295,7 @@ internal static class QWeatherNow
         return coordinate.Contains(apiKey, StringComparison.Ordinal) ? null : coordinate;
     }
 
-    /// <summary>只读 now.text。不读温度，也不读 daily。</summary>
+    /// <summary>只读 now.text。气温见 <see cref="ReadTemp"/>。不读 daily。</summary>
     public static string? ReadText(JsonElement root)
     {
         if (root.TryGetProperty("code", out var code))
@@ -313,6 +317,73 @@ internal static class QWeatherNow
         var collapsed = string.Join(' ', raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         const int max = 32;
         return collapsed.Length <= max ? collapsed : collapsed[..max];
+    }
+
+    /// <summary>只读 now.temp。不读体感温度，也不读 daily 的最高最低温。</summary>
+    public static string? ReadTemp(JsonElement root)
+    {
+        if (root.TryGetProperty("code", out var code))
+        {
+            var value = code.ValueKind == JsonValueKind.String ? code.GetString() : code.ToString();
+            if (!string.Equals(value, "200", StringComparison.Ordinal))
+                return null;
+        }
+
+        if (!root.TryGetProperty("now", out var now) || now.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!now.TryGetProperty("temp", out var temp))
+            return null;
+
+        var raw = temp.ValueKind switch
+        {
+            JsonValueKind.String => temp.GetString(),
+            JsonValueKind.Number => temp.GetRawText(),
+            _ => null,
+        };
+        return NormalizeTemp(raw);
+    }
+
+    /// <summary>摄氏度数字。调用方负责补上 °C。</summary>
+    public static string? NormalizeTemp(string? temp)
+    {
+        if (string.IsNullOrWhiteSpace(temp))
+            return null;
+
+        var text = temp.Trim();
+        if (text.Length is 0 or > 8)
+            return null;
+
+        var index = 0;
+        if (text[0] == '-')
+        {
+            if (text.Length == 1)
+                return null;
+            index = 1;
+        }
+
+        var sawDigit = false;
+        var sawDot = false;
+        for (; index < text.Length; index++)
+        {
+            var ch = text[index];
+            if (ch is >= '0' and <= '9')
+            {
+                sawDigit = true;
+                continue;
+            }
+
+            if (ch == '.' && !sawDot && sawDigit)
+            {
+                sawDot = true;
+                continue;
+            }
+
+            return null;
+        }
+
+        if (!sawDigit || text[^1] == '.')
+            return null;
+        return text;
     }
 }
 

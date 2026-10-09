@@ -33,7 +33,12 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Equal("tester，10月9日。今天有 1 条备忘到期。", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("tester", greeting.DisplayName);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
+        Assert.Equal("今天有 1 条备忘到期。", greeting.MemoSummary);
+        Assert.DoesNotContain("10月", greeting.Content);
         Assert.Null(greeting.FeatureNote);
     }
 
@@ -48,9 +53,13 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
+        Assert.Null(greeting.MemoSummary);
         Assert.DoesNotContain("到期", greeting.Content);
         Assert.DoesNotContain("没做完", greeting.Content);
+        Assert.DoesNotContain("·", greeting.Content);
         Assert.Null(greeting.FeatureNote);
         Assert.Null(greeting.WeatherWarning);
         Assert.Empty(greeting.News);
@@ -67,8 +76,11 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Equal("tester，10月9日。还有 1 条备忘没做完。", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("还有 1 条备忘没做完。", greeting.MemoSummary);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
         Assert.DoesNotContain("到期", greeting.Content);
+        Assert.DoesNotContain("到期", greeting.MemoSummary);
     }
 
     [Fact]
@@ -91,8 +103,11 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var greeting = await Greeting(db).GetGreetingAsync(userId, utcNow);
 
-        Assert.Equal("tester，10月9日。今天有 2 条备忘到期，还有 1 条备忘没做完。", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Equal("今天有 2 条备忘到期，还有 1 条备忘没做完。", greeting.MemoSummary);
         Assert.DoesNotContain("10月8日", greeting.Content);
+        Assert.DoesNotContain("10月8日", greeting.DateLine);
         Assert.Null(greeting.FeatureNote);
     }
 
@@ -117,17 +132,21 @@ public class WelcomeGreetingServiceTests : IDisposable
             userId, new DateTimeOffset(2026, 10, 8, 16, 0, 0, TimeSpan.Zero));
 
         Assert.Null(before.FeatureNote);
-        Assert.Equal("tester，10月1日", before.Content);
+        Assert.Equal("tester", before.Content);
+        Assert.Equal("10月1日 · 周四", before.DateLine);
 
         Assert.Equal("MiraiAI 可以在对话里接着上次的文件继续做。", firstDay.FeatureNote);
-        Assert.Equal("tester，10月2日", firstDay.Content);
+        Assert.Equal("tester", firstDay.Content);
+        Assert.Equal("10月2日 · 周五", firstDay.DateLine);
         Assert.DoesNotContain("MiraiAI", firstDay.Content);
 
         Assert.Equal(notes[0].Text, lastDay.FeatureNote);
-        Assert.Equal("tester，10月8日", lastDay.Content);
+        Assert.Equal("tester", lastDay.Content);
+        Assert.Equal("10月8日 · 周四", lastDay.DateLine);
 
         Assert.Null(expired.FeatureNote);
-        Assert.Equal("tester，10月9日", expired.Content);
+        Assert.Equal("tester", expired.Content);
+        Assert.Equal("10月9日 · 周五", expired.DateLine);
         Assert.DoesNotContain("MiraiAI", expired.Content);
     }
 
@@ -165,10 +184,17 @@ public class WelcomeGreetingServiceTests : IDisposable
 
         var body1 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(first.Result).Value);
         var body2 = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(Assert.IsType<OkObjectResult>(second.Result).Value);
-        Assert.Equal("tester，10月9日。今天有 1 条备忘到期。", body1.Data!.Content);
+        Assert.Equal("tester", body1.Data!.Content);
+        Assert.Equal("tester", body1.Data.DisplayName);
+        Assert.Equal("10月9日 · 周五", body1.Data.DateLine);
+        Assert.Null(body1.Data.WeatherBrief);
+        Assert.Equal("今天有 1 条备忘到期。", body1.Data.MemoSummary);
         Assert.Equal(body1.Data.Content, body2.Data!.Content);
+        Assert.Equal(body1.Data.DateLine, body2.Data.DateLine);
         Assert.DoesNotContain("2001", body1.Data!.Content);
+        Assert.DoesNotContain("2001", body1.Data.DateLine);
         Assert.DoesNotContain("2099", body2.Data!.Content);
+        Assert.DoesNotContain("2099", body2.Data.DateLine);
         Assert.Null(body1.Data.FeatureNote);
         Assert.Null(body1.Data.WeatherWarning);
         Assert.Empty(body1.Data.News);
@@ -198,27 +224,58 @@ public class WelcomeGreetingServiceTests : IDisposable
         var greeting = await resolved.GetGreetingAsync(
             userId, new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero));
 
-        Assert.Equal("tester，10月9日", greeting.Content);
+        Assert.Equal("tester", greeting.Content);
+        Assert.Equal("tester", greeting.DisplayName);
+        Assert.Equal("10月9日 · 周五", greeting.DateLine);
+        Assert.Null(greeting.WeatherBrief);
         Assert.Equal("备忘到点可以发 Bark 手机提醒了，工作台也会显示当天备忘摘要。", greeting.FeatureNote);
         Assert.Null(greeting.WeatherWarning);
         Assert.Empty(greeting.News);
     }
 
     [Fact]
-    public void Compose_AddsShanghaiWeekdayAndNowText_OnlyWhenWeatherIsPresent()
+    public void Arrange_PutsWeatherOnTheDateLine_AndKeepsTheNameAlone()
     {
         var friday = new DateOnly(2026, 10, 9);
-        Assert.Equal(
-            "Bill.Gong，10月9日 · 周五 · 晴",
-            WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0, "晴"));
-        Assert.Equal(
-            "Bill.Gong，10月9日 · 周五 · 晴。今天有 1 条备忘到期，还有 2 条备忘没做完。",
-            WelcomeGreetingService.Compose("Bill.Gong", friday, 1, 2, " 晴 "));
-        Assert.Equal("Bill.Gong，10月9日", WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0));
-        Assert.Equal("Bill.Gong，10月9日", WelcomeGreetingService.Compose("Bill.Gong", friday, 0, 0, "   "));
-        Assert.Equal(
-            "Bill.Gong，10月11日 · 周日 · 阴",
-            WelcomeGreetingService.Compose("Bill.Gong", new DateOnly(2026, 10, 11), 0, 0, "阴"));
+        var sunny = WelcomeGreetingService.Arrange("Bill.Gong", friday, 0, 0, "多云", "24");
+        Assert.Equal("Bill.Gong", sunny.DisplayName);
+        Assert.Equal("10月9日 · 周五 · 多云 24°C", sunny.DateLine);
+        Assert.Equal("多云 24°C", sunny.WeatherBrief);
+        Assert.Null(sunny.MemoSummary);
+        Assert.DoesNotContain("10月", sunny.DisplayName);
+        Assert.DoesNotContain("多云", sunny.DisplayName);
+        Assert.DoesNotContain("24", sunny.DisplayName);
+
+        var textOnly = WelcomeGreetingService.Arrange("Bill.Gong", friday, 0, 0, " 晴 ");
+        Assert.Equal("10月9日 · 周五 · 晴", textOnly.DateLine);
+        Assert.Equal("晴", textOnly.WeatherBrief);
+
+        var tempOnly = WelcomeGreetingService.Arrange("Bill.Gong", friday, 0, 0, "   ", " -3 ");
+        Assert.Equal("10月9日 · 周五 · -3°C", tempOnly.DateLine);
+        Assert.Equal("-3°C", tempOnly.WeatherBrief);
+        Assert.DoesNotContain("-3", tempOnly.DisplayName);
+
+        var busy = WelcomeGreetingService.Arrange("Bill.Gong", friday, 1, 2, "晴", "22");
+        Assert.Equal("Bill.Gong", busy.DisplayName);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", busy.DateLine);
+        Assert.Equal("今天有 1 条备忘到期，还有 2 条备忘没做完。", busy.MemoSummary);
+        Assert.DoesNotContain("晴", busy.DisplayName);
+        Assert.DoesNotContain("22", busy.MemoSummary);
+        Assert.DoesNotContain("周五", busy.MemoSummary);
+
+        var plain = WelcomeGreetingService.Arrange("Bill.Gong", friday, 0, 0);
+        Assert.Equal("Bill.Gong", plain.DisplayName);
+        Assert.Equal("10月9日 · 周五", plain.DateLine);
+        Assert.Null(plain.WeatherBrief);
+
+        var blank = WelcomeGreetingService.Arrange("Bill.Gong", friday, 0, 0, "   ", "大雨");
+        Assert.Equal("10月9日 · 周五", blank.DateLine);
+        Assert.Null(blank.WeatherBrief);
+
+        var cloudy = WelcomeGreetingService.Arrange("雅美", new DateOnly(2026, 10, 11), 0, 0, "阴", "18");
+        Assert.Equal("雅美", cloudy.DisplayName);
+        Assert.Equal("10月11日 · 周日 · 阴 18°C", cloudy.DateLine);
+        Assert.Equal("阴 18°C", cloudy.WeatherBrief);
     }
 
     private sealed class OfflineWeather : ISevereWeatherWarningSource

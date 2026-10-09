@@ -40,7 +40,11 @@ public sealed class WelcomeController : ControllerBase
                 greeting.Content,
                 greeting.FeatureNote,
                 greeting.WeatherWarning,
-                greeting.News.Select(item => new WelcomeNewsItemResponse(item.Title, item.Url)).ToArray())));
+                greeting.News.Select(item => new WelcomeNewsItemResponse(item.Title, item.Url)).ToArray(),
+                greeting.DisplayName,
+                greeting.DateLine,
+                greeting.WeatherBrief,
+                greeting.MemoSummary)));
     }
 }
 
@@ -48,6 +52,10 @@ public sealed record WelcomeGreetingResponse(
     string Content,
     string? FeatureNote,
     string? WeatherWarning,
-    IReadOnlyList<WelcomeNewsItemResponse> News);
+    IReadOnlyList<WelcomeNewsItemResponse> News,
+    string DisplayName,
+    string DateLine,
+    string? WeatherBrief,
+    string? MemoSummary);
 
 public sealed record WelcomeNewsItemResponse(string Title, string Url);
