@@ -69,6 +69,8 @@ Host=127.0.0.1;Port=5432;Database=mirainote;Username=mirainote_app;Password=<PAS
 
 迁移命令使用 `MigrationConnection`。空库执行 `dotnet ef database update`，迁移名 `InitialPostgres`。表清单、时间列换算和导入前查重见 `docs/pg-table-list.md`。
 
+新表必须授权给运行账户 `appuser`：表上 `GRANT SELECT, INSERT, UPDATE, DELETE`，identity 序列上 `GRANT USAGE, SELECT`。迁移账户建表后 `appuser` 默认没有这些权限，应用连得上库但读写会失败。`WelcomeNewsSeen` 的授权写在迁移 `AddWelcomeNewsSeen` 里。这条迁移若已经执行过，要单独补一次同样的 `GRANT`；东京库已经授过。
+
 ## 六、健康检查与转发头
 
 `GET /health` 只表示进程还在，返回纯文本 `Healthy`。`GET /health/ready` 用数据库上下文检查 PostgreSQL，连不上返回 503。两个路径都不带 `/api`，也不需要登录。
