@@ -42,6 +42,7 @@ public class MiraiNoteDbContext : DbContext
     public DbSet<AIActionLog> AIActionLogs => Set<AIActionLog>();
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentRunEvent> AgentRunEvents => Set<AgentRunEvent>();
+    public DbSet<WelcomeNewsSeen> WelcomeNewsSeens => Set<WelcomeNewsSeen>();
     /// <summary>运行时构造：注入当前用户服务，用于自动填充审计字段。</summary>
     public MiraiNoteDbContext(DbContextOptions<MiraiNoteDbContext> options, ICurrentUserService currentUserService)
         : base(options)
@@ -306,6 +307,25 @@ public class MiraiNoteDbContext : DbContext
             .HasOne(a => a.User)
             .WithMany()
             .HasForeignKey(a => a.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // ===== 欢迎语已展示新闻：同一用户同一链接只留一行，并按展示时间清理 7 天前的记录 =====
+        modelBuilder.Entity<WelcomeNewsSeen>()
+            .Property(row => row.Url)
+            .HasMaxLength(WelcomeNewsSeen.MaxUrlLength);
+
+        modelBuilder.Entity<WelcomeNewsSeen>()
+            .HasIndex(row => new { row.UserId, row.Url })
+            .IsUnique()
+            .HasFilter(NotDeletedFilter);
+
+        modelBuilder.Entity<WelcomeNewsSeen>()
+            .HasIndex(row => new { row.UserId, row.ShownAt });
+
+        modelBuilder.Entity<WelcomeNewsSeen>()
+            .HasOne(row => row.User)
+            .WithMany()
+            .HasForeignKey(row => row.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         // 自动为所有继承 BaseEntity 的实体注册软删除全局查询过滤器

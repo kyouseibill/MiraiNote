@@ -74,7 +74,7 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         DateTimeOffset utcNow,
         CancellationToken ct = default)
     {
-        var newsTask = ReadNewsAsync(ct);
+        var newsTask = ReadNewsAsync(userId, utcNow, ct);
         var today = ShanghaiClock.Today(utcNow);
         var (startUtc, endUtc) = ShanghaiClock.DayRangeUtc(today);
 
@@ -136,11 +136,14 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         }
     }
 
-    private async Task<IReadOnlyList<WelcomeNewsItem>> ReadNewsAsync(CancellationToken ct)
+    private async Task<IReadOnlyList<WelcomeNewsItem>> ReadNewsAsync(
+        int userId,
+        DateTimeOffset utcNow,
+        CancellationToken ct)
     {
         try
         {
-            return await _news.GetLatestAsync(ct) ?? [];
+            return await _news.GetLatestAsync(userId, utcNow, ct) ?? [];
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
