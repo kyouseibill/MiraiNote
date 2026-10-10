@@ -1,8 +1,8 @@
 namespace MiraiNote.Core.Services;
 
 /// <summary>
-/// 工作台大标题的问候池。和前端 <c>greetingCopy.ts</c> 是同一套句子。
-/// 管理端文案库退役后，挑选改在这里完成，不再读表。
+/// 工作台大标题。每个时段只有一句，和前端 <c>greetingCopy.ts</c> 相同。
+/// 不再按天下标轮换，也不因下雨或周五换句。
 /// </summary>
 public static class WelcomeGreetingCopy
 {
@@ -11,73 +11,25 @@ public static class WelcomeGreetingCopy
     public const string Afternoon = "afternoon";
     public const string Evening = "evening";
     public const string LateNight = "latenight";
-    public const string Rain = "rain";
-    public const string Friday = "friday";
 
     public const string Spring = "spring";
     public const string Summer = "summer";
     public const string Autumn = "autumn";
     public const string Winter = "winter";
 
-    public static readonly IReadOnlyList<string> MorningLines =
-    [
-        "早安，{name}",
-        "早上好，{name}",
-        "新的一天，{name}",
-        "{name}，早",
-    ];
+    public const string MorningLine = "早上好，{name}";
+    public const string NoonLine = "中午好，{name}";
+    public const string AfternoonLine = "下午好，{name}";
+    public const string EveningLine = "晚上好，{name}";
+    public const string LateNightLine = "夜深了，{name}，早点休息";
 
-    public static readonly IReadOnlyList<string> NoonLines =
-    [
-        "中午好，{name}",
-        "{name}，记得吃饭",
-        "午安，{name}",
-        "{name}，歇一会儿吧",
-    ];
-
-    public static readonly IReadOnlyList<string> AfternoonLines =
-    [
-        "下午好，{name}",
-        "{name}，喝杯茶？",
-        "下午也加油，{name}",
-        "{name}，下午好呀",
-    ];
-
-    public static readonly IReadOnlyList<string> EveningLines =
-    [
-        "晚上好，{name}",
-        "{name}，今天辛苦了",
-        "晚上好，{name}，放松一下",
-        "{name}，晚上好呀",
-    ];
-
-    public static readonly IReadOnlyList<string> LateNightLines =
-    [
-        "夜深了，{name}",
-        "{name}，早点休息",
-        "还没睡呀，{name}",
-        "夜深了，{name}，别熬太晚",
-    ];
-
-    public static readonly IReadOnlyList<string> RainLines =
-    [
-        "下雨了，{name}，记得带伞",
-    ];
-
-    public static readonly IReadOnlyList<string> FridayLines =
-    [
-        "周五了，{name}",
-    ];
-
-    public static IReadOnlyList<string> Lines(string slot) => slot switch
+    public static string Template(string period) => period switch
     {
-        Morning => MorningLines,
-        Noon => NoonLines,
-        Afternoon => AfternoonLines,
-        Evening => EveningLines,
-        LateNight => LateNightLines,
-        Rain => RainLines,
-        Friday => FridayLines,
-        _ => [],
+        Morning => MorningLine,
+        Noon => NoonLine,
+        Afternoon => AfternoonLine,
+        Evening => EveningLine,
+        LateNight => LateNightLine,
+        _ => "你好，{name}",
     };
 }

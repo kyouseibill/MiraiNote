@@ -31,9 +31,7 @@ vi.mock('@/api/welcome', () => ({
 }))
 
 import { welcomeApi, type WelcomeGreeting } from '@/api/welcome'
-import { greetingPools } from '@/utils/greetingCopy'
 import { composeGreeting } from '@/utils/greetingPeriod'
-import { resolveInspiration } from '@/utils/inspirationCopy'
 import DashboardView from '@/views/DashboardView.vue'
 
 /** 周四下午，避开周五句，方便断言时段池。 */
@@ -93,13 +91,14 @@ describe('工作台欢迎语挂载', () => {
 
     expect(wrapper.get('[data-testid="welcome-date"]').text()).toBe('10月9日 · 周五')
     expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe(expectedGreeting('tester'))
-    expect(wrapper.get('[data-testid="welcome-inspiration"]').text()).toBe(resolveInspiration(null, fixedNow))
+    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).not.toMatch(/。$/)
+    expect(wrapper.find('[data-testid="welcome-inspiration"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="weather-warning"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="welcome-news"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('有问候和小句时，大标题用问候，小字在下面', async () => {
+  it('有问候和小句时合成一行，预警单独在下面', async () => {
     vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({
       displayName: '雅美',
       greetingLine: '下午好，雅美',
@@ -122,8 +121,11 @@ describe('工作台欢迎语挂载', () => {
     await reveal()
 
     expect(welcomeApi.getGreeting).toHaveBeenCalledWith('2026-10-09T04:59:00')
-    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe('下午好，雅美')
-    expect(wrapper.get('[data-testid="welcome-inspiration"]').text()).toBe('今天不必赶完所有事，把眼前这一小步走稳。')
+    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe(
+      '下午好，雅美。今天不必赶完所有事，把眼前这一小步走稳。',
+    )
+    expect(wrapper.find('[data-testid="welcome-inspiration"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).not.toContain('暴雨')
     expect(wrapper.text()).not.toContain('王维')
     expect(wrapper.text()).not.toContain('《')
     expect(wrapper.get('[data-testid="welcome-memo"]').text()).toBe('今天有 1 条备忘到期。')
@@ -131,13 +133,42 @@ describe('工作台欢迎语挂载', () => {
     expect(wrapper.get('[data-testid="weather-warning"]').text()).toContain('暴雨红色预警')
     const order = wrapper.findAll('[data-testid]').map((node) => node.attributes('data-testid'))
     expect(order.indexOf('welcome-greeting')).toBeLessThan(order.indexOf('weather-warning'))
-    expect(order.indexOf('weather-warning')).toBeLessThan(order.indexOf('welcome-inspiration'))
-    expect(order.indexOf('welcome-inspiration')).toBeLessThan(order.indexOf('welcome-memo'))
+    expect(order.indexOf('weather-warning')).toBeLessThan(order.indexOf('welcome-memo'))
     expect(wrapper.get('[data-testid="welcome-news-link"]').text()).toBe('OpenAI 更新')
     wrapper.unmount()
   })
 
-  it('小句为空时用本地句，并把 welcomeNow 传给接口', async () => {
+  it('示例把问候和小句接成一句，预警留在下一行', async () => {
+    vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({
+      displayName: 'Bill',
+      greetingLine: '早上好，Bill',
+      inspirationLine: '上海秋日多云，梧桐叶在风里打着旋。',
+      weatherWarning: '上海中心气象台发布暴雨红色预警',
+    }))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: DashboardView }],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(DashboardView, {
+      global: { plugins: [createPinia(), router] },
+    })
+    await reveal()
+
+    const heading = wrapper.get('[data-testid="welcome-greeting"]').text()
+    expect(heading).toBe('早上好，Bill。上海秋日多云，梧桐叶在风里打着旋。')
+    expect(heading).not.toContain('暴雨')
+    expect(wrapper.get('[data-testid="weather-warning"]').text()).toContain('暴雨红色预警')
+    const order = wrapper.findAll('[data-testid]').map((node) => node.attributes('data-testid'))
+    expect(order.indexOf('welcome-greeting')).toBeLessThan(order.indexOf('weather-warning'))
+    expect(order.indexOf('welcome-date')).toBeLessThan(order.indexOf('welcome-greeting'))
+    wrapper.unmount()
+  })
+
+  it('小句为空时只留问候，并把 welcomeNow 传给接口', async () => {
     vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({
       displayName: '雅美',
       greetingLine: null,
@@ -158,12 +189,10 @@ describe('工作台欢迎语挂载', () => {
 
     expect(welcomeApi.getGreeting).toHaveBeenCalledWith('2026-10-09T04:59:00')
     const heading = wrapper.get('[data-testid="welcome-greeting"]').text()
-    const lateNight = greetingPools.lateNight.map((line) => line.replaceAll('{name}', '雅美'))
-    expect(lateNight).toContain(heading)
+    expect(heading).toBe('夜深了，雅美，早点休息')
+    expect(heading.endsWith('。')).toBe(false)
+    expect(wrapper.find('[data-testid="welcome-inspiration"]').exists()).toBe(false)
     expect(heading).not.toBe('周五了，雅美')
-    expect(wrapper.get('[data-testid="welcome-inspiration"]').text()).toBe(
-      resolveInspiration(null, new Date(2026, 9, 9, 4, 59, 0)),
-    )
     wrapper.unmount()
   })
 
@@ -340,7 +369,7 @@ describe('工作台欢迎语挂载', () => {
     })
     await reveal()
 
-    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe('周五了，tester')
+    expect(wrapper.get('[data-testid="welcome-greeting"]').text()).toBe('下午好，tester')
     wrapper.unmount()
   })
 
@@ -363,10 +392,11 @@ describe('工作台欢迎语挂载', () => {
     await reveal()
 
     const heading = wrapper.get('[data-testid="welcome-greeting"]').text()
-    const lateNight = greetingPools.lateNight.map((line) => line.replaceAll('{name}', 'Bill'))
-    expect(lateNight).toContain(heading)
+    expect(heading).toBe('夜深了，Bill，早点休息')
+    expect(heading.endsWith('。')).toBe(false)
     expect(heading).not.toBe('下雨了，Bill，记得带伞')
     expect(heading).not.toBe('周五了，Bill')
+    expect(heading).not.toContain('雷阵雨')
     wrapper.unmount()
   })
 })

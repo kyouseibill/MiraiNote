@@ -38,7 +38,7 @@ public sealed record WelcomeLines(
 /// <summary>
 /// 工作台欢迎语。称呼、上海日历日和备忘摘要始终本地生成。
 /// 实况、特别预警和新闻失败、超时或未配置时直接省略，不影响称呼和日期。
-/// 大标题来自代码里的时段、下雨和周五池。小句交给 DeepSeek，失败则为 null。
+/// 大标题是按时段固定的一句。小句交给 DeepSeek，失败则为 null。
 /// </summary>
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
@@ -124,8 +124,7 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         var weather = await weatherTask;
         var lines = Arrange(name, today, dueToday, unfinishedElsewhere, weather.NowText, weather.NowTemp);
         var wall = ShanghaiClock.ToShanghaiWall(utcNow);
-        var slot = ResolveSlot(wall, weather.NowText, today);
-        var greetingLine = ReadGreetingLine(slot, name, today);
+        var greetingLine = ReadGreetingLine(wall, name);
         var inspiration = await ReadInspirationAsync(user?.WeatherPlace, weather, wall, ct);
 
         return new WelcomeGreeting(
@@ -278,24 +277,8 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         return WelcomeGreetingCopy.LateNight;
     }
 
-    /// <summary>
-    /// 深夜只用深夜池。其余：实况文字含「雨」用下雨池；没有实况则不算下雨。
-    /// 再否则周五用周五池，最后才用时段池。
-    /// </summary>
-    public static string ResolveSlot(DateTime shanghaiWall, string? weatherNowText, DateOnly shanghaiDate)
-    {
-        var period = PeriodOf(shanghaiWall);
-        if (period == WelcomeGreetingCopy.LateNight)
-            return WelcomeGreetingCopy.LateNight;
-        if (IsRainNow(weatherNowText))
-            return WelcomeGreetingCopy.Rain;
-        if (shanghaiDate.DayOfWeek == DayOfWeek.Friday)
-            return WelcomeGreetingCopy.Friday;
-        return period;
-    }
-
-    public static bool IsRainNow(string? weatherNowText) =>
-        !string.IsNullOrWhiteSpace(weatherNowText) && weatherNowText.Contains('雨');
+    /// <summary>大标题只看上海墙钟时段。下雨和周五不再换句。</summary>
+    public static string ResolveSlot(DateTime shanghaiWall) => PeriodOf(shanghaiWall);
 
     /// <summary>3–5 春，6–8 夏，9–11 秋，12、1、2 冬。</summary>
     public static string SeasonOf(DateOnly shanghaiDate) => shanghaiDate.Month switch
@@ -322,9 +305,7 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
             WelcomeGreetingCopy.Afternoon => 2,
             WelcomeGreetingCopy.Evening => 3,
             WelcomeGreetingCopy.LateNight => 4,
-            WelcomeGreetingCopy.Rain => 5,
-            WelcomeGreetingCopy.Friday => 6,
-            _ => 7,
+            _ => 5,
         };
         var mixed = shanghaiDate.DayNumber + bias;
         var index = mixed % count;
@@ -369,11 +350,8 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         return true;
     }
 
-    private static string? ReadGreetingLine(string slot, string name, DateOnly today)
-    {
-        var picked = Pick(WelcomeGreetingCopy.Lines(slot), today, slot);
-        return string.IsNullOrWhiteSpace(picked) ? null : FillName(picked, name);
-    }
+    private static string ReadGreetingLine(DateTime shanghaiWall, string name) =>
+        FillName(WelcomeGreetingCopy.Template(PeriodOf(shanghaiWall)), name);
 
     private sealed class DisabledSevereWeather : ISevereWeatherWarningSource
     {
