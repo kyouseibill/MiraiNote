@@ -227,12 +227,8 @@ async function handleLogout() {
       </form>
     </section>
 
-    <!-- 欢迎语称呼。只影响工作台大标题，账户名仍是用户名。 -->
+    <!-- 昵称。只影响工作台大标题，账户名仍是用户名。 -->
     <section class="surface-card">
-      <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">欢迎语称呼</h2>
-        <p class="text-sm text-gray-500 mt-0.5">只改工作台大标题。留空则继续用用户名，其他页面不变。</p>
-      </div>
       <form class="px-6 py-5 space-y-3" data-testid="nickname-form" @submit.prevent="saveNickname">
         <div>
           <label class="block text-sm text-gray-700 mb-1" for="welcome-nickname">昵称</label>
