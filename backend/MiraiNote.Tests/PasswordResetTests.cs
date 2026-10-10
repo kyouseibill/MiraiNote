@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -8,6 +9,7 @@ using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Auth;
 using Moq;
+using Npgsql.EntityFrameworkCore.PostgreSQL;
 using Xunit;
 
 namespace MiraiNote.Tests;
@@ -154,6 +156,23 @@ public class PasswordResetTests
     }
 
     [Fact]
+    public async Task ForgotPassword_NpgsqlRetryStrategy_ConsecutiveCallsDoNotThrow()
+    {
+        using var h = new Harness(useNpgsqlRetryingExecutionStrategy: true);
+        var strategy = h.Db.Database.CreateExecutionStrategy();
+        Assert.IsType<NpgsqlRetryingExecutionStrategy>(strategy);
+        Assert.True(strategy.RetriesOnFailure);
+
+        await h.RegisterVerifiedAsync();
+        await h.Auth.ForgotPasswordAsync("bill@example.com");
+        await h.Auth.ForgotPasswordAsync("bill@example.com");
+
+        Assert.Single(h.ResetLinks);
+        Assert.Equal(1, await h.Db.EmailVerifyTokens.CountAsync(t =>
+            t.Type == EmailVerifyTokenType.ResetPassword && !t.IsUsed));
+    }
+
+    [Fact]
     public async Task ForgotPassword_ConcurrentRequestsSendOnlyOne()
     {
         using var h = new Harness();
@@ -211,9 +230,11 @@ public class PasswordResetTests
         public Mock<IEmailService> Email { get; } = new();
         public AuthService Auth { get; }
         private readonly Mock<IJwtTokenService> _jwt = new();
+        private readonly bool _useNpgsqlRetryingExecutionStrategy;
 
-        public Harness()
+        public Harness(bool useNpgsqlRetryingExecutionStrategy = false)
         {
+            _useNpgsqlRetryingExecutionStrategy = useNpgsqlRetryingExecutionStrategy;
             Email.Setup(e => e.SendVerifyEmailAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Callback<string, string, string, CancellationToken>((_, _, link, _) => VerifyLinks.Add(link))
@@ -231,16 +252,30 @@ public class PasswordResetTests
             _jwt.Setup(j => j.GenerateRefreshToken()).Returns("refresh-token");
             _jwt.Setup(j => j.HashRefreshToken(It.IsAny<string>())).Returns("refresh-hash");
 
-            Db = Fx.CreateContext();
+            Db = OpenDb();
             Auth = BuildAuth(Db, new MemoryCache(new MemoryCacheOptions()));
         }
 
         public Peer CreatePeer()
         {
-            var db = Fx.CreateContext();
+            var db = OpenDb();
             var cache = new MemoryCache(new MemoryCacheOptions());
             var auth = BuildAuth(db, cache);
             return new Peer(db, cache, auth);
+        }
+
+        private MiraiNoteDbContext OpenDb()
+        {
+            if (!_useNpgsqlRetryingExecutionStrategy)
+                return Fx.CreateContext();
+
+            // 夹具是 SQLite。这里换成生产同款 NpgsqlRetryingExecutionStrategy，
+            // 让「用户事务 + RetriesOnFailure」在忘记密码路径上被真正执行到。
+            var options = new DbContextOptionsBuilder<MiraiNoteDbContext>()
+                .UseSqlite(Fx.ConnectionString)
+                .ReplaceService<IExecutionStrategyFactory, ProductionNpgsqlRetryingExecutionStrategyFactory>()
+                .Options;
+            return new MiraiNoteDbContext(options);
         }
 
         private AuthService BuildAuth(MiraiNoteDbContext db, IMemoryCache cache) =>
@@ -329,4 +364,20 @@ public class PasswordResetTests
             public void Dispose() { }
         }
     }
+}
+
+/// <summary>
+/// 生产 <c>AddDataLayer</c> 的 <c>EnableRetryOnFailure(3, 5s)</c> 使用的策略。
+/// 测试库是 SQLite，没有 Npgsql 连接；把同一个策略类装上去后，<c>RetriesOnFailure</c> 仍为 true，
+/// 未包进 <c>CreateExecutionStrategy</c> 的用户事务会在后续命令上抛 <see cref="InvalidOperationException"/>。
+/// </summary>
+public sealed class ProductionNpgsqlRetryingExecutionStrategyFactory : IExecutionStrategyFactory
+{
+    private readonly ExecutionStrategyDependencies _dependencies;
+
+    public ProductionNpgsqlRetryingExecutionStrategyFactory(ExecutionStrategyDependencies dependencies)
+        => _dependencies = dependencies;
+
+    public IExecutionStrategy Create() =>
+        new NpgsqlRetryingExecutionStrategy(_dependencies, 3, TimeSpan.FromSeconds(5), errorCodesToAdd: null);
 }
