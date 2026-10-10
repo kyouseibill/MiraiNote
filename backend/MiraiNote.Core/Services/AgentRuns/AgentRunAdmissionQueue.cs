@@ -1,14 +1,17 @@
 namespace MiraiNote.Core.Services.AgentRuns;
 
 /// <summary>
-/// 进程内 FIFO 准入队列。全局与每用户上限同时生效；队头属于已满用户时，跳过它启动后面第一个可运行的任务。
+/// 进程内准入。有名额时可以立刻占位执行；否则进入 FIFO 等待队列。
+/// 全局与每用户上限同时生效；队头属于已满用户时，跳过它启动后面第一个可运行的任务。
 /// </summary>
 public sealed class AgentRunAdmissionQueue
 {
     private readonly object _gate = new();
     private readonly LinkedList<PendingRun> _pending = new();
+    private readonly Queue<PendingRun> _ready = new();
     private readonly Dictionary<int, int> _runningByUser = new();
     private readonly HashSet<Guid> _runningIds = new();
+    private readonly HashSet<Guid> _readyIds = new();
     private readonly int _maxConcurrent;
     private readonly int _maxPerUser;
     private int _running;
@@ -37,6 +40,55 @@ public sealed class AgentRunAdmissionQueue
                 return;
             _pending.AddLast(new PendingRun(runId, userId));
             BumpNoLock();
+        }
+    }
+
+    /// <summary>
+    /// 全局和该用户都还有名额时立刻占用执行名额，不进入等待队列。
+    /// 调用方随后必须做数据库认领；认领失败要 Release，成功后调用 MarkReady。
+    /// </summary>
+    public bool TryReserve(Guid runId, int userId)
+    {
+        lock (_gate)
+        {
+            if (runId == Guid.Empty || _runningIds.Contains(runId) || ContainsPending(runId))
+                return false;
+            if (_running >= _maxConcurrent) return false;
+            if (_runningByUser.GetValueOrDefault(userId) >= _maxPerUser) return false;
+
+            _running++;
+            _runningByUser[userId] = _runningByUser.GetValueOrDefault(userId) + 1;
+            _runningIds.Add(runId);
+            return true;
+        }
+    }
+
+    /// <summary>数据库认领已经成功。把任务交给后台执行，名额在 TryReserve 时已经占上。</summary>
+    public void MarkReady(Guid runId, int userId)
+    {
+        lock (_gate)
+        {
+            if (!_runningIds.Contains(runId) || !_readyIds.Add(runId)) return;
+            _ready.Enqueue(new PendingRun(runId, userId));
+            BumpNoLock();
+        }
+    }
+
+    /// <summary>取出一个已经占着名额、可以马上执行的任务。</summary>
+    public bool TryTakeReady(out PendingRun ready)
+    {
+        lock (_gate)
+        {
+            while (_ready.Count > 0)
+            {
+                var next = _ready.Dequeue();
+                if (!_readyIds.Remove(next.RunId)) continue;
+                ready = next;
+                return true;
+            }
+
+            ready = default;
+            return false;
         }
     }
 
@@ -133,7 +185,13 @@ public sealed class AgentRunAdmissionQueue
     {
         lock (_gate)
         {
-            if (!_runningIds.Remove(runId)) return;
+            var removedReady = _readyIds.Remove(runId);
+            if (!_runningIds.Remove(runId))
+            {
+                if (removedReady) BumpNoLock();
+                return;
+            }
+
             _running = Math.Max(0, _running - 1);
             if (_runningByUser.TryGetValue(userId, out var count))
             {

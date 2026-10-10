@@ -43,6 +43,9 @@ public sealed class AgentRunBackgroundService : BackgroundService
             try
             {
                 var version = _admission.Version;
+                while (_admission.TryTakeReady(out var ready))
+                    inFlight.Add(ExecuteClaimedOneAsync(ready, stoppingToken));
+
                 var claimInterrupted = false;
                 while (_admission.TryPeekEligible(out var pending))
                 {
