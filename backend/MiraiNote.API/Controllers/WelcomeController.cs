@@ -57,9 +57,7 @@ public sealed class WelcomeController : ControllerBase
                 greeting.WeatherBrief,
                 greeting.MemoSummary,
                 greeting.GreetingLine,
-                greeting.Poem == null
-                    ? null
-                    : new WelcomePoemResponse(greeting.Poem.Text, greeting.Poem.Author, greeting.Poem.Source))));
+                greeting.InspirationLine)));
     }
 }
 
@@ -73,8 +71,6 @@ public sealed record WelcomeGreetingResponse(
     string? WeatherBrief,
     string? MemoSummary,
     string? GreetingLine,
-    WelcomePoemResponse? Poem);
-
-public sealed record WelcomePoemResponse(string Text, string? Author, string? Source);
+    string? InspirationLine);
 
 public sealed record WelcomeNewsItemResponse(string Title, string Url);

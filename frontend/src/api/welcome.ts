@@ -5,12 +5,6 @@ export interface WelcomeNewsItem {
   url: string
 }
 
-export interface WelcomePoem {
-  text: string
-  author: string | null
-  source: string | null
-}
-
 export interface WelcomeGreeting {
   /** 旧版整句。大标题由前端按时段拼，没有 displayName 时才从这里取称呼。 */
   content: string
@@ -27,8 +21,8 @@ export interface WelcomeGreeting {
   memoSummary: string | null
   /** 已填好称呼的问候。没有可用文案时为 null，页面改用本地问候。 */
   greetingLine: string | null
-  /** 当天一句诗词。没有则为 null，页面不留空行。 */
-  poem: WelcomePoem | null
+  /** 大标题下的一句。失败、超时或超长时为 null，页面改用本地句。 */
+  inspirationLine: string | null
 }
 
 export const welcomeApi = {

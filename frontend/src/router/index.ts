@@ -69,12 +69,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/ProfileView.vue'),
         meta: { requiresAuth: true, title: '个人设置' },
       },
-      {
-        path: 'admin/welcome-phrases',
-        name: 'admin-welcome-phrases',
-        component: () => import('@/views/admin/WelcomePhrasesView.vue'),
-        meta: { requiresAuth: true, requiresAdmin: true, title: '欢迎语' },
-      },
     ],
   },
   {

@@ -11,7 +11,8 @@ import {
 import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
-import { welcomeApi, type WelcomeNewsItem, type WelcomePoem } from '@/api/welcome'
+import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
+import { resolveInspiration } from '@/utils/inspirationCopy'
 import { welcomeNowParam } from '@/utils/welcomeNow'
 import { useAuthStore } from '@/stores/auth'
 import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
@@ -26,7 +27,7 @@ const auth = useAuthStore()
 const loading = ref(true)
 /** 初始必须为空，避免把上一句欢迎语留在首屏。 */
 const greeting = ref('')
-const poemLine = ref('')
+const inspirationLine = ref('')
 const featureNote = ref('')
 const weatherWarning = ref('')
 const memoSummary = ref('')
@@ -244,17 +245,6 @@ function visibleNews(items: WelcomeNewsItem[] | null | undefined): WelcomeNewsIt
   return result
 }
 
-function formatPoem(poem: WelcomePoem | null | undefined): string {
-  const text = poem?.text?.trim()
-  if (!text) return ''
-  const author = poem?.author?.trim() ?? ''
-  const source = poem?.source?.trim() ?? ''
-  if (author && source) return `「${text}」— ${author}《${source}》`
-  if (author) return `「${text}」— ${author}`
-  if (source) return `「${text}」— 《${source}》`
-  return `「${text}」`
-}
-
 function greetingName(welcome: {
   displayName?: string | null
   content?: string | null
@@ -273,7 +263,7 @@ async function applyWelcome(
     content?: string | null
     displayName?: string | null
     greetingLine?: string | null
-    poem?: WelcomePoem | null
+    inspirationLine?: string | null
     dateLine?: string | null
     weatherBrief?: string | null
     memoSummary?: string | null
@@ -293,12 +283,12 @@ async function applyWelcome(
   const feature = (welcome?.featureNote ?? '').trim()
   const weather = (welcome?.weatherWarning ?? '').trim()
   const memo = (welcome?.memoSummary ?? '').trim()
-  const poem = formatPoem(welcome?.poem)
+  const inspiration = resolveInspiration(welcome?.inspirationLine, greetingNow())
   const headlines = visibleNews(welcome?.news)
   if (!name && !serverLine) {
     if (!signal.aborted) {
       greeting.value = line
-      poemLine.value = ''
+      inspirationLine.value = inspiration
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -309,7 +299,7 @@ async function applyWelcome(
     return
   }
   if (!signal.aborted) {
-    poemLine.value = poem
+    inspirationLine.value = inspiration
     featureNote.value = feature
     weatherWarning.value = weather
     memoSummary.value = memo
@@ -326,7 +316,7 @@ async function load() {
 
   loading.value = true
   greeting.value = ''
-  poemLine.value = ''
+  inspirationLine.value = ''
   featureNote.value = ''
   weatherWarning.value = ''
   memoSummary.value = ''
@@ -342,7 +332,7 @@ async function load() {
     await applyWelcome({
       content: '林晓',
       displayName: '林晓',
-      poem: { text: '空山新雨后，天气晚来秋。', author: '王维', source: '山居秋暝' },
+      inspirationLine: '把今天过得轻一点，也把心里的事放得慢一点。',
       dateLine: `${shanghaiDateLabel(now)} · 多云 24°C`,
       weatherBrief: '多云 24°C',
       memoSummary: '今天有 2 条备忘到期。',
@@ -370,7 +360,7 @@ async function load() {
     if (!signal.aborted) {
       loading.value = false
       greeting.value = composeGreeting({ name: fallbackName(), now: greetingNow(), weatherBrief: null })
-      poemLine.value = ''
+      inspirationLine.value = resolveInspiration(null, greetingNow())
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -452,8 +442,8 @@ onUnmounted(cancelWelcomeTypewriter)
               {{ weatherWarning }}
               <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
             </p>
-            <p v-if="poemLine" class="mt-3 max-w-[720px] font-serif text-[13px] leading-6 text-[#8a847c]" data-testid="welcome-poem">
-              {{ poemLine }}
+            <p v-if="inspirationLine" class="mt-3 max-w-[720px] font-serif text-[13px] leading-6 text-[#8a847c]" data-testid="welcome-inspiration">
+              {{ inspirationLine }}
             </p>
             <p v-if="memoSummary" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]" data-testid="welcome-memo">
               {{ memoSummary }}
