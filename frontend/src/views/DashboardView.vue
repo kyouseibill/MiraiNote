@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import RegionPrompt from '@/components/RegionPrompt.vue'
 import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
-import type { Memo } from '@/types/memo'
+import type { Memo, MemoSection } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
 
 const route = useRoute()
@@ -37,7 +37,11 @@ const news = ref<WelcomeNewsItem[]>([])
 const greetingRevealing = ref(false)
 let welcomeAbort: AbortController | null = null
 const quickCapture = ref('')
+const captureSection = ref<MemoSection>('work')
 const capturing = ref(false)
+/** 本次会话刚记下的备忘，排在今日焦点最前，避免无提醒时间被既有到期项挤出前三。 */
+const recentCaptureIds = ref<number[]>([])
+const shortcutLabel = captureShortcutLabel()
 const workMemos = ref<Memo[]>([])
 const lifeMemos = ref<Memo[]>([])
 const recentLogs = ref<WorkLog[]>([])
@@ -158,7 +162,18 @@ function sortByRemind(list: Memo[]): Memo[] {
   })
 }
 
-const focusItems = computed(() => sortByRemind([...workMemos.value, ...lifeMemos.value]).slice(0, 3))
+const capturePlaceholder = computed(() =>
+  captureSection.value === 'life' ? '记一条生活备忘…' : '记一条工作备忘…',
+)
+
+const focusItems = computed(() => {
+  const all = [...workMemos.value, ...lifeMemos.value]
+  const fresh = recentCaptureIds.value
+    .map((id) => all.find((item) => item.id === id))
+    .filter((item): item is Memo => Boolean(item))
+  const rest = sortByRemind(all.filter((item) => !fresh.some((captured) => captured.id === item.id)))
+  return [...fresh, ...rest].slice(0, 3)
+})
 
 const recentEntries = computed(() => {
   const logs = recentLogs.value.map((item) => ({
@@ -372,29 +387,48 @@ async function load() {
   }
 }
 
+function captureShortcutLabel(): string {
+  const nav = globalThis.navigator as (Navigator & { userAgentData?: { platform?: string } }) | undefined
+  if (!nav) return 'Ctrl+Enter'
+  const raw = [nav.userAgentData?.platform, nav.platform, nav.userAgent].filter(Boolean).join(' ')
+  return /mac|iphone|ipad|ipod/i.test(raw) ? '⌘+Enter' : 'Ctrl+Enter'
+}
+
+function onCaptureKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
+  if (event.shiftKey || event.altKey) return
+  event.preventDefault()
+  void createQuickMemo()
+}
+
+function rememberCapture(memo: Memo) {
+  const target = memo.section === 'life' ? lifeMemos : workMemos
+  target.value = [memo, ...target.value.filter((item) => item.id !== memo.id)]
+  recentCaptureIds.value = [memo.id, ...recentCaptureIds.value.filter((id) => id !== memo.id)].slice(0, 3)
+}
+
 async function createQuickMemo() {
   const content = quickCapture.value.trim()
+  const section = captureSection.value
   if (!content || capturing.value) return
   capturing.value = true
   try {
-    if (isDesignPreview.value) {
-      workMemos.value = [
-        {
-          ...previewWorkMemos[0],
+    const created = isDesignPreview.value
+      ? {
+          ...(section === 'life' ? previewLifeMemos[0] : previewWorkMemos[0]),
           id: -Date.now(),
+          section,
           content,
           remindAt: null,
           isPinned: false,
           priority: 2,
-        },
-        ...workMemos.value,
-      ]
-    } else {
-      const created = await memoApi.create({ section: 'work', content, priority: 2 })
-      workMemos.value = [created, ...workMemos.value]
-    }
+          isDone: false,
+          isArchived: false,
+        }
+      : await memoApi.create({ section, content, priority: 2 })
+    rememberCapture(created)
     quickCapture.value = ''
-    toast.success('已记录到工作备忘')
+    toast.success(created.section === 'life' ? '已记到生活备忘' : '已记到工作备忘')
   } finally {
     capturing.value = false
   }
@@ -477,29 +511,66 @@ onUnmounted(cancelWelcomeTypewriter)
           </ul>
         </header>
 
-        <form class="mt-12 flex h-[52px] w-full" @submit.prevent="createQuickMemo">
+        <form class="mt-12 flex h-[52px] w-full" data-testid="quick-capture" @submit.prevent="createQuickMemo">
+          <div
+            class="flex h-full shrink-0 overflow-hidden rounded-l-[5px] border border-r-0 border-[#d8d3ca] bg-white/60"
+            role="radiogroup"
+            aria-label="备忘分区"
+            data-testid="capture-section"
+          >
+            <button
+              type="button"
+              role="radio"
+              class="h-full whitespace-nowrap px-3 text-[12px] tracking-[0.04em] transition"
+              :class="captureSection === 'work' ? 'bg-[#4c6178] text-white' : 'text-[#6a655e] hover:bg-[#f3f0ea]'"
+              :aria-checked="captureSection === 'work'"
+              data-testid="capture-section-work"
+              @click="captureSection = 'work'"
+            >
+              工作
+            </button>
+            <span class="w-px self-stretch bg-[#d8d3ca]" aria-hidden="true" />
+            <button
+              type="button"
+              role="radio"
+              class="h-full whitespace-nowrap px-3 text-[12px] tracking-[0.04em] transition"
+              :class="captureSection === 'life' ? 'bg-[#b4493f] text-white' : 'text-[#6a655e] hover:bg-[#f3f0ea]'"
+              :aria-checked="captureSection === 'life'"
+              data-testid="capture-section-life"
+              @click="captureSection = 'life'"
+            >
+              生活
+            </button>
+          </div>
           <div class="relative min-w-0 flex-1">
             <input
               v-model="quickCapture"
               type="text"
-              class="h-full w-full rounded-l-[5px] rounded-r-none border border-r-0 border-[#d8d3ca] bg-white/60 px-4 pr-24 text-[13px] text-[#34322f] shadow-none placeholder:text-[#aaa59d] focus:z-10"
-              placeholder="记录此刻…"
+              class="h-full w-full rounded-none border border-r-0 border-[#d8d3ca] bg-white/60 px-4 pr-[5.5rem] text-[13px] text-[#34322f] shadow-none placeholder:text-[#aaa59d] focus:z-10"
+              :placeholder="capturePlaceholder"
               aria-label="快速记录"
+              aria-keyshortcuts="Enter Control+Enter Meta+Enter"
+              data-testid="quick-capture-input"
+              @keydown="onCaptureKeydown"
             />
-            <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-[#a29d95]">⌘ + Enter</span>
+            <span
+              class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[11px] text-[#a29d95]"
+              data-testid="capture-shortcut"
+            >{{ shortcutLabel }}</span>
           </div>
           <button
             type="submit"
             class="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-r-[5px] bg-[#4c6178] text-white transition hover:bg-[#384b60] disabled:opacity-50"
             :disabled="capturing"
             aria-label="添加记录"
+            data-testid="quick-capture-submit"
           >
             <IconLoader2 v-if="capturing" :size="19" :stroke-width="1.5" class="animate-spin" />
             <IconPlus v-else :size="22" :stroke-width="1.4" />
           </button>
         </form>
 
-        <div class="mt-24">
+        <div class="mt-24" data-testid="today-focus">
           <h2 class="font-serif text-[17px] font-medium tracking-[0.04em] text-[#2f2d29]">今日焦点</h2>
           <div class="mt-5 border-y border-[#e1dcd4]">
             <div v-if="loading" class="flex h-40 items-center justify-center text-[12px] text-[#99938b]">
@@ -511,6 +582,8 @@ onUnmounted(cancelWelcomeTypewriter)
                 v-for="item in focusItems"
                 :key="item.id"
                 class="group grid min-h-[64px] cursor-pointer grid-cols-[18px_minmax(0,1fr)_62px_72px] items-center gap-3 border-b border-[#e8e3dc] py-3 last:border-b-0 lg:grid-cols-[18px_minmax(0,280px)_70px_minmax(84px,1fr)] lg:gap-4"
+                data-testid="focus-item"
+                :data-section="item.section"
               >
                 <input
                   type="checkbox"
@@ -522,7 +595,7 @@ onUnmounted(cancelWelcomeTypewriter)
                   {{ item.content }}
                 </span>
                 <span class="flex shrink-0 items-center gap-2 text-[11px] text-[#979189]">
-                  <span class="h-[5px] w-[5px] rounded-full" :class="item.section === 'life' ? 'bg-[#b4493f]' : 'bg-[#4c6178]'" />
+                  <span class="h-[5px] w-[5px] rounded-full" data-testid="focus-dot" :class="item.section === 'life' ? 'bg-[#b4493f]' : 'bg-[#4c6178]'" />
                   {{ item.section === 'life' ? '生活' : '工作' }}
                 </span>
                 <span class="text-right text-[11px] tabular-nums text-[#7f7a72]">{{ focusTime(item) }}</span>
