@@ -14,7 +14,8 @@ public interface IWelcomeNewsSource
     Task<IReadOnlyList<WelcomeNewsItem>> GetLatestAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// 按用户跳过近 7 天已展示的链接。未实现时退回不区分用户的结果。
+    /// 按用户跳过近 7 天已展示的链接。若因此当前池没有候选，仍返回 1–2 条（优先最久没再展示的）。
+    /// 未实现时退回不区分用户的结果。
     /// </summary>
     Task<IReadOnlyList<WelcomeNewsItem>> GetLatestAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default)
         => GetLatestAsync(ct);
@@ -26,12 +27,15 @@ public readonly record struct WelcomeNewsSourceFeed(string Source, Uri Url);
 /// <summary>
 /// 合并五条公开 RSS，按链接去重后最多留 2 条，并尽量来自不同来源。只要标题和链接。
 /// 候选池短时缓存；已展示链接按用户另记，不放进这条缓存。
+/// 近 7 天已读会先跳过。若因此当前池一条都不剩，改选池里最久没再展示的，避免重用户看到空白。
+/// 单条 RSS 最多读 1MB；超出后截断并解析已经读完的条目，不把该来源整份丢掉。
 /// </summary>
 public sealed class WelcomeNewsClient : IWelcomeNewsSource
 {
     public const string HttpClientName = "WelcomeNews";
     public static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(8);
     public const int MaxItems = 2;
+    public const int MaxFeedBytes = 1_000_000;
 
     public static readonly Uri OpenAiFeed = new("https://openai.com/news/rss.xml");
     public static readonly Uri DeepMindFeed = new("https://deepmind.google/blog/rss.xml");
@@ -81,7 +85,11 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
             return [];
 
         var seen = await RecentAsync(userId, utcNow, ct);
-        var selected = WelcomeNewsMerge.Select(pool, MaxItems, seen);
+        var selected = WelcomeNewsMerge.Select(
+            pool,
+            MaxItems,
+            seen.Count == 0 ? null : seen.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            seen);
         await RememberAsync(userId, utcNow, selected, ct);
         return await TranslateAsync(selected, ct);
     }
@@ -102,15 +110,14 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
         return batches.SelectMany(batch => batch).ToArray();
     }
 
-    private async Task<IReadOnlySet<string>> RecentAsync(int userId, DateTimeOffset utcNow, CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string, DateTime>> RecentAsync(int userId, DateTimeOffset utcNow, CancellationToken ct)
     {
         if (_seen == null || userId <= 0)
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return EmptySeen();
 
         try
         {
-            return await _seen.GetRecentUrlsAsync(userId, utcNow, ct)
-                ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return await _seen.GetRecentUrlsAsync(userId, utcNow, ct) ?? EmptySeen();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -119,9 +126,12 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "欢迎语新闻已读记录暂不可用（{ExceptionType}）", ex.GetType().Name);
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return EmptySeen();
         }
     }
+
+    private static Dictionary<string, DateTime> EmptySeen() =>
+        new(StringComparer.OrdinalIgnoreCase);
 
     private async Task RememberAsync(
         int userId,
@@ -178,21 +188,19 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
                 return [];
 
             await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            using var limited = new MemoryStream();
-            var buffer = new byte[8192];
-            var total = 0;
-            while (true)
+            var (body, capped) = await ReadAtMostAsync(stream, MaxFeedBytes, ct);
+            using (body)
             {
-                var read = await stream.ReadAsync(buffer, ct);
-                if (read == 0) break;
-                total += read;
-                if (total > 1_000_000)
-                    return [];
-                limited.Write(buffer, 0, read);
-            }
+                if (capped)
+                {
+                    _logger.LogInformation(
+                        "欢迎语新闻源 {Source} 正文超过 {MaxFeedBytes} 字节，已按上限截断解析",
+                        source,
+                        MaxFeedBytes);
+                }
 
-            limited.Position = 0;
-            return WelcomeNewsFeed.Read(limited, feed, source);
+                return WelcomeNewsFeed.Read(body, feed, source);
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -205,18 +213,81 @@ public sealed class WelcomeNewsClient : IWelcomeNewsSource
             return [];
         }
     }
+
+    private static async Task<(MemoryStream Body, bool Capped)> ReadAtMostAsync(
+        Stream source,
+        int maxBytes,
+        CancellationToken ct)
+    {
+        var body = new MemoryStream();
+        try
+        {
+            var buffer = new byte[8192];
+            var total = 0;
+            while (total < maxBytes)
+            {
+                var read = await source.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, maxBytes - total)), ct);
+                if (read == 0)
+                    break;
+                body.Write(buffer, 0, read);
+                total += read;
+            }
+
+            var capped = false;
+            if (total >= maxBytes)
+            {
+                var extra = new byte[1];
+                capped = await source.ReadAsync(extra.AsMemory(0, 1), ct) > 0;
+            }
+
+            body.Position = 0;
+            return (body, capped);
+        }
+        catch
+        {
+            await body.DisposeAsync();
+            throw;
+        }
+    }
 }
 
 public sealed record WelcomeNewsCandidate(string Title, string Url, DateTimeOffset Published, string Source = "");
 
 public static class WelcomeNewsMerge
 {
+    /// <summary>
+    /// 按链接去重后最多留 <paramref name="maxItems"/> 条，并尽量来自不同来源。
+    /// 近 7 天已展示的链接先跳过。只要还剩未展示候选，就只从里面挑，不用已读补位。
+    /// 若因此一条都不剩，则从当前池再挑：有展示时间时优先最久没再展示的，否则按发布时间从新到旧。
+    /// </summary>
     public static IReadOnlyList<WelcomeNewsItem> Select(
         IEnumerable<WelcomeNewsCandidate> items,
         int maxItems,
-        IReadOnlySet<string>? excludeUrls = null)
+        IReadOnlySet<string>? excludeUrls = null,
+        IReadOnlyDictionary<string, DateTime>? seenAtUtc = null)
     {
+        var max = Math.Max(0, maxItems);
+        if (max == 0)
+            return [];
+
         var excluded = NormalizeExcluded(excludeUrls);
+        var pool = Deduped(items);
+        if (pool.Length == 0)
+            return [];
+
+        var unseen = excluded.Count == 0
+            ? pool
+            : pool.Where(item => !excluded.Contains(item.Url)).ToArray();
+        if (unseen.Length > 0)
+            return ToItems(TakeDiverse(ByPublished(unseen), max));
+
+        var seenAt = NormalizeSeenAt(seenAtUtc);
+        var ranked = seenAt.Count > 0 ? ByOldestSeen(pool, seenAt) : ByPublished(pool);
+        return ToItems(TakeDiverse(ranked, max));
+    }
+
+    private static WelcomeNewsCandidate[] Deduped(IEnumerable<WelcomeNewsCandidate> items)
+    {
         var best = new Dictionary<string, WelcomeNewsCandidate>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in items)
         {
@@ -225,25 +296,32 @@ public static class WelcomeNewsMerge
             if (uri.Scheme is not ("https" or "http"))
                 continue;
 
-            var key = DedupeKey(uri);
-            if (excluded.Contains(key))
-                continue;
-            if (!best.TryGetValue(key, out var existing) || item.Published > existing.Published)
-                best[key] = item with { Title = item.Title.Trim(), Url = key };
+            var normalized = item with { Title = item.Title.Trim(), Url = DedupeKey(uri) };
+            if (!best.TryGetValue(normalized.Url, out var existing) || normalized.Published > existing.Published)
+                best[normalized.Url] = normalized;
         }
 
-        var ranked = best.Values
-            .OrderByDescending(item => item.Published)
+        return best.Values.ToArray();
+    }
+
+    private static WelcomeNewsCandidate[] ByPublished(IReadOnlyList<WelcomeNewsCandidate> items) =>
+        items.OrderByDescending(item => item.Published)
             .ThenBy(item => item.Title, StringComparer.Ordinal)
             .ToArray();
 
-        return TakeDiverse(ranked, Math.Max(0, maxItems))
-            .Select(item => new WelcomeNewsItem(item.Title, item.Url))
+    private static WelcomeNewsCandidate[] ByOldestSeen(
+        IReadOnlyList<WelcomeNewsCandidate> items,
+        IReadOnlyDictionary<string, DateTime> seenAt) =>
+        items.OrderBy(item => seenAt.TryGetValue(item.Url, out var shownAt) ? shownAt : DateTime.MinValue)
+            .ThenByDescending(item => item.Published)
+            .ThenBy(item => item.Title, StringComparer.Ordinal)
             .ToArray();
-    }
+
+    private static WelcomeNewsItem[] ToItems(IReadOnlyList<WelcomeNewsCandidate> picked) =>
+        picked.Select(item => new WelcomeNewsItem(item.Title, item.Url)).ToArray();
 
     /// <summary>
-    /// 先按时间从新到旧各取一个来源；名额还没满，再回头补同一来源的下一条。
+    /// 按调用方给好的顺序，先各取一个来源；名额还没满，再回头补同一来源的下一条。
     /// </summary>
     private static IReadOnlyList<WelcomeNewsCandidate> TakeDiverse(IReadOnlyList<WelcomeNewsCandidate> ranked, int maxItems)
     {
@@ -300,6 +378,26 @@ public static class WelcomeNewsMerge
         return excluded;
     }
 
+    private static Dictionary<string, DateTime> NormalizeSeenAt(IReadOnlyDictionary<string, DateTime>? seenAt)
+    {
+        var map = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        if (seenAt == null)
+            return map;
+
+        foreach (var pair in seenAt)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key))
+                continue;
+            var key = pair.Key.Trim();
+            if (Uri.TryCreate(key, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+                key = DedupeKey(uri);
+            if (!map.TryGetValue(key, out var existing) || pair.Value > existing)
+                map[key] = pair.Value;
+        }
+
+        return map;
+    }
+
     internal static string DedupeKey(Uri uri)
     {
         var builder = new UriBuilder(uri)
@@ -324,25 +422,36 @@ internal static class WelcomeNewsFeed
             XmlResolver = null,
             MaxCharactersFromEntities = 1024,
             IgnoreComments = true,
-            IgnoreWhitespace = true
+            IgnoreWhitespace = true,
+            CloseInput = false
         };
 
-        using var reader = XmlReader.Create(xml, settings);
-        var document = XDocument.Load(reader, LoadOptions.None);
-        if (document.Root == null)
-            return [];
-
-        var entries = document.Descendants().Where(element =>
-            element.Name.LocalName is "item" or "entry");
-
         var items = new List<WelcomeNewsCandidate>();
-        foreach (var entry in entries.Take(30))
+        try
         {
-            var title = Text(entry, "title");
-            var link = Link(entry, feed);
-            if (string.IsNullOrWhiteSpace(title) || link == null)
-                continue;
-            items.Add(new WelcomeNewsCandidate(Collapse(title), link, Published(entry), source));
+            using var reader = XmlReader.Create(xml, settings);
+            while (!reader.EOF && items.Count < 30)
+            {
+                if (reader.NodeType == XmlNodeType.Element && reader.LocalName is "item" or "entry")
+                {
+                    if (XNode.ReadFrom(reader) is XElement entry)
+                    {
+                        var title = Text(entry, "title");
+                        var link = Link(entry, feed);
+                        if (!string.IsNullOrWhiteSpace(title) && link != null)
+                            items.Add(new WelcomeNewsCandidate(Collapse(title), link, Published(entry), source));
+                    }
+
+                    continue;
+                }
+
+                if (!reader.Read())
+                    break;
+            }
+        }
+        catch (XmlException) when (items.Count > 0)
+        {
+            // 正文超过读取上限时会在标签中间断开。已经读完的条目仍然可用。
         }
 
         return items;

@@ -79,8 +79,56 @@ public class WelcomeNewsRotationTests : IDisposable
         });
         var left = Assert.Single(onlyOne);
         Assert.Equal("Hugging Face 一条", left.Title);
+    }
 
-        Assert.Empty(WelcomeNewsMerge.Select(pool, 2, pool.Select(item => item.Url).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+    [Fact]
+    public void Select_PrefersUnseen_WhenAnyCandidateRemains()
+    {
+        var pool = Pool();
+        var exclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "https://openai.com/news/newest",
+            "https://openai.com/news/next",
+            "https://deepmind.google/blog/one/",
+            "https://www.theverge.com/ai/one"
+        };
+        var seenAt = exclude.ToDictionary(
+            url => url,
+            _ => When.AddDays(-6).UtcDateTime,
+            StringComparer.OrdinalIgnoreCase);
+
+        var selected = WelcomeNewsMerge.Select(pool, 2, exclude, seenAt);
+
+        Assert.Equal(["Hugging Face 一条", "TechCrunch 一条"], selected.Select(item => item.Title).ToArray());
+    }
+
+    [Fact]
+    public void Select_WhenEveryCandidateWasSeen_ReusesTheOldestSeen()
+    {
+        var pool = Pool();
+        var seenAt = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://openai.com/news/newest/"] = When.AddHours(-1).UtcDateTime,
+            ["https://openai.com/news/next"] = When.AddDays(-2).UtcDateTime,
+            ["https://deepmind.google/blog/one"] = When.AddDays(-3).UtcDateTime,
+            ["https://huggingface.co/blog/one"] = When.AddDays(-4).UtcDateTime,
+            ["https://techcrunch.com/2026/10/07/one"] = When.AddDays(-5).UtcDateTime,
+            ["https://www.theverge.com/ai/one"] = When.AddDays(-6).UtcDateTime
+        };
+
+        var selected = WelcomeNewsMerge.Select(
+            pool,
+            2,
+            seenAt.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            seenAt);
+
+        Assert.Equal(["The Verge 一条", "TechCrunch 一条"], selected.Select(item => item.Title).ToArray());
+
+        var withoutTimes = WelcomeNewsMerge.Select(
+            pool,
+            2,
+            pool.Select(item => item.Url).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(["OpenAI 最新", "DeepMind 一条"], withoutTimes.Select(item => item.Title).ToArray());
     }
 
     [Fact]
@@ -155,8 +203,8 @@ public class WelcomeNewsRotationTests : IDisposable
         var recent = await new WelcomeNewsSeenStore(read).GetRecentUrlsAsync(userId, When);
 
         Assert.Equal(2, recent.Count);
-        Assert.Contains("https://www.theverge.com/ai/one", recent);
-        Assert.Contains("https://techcrunch.com/2026/10/07/one", recent);
+        Assert.Equal(When.UtcDateTime, recent["https://www.theverge.com/ai/one"]);
+        Assert.Equal(When.UtcDateTime, recent["https://techcrunch.com/2026/10/07/one"]);
     }
 
     [Fact]
@@ -207,6 +255,93 @@ public class WelcomeNewsRotationTests : IDisposable
         Assert.Contains(rows, row => row.Url == "https://deepmind.google/blog/one");
         Assert.Contains(rows, row => row.Url == "https://openai.com/news/next");
         Assert.DoesNotContain(rows, row => row.ShownAt < cutoff);
+    }
+
+    [Fact]
+    public async Task Client_WhenEveryPoolLinkWasSeen_ReusesTheOldestAndRecordsIt()
+    {
+        await using var db = _fx.CreateContext();
+        var userId = await ResetSeenAsync(db);
+        db.WelcomeNewsSeens.AddRange(
+            Seen(userId, "https://www.theverge.com/ai/one", When.AddDays(-6)),
+            Seen(userId, "https://techcrunch.com/2026/10/07/one", When.AddDays(-5)),
+            Seen(userId, "https://huggingface.co/blog/one", When.AddDays(-4)),
+            Seen(userId, "https://deepmind.google/blog/one", When.AddDays(-3)),
+            Seen(userId, "https://openai.com/news/next", When.AddDays(-2)),
+            Seen(userId, "https://openai.com/news/newest", When.AddDays(-1)));
+        await db.SaveChangesAsync();
+
+        var news = Client(new RecordingHandler(FiveFeeds), new MemoryCache(new MemoryCacheOptions()), new WelcomeNewsSeenStore(db));
+        var first = await news.GetLatestAsync(userId, When);
+        var second = await news.GetLatestAsync(userId, When);
+
+        Assert.Equal(["The Verge 一条", "TechCrunch 一条"], first.Select(item => item.Title).ToArray());
+        Assert.Equal(["Hugging Face 一条", "DeepMind 一条"], second.Select(item => item.Title).ToArray());
+        var verge = await db.WelcomeNewsSeens.AsNoTracking()
+            .SingleAsync(row => row.UserId == userId && row.Url == "https://www.theverge.com/ai/one");
+        Assert.Equal(When.UtcDateTime, verge.ShownAt);
+    }
+
+    [Fact]
+    public void FeedRead_KeepsCompleteItems_WhenXmlIsTruncated()
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss version="2.0"><channel>
+            {Item("还在", "https://openai.com/news/kept", "Fri, 09 Oct 2026 04:00:00 GMT")}
+            <item><title>被截断
+            """;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+
+        var items = WelcomeNewsFeed.Read(stream, WelcomeNewsClient.OpenAiFeed, "openai");
+
+        var only = Assert.Single(items);
+        Assert.Equal("还在", only.Title);
+        Assert.Equal("https://openai.com/news/kept", only.Url);
+        Assert.Equal("openai", only.Source);
+    }
+
+    [Fact]
+    public async Task OversizedFeed_KeepsItemsInsideTheCap_AndDoesNotDropOtherSources()
+    {
+        var openai = OversizedOpenAi();
+        var handler = new RecordingHandler((request, _) =>
+        {
+            if (request.RequestUri!.Host == "openai.com")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(openai)
+                });
+            }
+
+            return Task.FromResult(FiveFeeds(request, _));
+        });
+        var news = Client(handler, new MemoryCache(new MemoryCacheOptions()));
+
+        var items = await news.GetLatestAsync(4, When);
+
+        Assert.Equal(["OpenAI 仍在", "DeepMind 一条"], items.Select(item => item.Title).ToArray());
+        Assert.Equal(WelcomeNewsClient.MaxFeedBytes + 1, openai.ReadBytes);
+        Assert.True(openai.ReadBytes < openai.TotalBytes);
+
+        var garbage = new CountingStream(new byte[WelcomeNewsClient.MaxFeedBytes + 64]);
+        var others = new RecordingHandler((request, _) =>
+        {
+            if (request.RequestUri!.Host == "openai.com")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(garbage)
+                });
+            }
+
+            return Task.FromResult(FiveFeeds(request, _));
+        });
+        var stillThere = await Client(others, new MemoryCache(new MemoryCacheOptions())).GetLatestAsync(4, When);
+
+        Assert.Equal(["DeepMind 一条", "Hugging Face 一条"], stillThere.Select(item => item.Title).ToArray());
+        Assert.Equal(WelcomeNewsClient.MaxFeedBytes + 1, garbage.ReadBytes);
     }
 
     [Fact]
@@ -389,6 +524,21 @@ public class WelcomeNewsRotationTests : IDisposable
         </item>
         """;
 
+    private static CountingStream OversizedOpenAi()
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss version="2.0"><channel>
+            {Item("OpenAI 仍在", "https://openai.com/news/kept", "Fri, 09 Oct 2026 04:00:00 GMT")}
+            <item><title>太大</title><link>https://openai.com/news/huge</link><description>
+            """;
+        var prefix = Encoding.UTF8.GetBytes(xml);
+        var body = new byte[prefix.Length + WelcomeNewsClient.MaxFeedBytes];
+        Buffer.BlockCopy(prefix, 0, body, 0, prefix.Length);
+        Array.Fill(body, (byte)'x', prefix.Length, WelcomeNewsClient.MaxFeedBytes);
+        return new CountingStream(body);
+    }
+
     private static HttpResponseMessage Xml(string items) =>
         new(HttpStatusCode.OK)
         {
@@ -400,6 +550,62 @@ public class WelcomeNewsRotationTests : IDisposable
                 Encoding.UTF8,
                 "application/xml")
         };
+
+    private sealed class CountingStream : Stream
+    {
+        private readonly byte[] _data;
+        private int _position;
+
+        public CountingStream(byte[] data) => _data = data;
+
+        public int ReadBytes { get; private set; }
+        public int TotalBytes => _data.Length;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var n = Pull(count);
+            if (n == 0)
+                return 0;
+            Buffer.BlockCopy(_data, _position - n, buffer, offset, n);
+            return n;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var n = Pull(buffer.Length);
+            if (n > 0)
+                _data.AsSpan(_position - n, n).CopyTo(buffer.Span);
+            return ValueTask.FromResult(n);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        private int Pull(int count)
+        {
+            if (_position >= _data.Length || count <= 0)
+                return 0;
+            var n = Math.Min(count, _data.Length - _position);
+            _position += n;
+            ReadBytes += n;
+            return n;
+        }
+    }
 
     private sealed class RecordingHandler : HttpMessageHandler
     {
@@ -475,7 +681,7 @@ public class WelcomeNewsRotationTests : IDisposable
 
     private sealed class BrokenSeen : IWelcomeNewsSeenStore
     {
-        public Task<IReadOnlySet<string>> GetRecentUrlsAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default) =>
+        public Task<IReadOnlyDictionary<string, DateTime>> GetRecentUrlsAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default) =>
             throw new InvalidOperationException("已读表暂时打不开");
 
         public Task RecordAsync(int userId, IReadOnlyList<string> urls, DateTimeOffset utcNow, CancellationToken ct = default) =>
