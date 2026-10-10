@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/api/memo', () => ({
   memoApi: {
     list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 }),
+    create: vi.fn(),
   },
 }))
 
@@ -38,7 +39,10 @@ vi.mock('@/api/welcome', () => ({
 }))
 
 import { authApi } from '@/api/auth'
+import { memoApi } from '@/api/memo'
 import { welcomeApi, type WelcomeGreeting } from '@/api/welcome'
+import { useToast } from '@/composables/useToast'
+import type { CreateMemoPayload, Memo } from '@/types/memo'
 import { composeGreeting } from '@/utils/greetingPeriod'
 import DashboardView from '@/views/DashboardView.vue'
 
@@ -432,5 +436,201 @@ describe('工作台欢迎语挂载', () => {
     await reveal()
     expect(again.get('[data-testid="region-prompt"]').text()).toContain('下次打开工作台还会再提醒')
     again.unmount()
+  })
+})
+
+function memo(partial: Partial<Memo> & Pick<Memo, 'id' | 'section' | 'content'>): Memo {
+  return {
+    remindAt: null,
+    remindMethods: 0,
+    emailReminderSent: false,
+    popupAcknowledged: false,
+    remindedAt: null,
+    priority: 2,
+    isPinned: false,
+    isDone: false,
+    isArchived: false,
+    createdAt: '2026-10-10T08:00:00',
+    updatedAt: '2026-10-10T08:00:00',
+    ...partial,
+  }
+}
+
+function stubPlatform(kind: 'mac' | 'windows' | 'linux') {
+  const platform = kind === 'mac' ? 'MacIntel' : kind === 'windows' ? 'Win32' : 'Linux x86_64'
+  const userAgent = kind === 'mac'
+    ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+    : kind === 'windows'
+      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      : 'Mozilla/5.0 (X11; Linux x86_64)'
+  const uaPlatform = kind === 'mac' ? 'macOS' : kind === 'windows' ? 'Windows' : 'Linux'
+  Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
+  Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true })
+  Object.defineProperty(navigator, 'userAgentData', { value: { platform: uaPlatform }, configurable: true })
+}
+
+async function mountDashboard() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: DashboardView }],
+  })
+  await router.push('/')
+  await router.isReady()
+  const wrapper = mount(DashboardView, {
+    global: { plugins: [createPinia(), router] },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+describe('记录此刻', () => {
+  let nextId = 100
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.useFakeTimers()
+    vi.setSystemTime(fixedNow)
+    nextId = 100
+    stubPlatform('linux')
+    vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({ displayName: 'tester' }))
+    vi.mocked(memoApi.list).mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 })
+    vi.mocked(memoApi.create).mockImplementation(async (payload: CreateMemoPayload) => memo({
+      id: ++nextId,
+      section: payload.section,
+      content: payload.content,
+    }))
+    useToast().list.splice(0, useToast().list.length)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('默认记到工作备忘，切换后记到生活备忘，并立刻出现在今日焦点', async () => {
+    const wrapper = await mountDashboard()
+    const input = wrapper.get('[data-testid="quick-capture-input"]')
+
+    expect(wrapper.get('[data-testid="capture-section-work"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="capture-section-life"]').attributes('aria-checked')).toBe('false')
+    expect(input.attributes('placeholder')).toBe('记一条工作备忘…')
+
+    await input.setValue('写周报')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(memoApi.create).toHaveBeenCalledWith({ section: 'work', content: '写周报', priority: 2 })
+    const workItem = wrapper.get('[data-testid="focus-item"]')
+    expect(workItem.attributes('data-section')).toBe('work')
+    expect(workItem.text()).toContain('写周报')
+    expect(workItem.text()).toContain('工作')
+    expect(workItem.get('[data-testid="focus-dot"]').classes()).toContain('bg-[#4c6178]')
+    expect(useToast().list.map((item) => item.message)).toContain('已记到工作备忘')
+    expect(input.element).toHaveProperty('value', '')
+
+    await wrapper.get('[data-testid="capture-section-life"]').trigger('click')
+    expect(input.attributes('placeholder')).toBe('记一条生活备忘…')
+    await input.setValue('买花')
+    await wrapper.get('[data-testid="quick-capture-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(memoApi.create).toHaveBeenLastCalledWith({ section: 'life', content: '买花', priority: 2 })
+    const lifeItem = wrapper.findAll('[data-testid="focus-item"]').find((item) => item.attributes('data-section') === 'life')
+    expect(lifeItem).toBeTruthy()
+    expect(lifeItem!.text()).toContain('买花')
+    expect(lifeItem!.text()).toContain('生活')
+    expect(lifeItem!.get('[data-testid="focus-dot"]').classes()).toContain('bg-[#b4493f]')
+    expect(useToast().list.map((item) => item.message)).toContain('已记到生活备忘')
+    wrapper.unmount()
+  })
+
+  it('已有三条到期焦点时，新记下的生活备忘仍出现在今日焦点', async () => {
+    vi.mocked(memoApi.list).mockImplementation(async (query) => ({
+      items: query.section === 'work'
+        ? [1, 2, 3].map((id) => memo({
+            id,
+            section: 'work',
+            content: `到期 ${id}`,
+            remindAt: `2026-10-10T0${id}:00:00`,
+          }))
+        : [],
+      total: query.section === 'work' ? 3 : 0,
+      page: 1,
+      pageSize: 20,
+    }))
+
+    const wrapper = await mountDashboard()
+    await wrapper.get('[data-testid="capture-section-life"]').trigger('click')
+    await wrapper.get('[data-testid="quick-capture-input"]').setValue('散步')
+    await wrapper.get('[data-testid="quick-capture"]').trigger('submit')
+    await flushPromises()
+
+    const lifeItem = wrapper.findAll('[data-testid="focus-item"]').find((item) => item.text().includes('散步'))
+    expect(lifeItem?.attributes('data-section')).toBe('life')
+    expect(lifeItem?.get('[data-testid="focus-dot"]').classes()).toContain('bg-[#b4493f]')
+    wrapper.unmount()
+  })
+
+  it('Enter、Cmd+Enter 和 Ctrl+Enter 都会提交', async () => {
+    const wrapper = await mountDashboard()
+    const input = wrapper.get('[data-testid="quick-capture-input"]')
+
+    await input.setValue('第一条')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    await input.setValue('第二条')
+    await input.trigger('keydown', { key: 'Enter', metaKey: true })
+    await flushPromises()
+
+    await input.setValue('第三条')
+    await input.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+
+    expect(vi.mocked(memoApi.create).mock.calls.map((call) => call[0].content)).toEqual(['第一条', '第二条', '第三条'])
+    wrapper.unmount()
+  })
+
+  it('空内容和纯空格不会提交', async () => {
+    const wrapper = await mountDashboard()
+    const input = wrapper.get('[data-testid="quick-capture-input"]')
+
+    await input.setValue('   ')
+    await input.trigger('keydown', { key: 'Enter' })
+    await input.trigger('keydown', { key: 'Enter', metaKey: true })
+    await input.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get('[data-testid="quick-capture"]').trigger('submit')
+    await flushPromises()
+
+    expect(memoApi.create).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="focus-item"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('输入法组字中的 Enter 不提交', async () => {
+    const wrapper = await mountDashboard()
+    const input = wrapper.get('[data-testid="quick-capture-input"]')
+    await input.setValue('组字')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await flushPromises()
+
+    expect(memoApi.create).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('Mac 显示 ⌘+Enter，Windows 和 Linux 显示 Ctrl+Enter', async () => {
+    stubPlatform('mac')
+    const mac = await mountDashboard()
+    expect(mac.get('[data-testid="capture-shortcut"]').text()).toBe('⌘+Enter')
+    mac.unmount()
+
+    stubPlatform('windows')
+    const windows = await mountDashboard()
+    expect(windows.get('[data-testid="capture-shortcut"]').text()).toBe('Ctrl+Enter')
+    windows.unmount()
+
+    stubPlatform('linux')
+    const linux = await mountDashboard()
+    expect(linux.get('[data-testid="capture-shortcut"]').text()).toBe('Ctrl+Enter')
+    linux.unmount()
   })
 })
