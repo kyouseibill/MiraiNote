@@ -9,18 +9,15 @@ import {
   IconMenu2,
   IconMessageCircle,
   IconNotebook,
-  IconQuote,
   IconReportAnalytics,
   IconSettings,
   IconSparkles,
   IconX,
 } from '@tabler/icons-vue'
 import { useReminderStore } from '@/stores/reminder'
-import { useAuthStore } from '@/stores/auth'
 import ReminderPopup from '@/components/ReminderPopup.vue'
 
 const reminder = useReminderStore()
-const auth = useAuthStore()
 const route = useRoute()
 
 interface NavItem {
@@ -59,17 +56,6 @@ const baseGroups: NavGroup[] = [
     ],
   },
 ]
-
-const groups = computed(() => {
-  if (!auth.isAdmin) return baseGroups
-  return [
-    ...baseGroups,
-    {
-      title: '管理',
-      items: [{ to: '/admin/welcome-phrases', label: '欢迎语', icon: IconQuote }],
-    },
-  ]
-})
 
 const currentTitle = computed(() => (route.meta.title as string) || '未来ノート')
 const isChatRoute = computed(() => route.name === 'chat')
@@ -132,7 +118,7 @@ onBeforeUnmount(() => {
       </div>
 
       <nav class="flex-1 overflow-y-auto px-3 pb-5">
-        <div v-for="group in groups" :key="group.title" class="border-b border-[#e5e0d8] py-4 last:border-b-0">
+        <div v-for="group in baseGroups" :key="group.title" class="border-b border-[#e5e0d8] py-4 last:border-b-0">
           <div class="mb-2 px-5 text-[10px] font-medium tracking-[0.18em] text-[#aaa49b]">
             {{ group.title }}
           </div>

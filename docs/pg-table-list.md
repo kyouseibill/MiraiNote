@@ -29,7 +29,6 @@
 | `WeeklyReportReference` | `Id` integer | 有 |
 | `WorkLog` | `Id` integer | 有 |
 | `WelcomeNewsSeen` | `Id` integer | 有 |
-| `WelcomePhrase` | `Id` integer | 有 |
 
 列类型以 `docs/sql/initial-postgres.sql` 为准。相对旧库的结构变化：
 
@@ -38,7 +37,7 @@
 - `bit` 改为 `boolean`。`0` → `false`，`1` → `true`。
 - 从旧库导入的已有用户，`IsEmailVerified` 一律写成 `true`。新环境里种子管理员本身也是已验证。
 - 不建 `WelcomeGreeting`。旧模型里有过这张表，但没有应用写入入口。旧库如果碰巧有这张表，不要导入。
-- 新增 `WelcomePhrase`（迁移 `AddWelcomePhrase` 建表，并写入问候、下雨/周五和古诗词种子）。这张表不从旧库导入。运行账户授权和 `WelcomeNewsSeen` 一样：表上 `SELECT, INSERT, UPDATE, DELETE`，序列 `"WelcomePhrase_Id_seq"` 上 `USAGE, SELECT`。角色 `appuser` 不存在时迁移会跳过。
+- `WelcomePhrase` 已由迁移 `DropWelcomePhrase` 删除。问候（时段、下雨、周五）改在服务端代码里，小句改由 DeepSeek 现写，缓存在进程内存里。这张表不要从旧库导入。删表后授权随表消失，不必再 `REVOKE`。`DROP TABLE IF EXISTS` 对已经没有这张表的库也安全。
 - 已删除、不要导入的家务表：`Household`、`HouseholdMember`、`HouseholdItem`、`HouseholdItemTemplate`、`HouseholdConsumable`、`HouseholdConsumableReminder`、`HouseholdCompletionRecord`、`HouseholdInvitation`、`HouseholdNotificationSetting`、`HouseholdReminderLog`、`HouseholdChatDraft`。
 
 ## 建议的外键导入顺序
@@ -48,8 +47,6 @@
 3. `ChatSession`（依赖 `User`、`ChatProject`）
 4. `ChatMessage`、`AgentRun`（依赖 `ChatSession`；`AgentRun` 还依赖 `User`）
 5. `AgentRunEvent`（依赖 `AgentRun`）
-
-`WelcomePhrase` 没有外键，由迁移种子写入，不要从旧库导入。
 
 `ChatSession.BranchedFromSessionId` / `BranchedFromMessageId` 如果旧数据互相引用，先把这两列留空，整表插入后再回填。
 
@@ -169,5 +166,4 @@ SELECT setval(pg_get_serial_sequence('"WeeklyReport"', 'Id'), GREATEST(COALESCE(
 SELECT setval(pg_get_serial_sequence('"WeeklyReportReference"', 'Id'), GREATEST(COALESCE((SELECT MAX("Id") FROM "WeeklyReportReference"), 1), 1), (SELECT COUNT(*) > 0 FROM "WeeklyReportReference"));
 SELECT setval(pg_get_serial_sequence('"WorkLog"', 'Id'), GREATEST(COALESCE((SELECT MAX("Id") FROM "WorkLog"), 1), 1), (SELECT COUNT(*) > 0 FROM "WorkLog"));
 SELECT setval(pg_get_serial_sequence('"WelcomeNewsSeen"', 'Id'), GREATEST(COALESCE((SELECT MAX("Id") FROM "WelcomeNewsSeen"), 1), 1), (SELECT COUNT(*) > 0 FROM "WelcomeNewsSeen"));
-SELECT setval(pg_get_serial_sequence('"WelcomePhrase"', 'Id'), GREATEST(COALESCE((SELECT MAX("Id") FROM "WelcomePhrase"), 1), 1), (SELECT COUNT(*) > 0 FROM "WelcomePhrase"));
 ```

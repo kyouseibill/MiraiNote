@@ -4,6 +4,7 @@ namespace MiraiNote.Data.Migrations;
 
 /// <summary>
 /// AddWelcomePhrase 的种子。已经应用到库上之后不要改这份清单，否则只有新库会变。
+/// 后面的 DropWelcomePhrase 会删掉这张表。这份种子只为了那次建表迁移还能编译，不要再改。
 /// </summary>
 public static class WelcomePhraseMigrationSeed
 {

@@ -3,7 +3,6 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using MiraiNote.Data.Context;
-using MiraiNote.Data.Entities;
 using MiraiNote.Shared;
 
 namespace MiraiNote.Core.Services;
@@ -27,10 +26,7 @@ public sealed record WelcomeGreeting(
     string? WeatherBrief,
     string? MemoSummary,
     string? GreetingLine,
-    WelcomePoemLine? Poem);
-
-/// <summary>当天的一句诗词。没有可用行时为 null，前端不留空行。</summary>
-public sealed record WelcomePoemLine(string Text, string? Author, string? Source);
+    string? InspirationLine);
 
 /// <summary>称呼、日期行、实况和备忘摘要拆开，避免大标题重复日期和天气。</summary>
 public sealed record WelcomeLines(
@@ -42,6 +38,7 @@ public sealed record WelcomeLines(
 /// <summary>
 /// 工作台欢迎语。称呼、上海日历日和备忘摘要始终本地生成。
 /// 实况、特别预警和新闻失败、超时或未配置时直接省略，不影响称呼和日期。
+/// 大标题来自代码里的时段、下雨和周五池。小句交给 DeepSeek，失败则为 null。
 /// </summary>
 public sealed class WelcomeGreetingService : IWelcomeGreetingService
 {
@@ -49,13 +46,24 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     private readonly IReadOnlyList<FeatureLaunchNote> _featureNotes;
     private readonly IWelcomeWeatherSource _weather;
     private readonly IWelcomeNewsSource _news;
+    private readonly IWelcomeInspirationSource _inspiration;
 
     public WelcomeGreetingService(
         MiraiNoteDbContext db,
         ISevereWeatherWarningSource weather,
         IWelcomeNewsSource news,
         IWelcomeWeatherSource welcomeWeather)
-        : this(db, FeatureLaunchCatalog.Release, weather, news, welcomeWeather)
+        : this(db, FeatureLaunchCatalog.Release, weather, news, welcomeWeather, null)
+    {
+    }
+
+    public WelcomeGreetingService(
+        MiraiNoteDbContext db,
+        ISevereWeatherWarningSource weather,
+        IWelcomeNewsSource news,
+        IWelcomeWeatherSource welcomeWeather,
+        IWelcomeInspirationSource inspiration)
+        : this(db, FeatureLaunchCatalog.Release, weather, news, welcomeWeather, inspiration)
     {
     }
 
@@ -69,12 +77,14 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         FeatureLaunchCatalog catalog,
         ISevereWeatherWarningSource weather,
         IWelcomeNewsSource news,
-        IWelcomeWeatherSource? welcomeWeather = null)
+        IWelcomeWeatherSource? welcomeWeather = null,
+        IWelcomeInspirationSource? inspiration = null)
     {
         _db = db;
         _featureNotes = catalog.Notes;
         _weather = welcomeWeather ?? weather as IWelcomeWeatherSource ?? DisabledWelcomeWeather.Instance;
         _news = news;
+        _inspiration = inspiration ?? DisabledInspiration.Instance;
     }
 
     public async Task<WelcomeGreeting> GetGreetingAsync(
@@ -115,9 +125,8 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         var lines = Arrange(name, today, dueToday, unfinishedElsewhere, weather.NowText, weather.NowTemp);
         var wall = ShanghaiClock.ToShanghaiWall(utcNow);
         var slot = ResolveSlot(wall, weather.NowText, today);
-        // 每次现查。停用和软删立刻生效，不在这里做长时间缓存。
-        var greetingLine = await ReadGreetingLineAsync(slot, name, today, ct);
-        var poem = await ReadPoemAsync(today, ct);
+        var greetingLine = ReadGreetingLine(slot, name, today);
+        var inspiration = await ReadInspirationAsync(user?.WeatherPlace, weather, wall, ct);
 
         return new WelcomeGreeting(
             lines.DisplayName,
@@ -129,7 +138,29 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
             lines.WeatherBrief,
             lines.MemoSummary,
             greetingLine,
-            poem);
+            inspiration);
+    }
+
+    private async Task<string?> ReadInspirationAsync(
+        string? place,
+        WelcomeWeather weather,
+        DateTime shanghaiWall,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _inspiration.GetLineAsync(
+                new WelcomeInspirationContext(place, weather.NowText, weather.NowTemp, shanghaiWall),
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private async Task<WelcomeWeather> ReadWeatherAsync(string? place, CancellationToken ct)
@@ -240,11 +271,11 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     public static string PeriodOf(DateTime shanghaiWall)
     {
         var hour = shanghaiWall.Hour;
-        if (hour >= 5 && hour < 11) return WelcomePhrasePeriod.Morning;
-        if (hour >= 11 && hour < 13) return WelcomePhrasePeriod.Noon;
-        if (hour >= 13 && hour < 18) return WelcomePhrasePeriod.Afternoon;
-        if (hour >= 18 && hour < 23) return WelcomePhrasePeriod.Evening;
-        return WelcomePhrasePeriod.LateNight;
+        if (hour >= 5 && hour < 11) return WelcomeGreetingCopy.Morning;
+        if (hour >= 11 && hour < 13) return WelcomeGreetingCopy.Noon;
+        if (hour >= 13 && hour < 18) return WelcomeGreetingCopy.Afternoon;
+        if (hour >= 18 && hour < 23) return WelcomeGreetingCopy.Evening;
+        return WelcomeGreetingCopy.LateNight;
     }
 
     /// <summary>
@@ -254,12 +285,12 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     public static string ResolveSlot(DateTime shanghaiWall, string? weatherNowText, DateOnly shanghaiDate)
     {
         var period = PeriodOf(shanghaiWall);
-        if (period == WelcomePhrasePeriod.LateNight)
-            return WelcomePhrasePeriod.LateNight;
+        if (period == WelcomeGreetingCopy.LateNight)
+            return WelcomeGreetingCopy.LateNight;
         if (IsRainNow(weatherNowText))
-            return WelcomePhraseSpecial.Rain;
+            return WelcomeGreetingCopy.Rain;
         if (shanghaiDate.DayOfWeek == DayOfWeek.Friday)
-            return WelcomePhraseSpecial.Friday;
+            return WelcomeGreetingCopy.Friday;
         return period;
     }
 
@@ -269,10 +300,10 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
     /// <summary>3–5 春，6–8 夏，9–11 秋，12、1、2 冬。</summary>
     public static string SeasonOf(DateOnly shanghaiDate) => shanghaiDate.Month switch
     {
-        >= 3 and <= 5 => WelcomePhraseSeason.Spring,
-        >= 6 and <= 8 => WelcomePhraseSeason.Summer,
-        >= 9 and <= 11 => WelcomePhraseSeason.Autumn,
-        _ => WelcomePhraseSeason.Winter,
+        >= 3 and <= 5 => WelcomeGreetingCopy.Spring,
+        >= 6 and <= 8 => WelcomeGreetingCopy.Summer,
+        >= 9 and <= 11 => WelcomeGreetingCopy.Autumn,
+        _ => WelcomeGreetingCopy.Winter,
     };
 
     /// <summary>
@@ -286,15 +317,14 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
 
         var bias = slot switch
         {
-            WelcomePhrasePeriod.Morning => 0,
-            WelcomePhrasePeriod.Noon => 1,
-            WelcomePhrasePeriod.Afternoon => 2,
-            WelcomePhrasePeriod.Evening => 3,
-            WelcomePhrasePeriod.LateNight => 4,
-            WelcomePhraseSpecial.Rain => 5,
-            WelcomePhraseSpecial.Friday => 6,
-            "poem" => 7,
-            _ => 8,
+            WelcomeGreetingCopy.Morning => 0,
+            WelcomeGreetingCopy.Noon => 1,
+            WelcomeGreetingCopy.Afternoon => 2,
+            WelcomeGreetingCopy.Evening => 3,
+            WelcomeGreetingCopy.LateNight => 4,
+            WelcomeGreetingCopy.Rain => 5,
+            WelcomeGreetingCopy.Friday => 6,
+            _ => 7,
         };
         var mixed = shanghaiDate.DayNumber + bias;
         var index = mixed % count;
@@ -306,24 +336,6 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         if (orderedById.Count == 0)
             return default;
         return orderedById[PickIndex(shanghaiDate, slot, orderedById.Count)];
-    }
-
-    /// <summary>优先当前季节。该季没有启用的诗词时，退回任意启用诗词。</summary>
-    public static T? PickPoem<T>(IReadOnlyList<T> enabledOrderedById, DateOnly shanghaiDate, Func<T, string?> season)
-    {
-        if (enabledOrderedById.Count == 0)
-            return default;
-
-        var current = SeasonOf(shanghaiDate);
-        var seasonal = new List<T>();
-        foreach (var item in enabledOrderedById)
-        {
-            if (string.Equals(season(item), current, StringComparison.Ordinal))
-                seasonal.Add(item);
-        }
-
-        var pool = seasonal.Count > 0 ? (IReadOnlyList<T>)seasonal : enabledOrderedById;
-        return pool[PickIndex(shanghaiDate, "poem", pool.Count)];
     }
 
     public static string FillName(string text, string name)
@@ -357,37 +369,11 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         return true;
     }
 
-    private async Task<string?> ReadGreetingLineAsync(string slot, string name, DateOnly today, CancellationToken ct)
+    private static string? ReadGreetingLine(string slot, string name, DateOnly today)
     {
-        var query = _db.WelcomePhrases.AsNoTracking()
-            .Where(row => row.Kind == WelcomePhraseKind.Greeting && row.IsEnabled);
-        query = slot is WelcomePhraseSpecial.Rain or WelcomePhraseSpecial.Friday
-            ? query.Where(row => row.Special == slot)
-            : query.Where(row => row.Period == slot && (row.Special == null || row.Special == ""));
-
-        var rows = await query
-            .OrderBy(row => row.Id)
-            .Select(row => row.Text)
-            .ToListAsync(ct);
-        var picked = Pick(rows, today, slot);
+        var picked = Pick(WelcomeGreetingCopy.Lines(slot), today, slot);
         return string.IsNullOrWhiteSpace(picked) ? null : FillName(picked, name);
     }
-
-    private async Task<WelcomePoemLine?> ReadPoemAsync(DateOnly today, CancellationToken ct)
-    {
-        var rows = await _db.WelcomePhrases.AsNoTracking()
-            .Where(row => row.Kind == WelcomePhraseKind.Poem && row.IsEnabled)
-            .OrderBy(row => row.Id)
-            .Select(row => new { row.Text, row.Author, row.Source, row.Season })
-            .ToListAsync(ct);
-        var picked = PickPoem(rows, today, row => row.Season);
-        if (picked == null || string.IsNullOrWhiteSpace(picked.Text))
-            return null;
-        return new WelcomePoemLine(picked.Text.Trim(), BlankToNull(picked.Author), BlankToNull(picked.Source));
-    }
-
-    private static string? BlankToNull(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private sealed class DisabledSevereWeather : ISevereWeatherWarningSource
     {
@@ -408,5 +394,12 @@ public sealed class WelcomeGreetingService : IWelcomeGreetingService
         public static readonly DisabledWelcomeWeather Instance = new();
         public Task<WelcomeWeather> GetAsync(string? place, CancellationToken ct = default) =>
             Task.FromResult(default(WelcomeWeather));
+    }
+
+    private sealed class DisabledInspiration : IWelcomeInspirationSource
+    {
+        public static readonly DisabledInspiration Instance = new();
+        public Task<string?> GetLineAsync(WelcomeInspirationContext context, CancellationToken ct = default) =>
+            Task.FromResult<string?>(null);
     }
 }

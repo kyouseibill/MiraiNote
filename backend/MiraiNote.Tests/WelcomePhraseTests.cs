@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -12,10 +12,7 @@ using MiraiNote.API.Controllers;
 using MiraiNote.Core.Services;
 using MiraiNote.Data.Context;
 using MiraiNote.Data.Entities;
-using MiraiNote.Data.Migrations;
-using MiraiNote.Shared;
 using MiraiNote.Shared.Common;
-using MiraiNote.Shared.Dtos.Welcome;
 using Xunit;
 
 namespace MiraiNote.Tests;
@@ -87,7 +84,6 @@ public class WelcomePhraseTests : IDisposable
         user.Nickname = "雅美";
         user.WeatherPlace = "中国-上海";
         await db.SaveChangesAsync();
-        await SeedSlots(db);
 
         var morning = await Greet(db, Shanghai(2026, 10, 8, 10, 0), "多云");
         var noon = await Greet(db, Shanghai(2026, 10, 8, 12, 0), "多云");
@@ -98,16 +94,17 @@ public class WelcomePhraseTests : IDisposable
         var friday = await Greet(db, Shanghai(2026, 10, 9, 10, 0), "晴");
         var noPlace = await GreetWithoutPlace(Shanghai(2026, 10, 8, 10, 0));
 
-        Assert.Equal("早上好，雅美", morning.GreetingLine);
-        Assert.Equal("中午好，雅美", noon.GreetingLine);
-        Assert.Equal("下午好，雅美", afternoon.GreetingLine);
-        Assert.Equal("晚上好，雅美", evening.GreetingLine);
-        Assert.Equal("夜深了，雅美", late.GreetingLine);
+        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "雅美"), morning.GreetingLine);
+        Assert.Equal(Line("noon", new DateOnly(2026, 10, 8), "雅美"), noon.GreetingLine);
+        Assert.Equal(Line("afternoon", new DateOnly(2026, 10, 8), "雅美"), afternoon.GreetingLine);
+        Assert.Equal(Line("evening", new DateOnly(2026, 10, 8), "雅美"), evening.GreetingLine);
+        Assert.Equal(Line("latenight", new DateOnly(2026, 10, 9), "雅美"), late.GreetingLine);
         Assert.Equal("下雨了，雅美，记得带伞", rain.GreetingLine);
         Assert.Equal("周五了，雅美", friday.GreetingLine);
-        Assert.Equal("早上好，雅美", noPlace.GreetingLine);
+        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "雅美"), noPlace.GreetingLine);
         Assert.Equal("雅美", morning.Content);
         Assert.Equal("雅美", morning.DisplayName);
+        Assert.Null(morning.InspirationLine);
     }
 
     [Fact]
@@ -115,108 +112,24 @@ public class WelcomePhraseTests : IDisposable
     {
         await using var db = _fx.CreateContext();
         var userId = await db.Users.Select(u => u.Id).SingleAsync();
-        db.WelcomePhrases.AddRange(
-            Phrase("greeting", "{name}，甲", period: "morning", sort: 50),
-            Phrase("greeting", "{name}，乙", period: "morning", sort: 1),
-            Phrase("greeting", "{name}，丙", period: "morning", sort: 0),
-            Phrase("greeting", "{name}，丁", period: "morning", sort: 9));
-        await db.SaveChangesAsync();
 
         var first = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
         var again = await Greet(db, Shanghai(2026, 10, 8, 9, 30), null);
-        var next = await Greet(db, Shanghai(2026, 10, 15, 9, 0), null);
-        var ordered = await db.WelcomePhrases.AsNoTracking().OrderBy(row => row.Id).Select(row => row.Text).ToListAsync();
-        var expected = WelcomeGreetingService.FillName(
-            ordered[WelcomeGreetingService.PickIndex(new DateOnly(2026, 10, 8), "morning", ordered.Count)],
-            "tester");
+        var next = await Greet(db, Shanghai(2026, 10, 9, 9, 0), null);
 
-        Assert.Equal(expected, first.GreetingLine);
+        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "tester"), first.GreetingLine);
         Assert.Equal(first.GreetingLine, again.GreetingLine);
         Assert.NotEqual(first.GreetingLine, next.GreetingLine);
         Assert.Equal(userId, await db.Users.Select(u => u.Id).SingleAsync());
     }
 
     [Fact]
-    public async Task EmptyOrDisabledGreetingPool_ReturnsNull()
+    public void EmptyPool_ReturnsNull_ButBuiltinPoolsAreFilled()
     {
-        await using var db = _fx.CreateContext();
-        var empty = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        Assert.Null(empty.GreetingLine);
-
-        db.WelcomePhrases.Add(Phrase("greeting", "早安，{name}", period: "morning", enabled: false));
-        await db.SaveChangesAsync();
-        var disabled = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        Assert.Null(disabled.GreetingLine);
-    }
-
-    [Fact]
-    public async Task DisabledOrDeletedRow_DropsOutImmediately()
-    {
-        await using var db = _fx.CreateContext();
-        var row = Phrase("greeting", "早安，{name}", period: "morning");
-        db.WelcomePhrases.Add(row);
-        await db.SaveChangesAsync();
-
-        var before = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        row.IsEnabled = false;
-        await db.SaveChangesAsync();
-        var disabled = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        row.IsEnabled = true;
-        row.IsDeleted = true;
-        await db.SaveChangesAsync();
-        var deleted = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-
-        Assert.Equal("早安，tester", before.GreetingLine);
-        Assert.Null(disabled.GreetingLine);
-        Assert.Null(deleted.GreetingLine);
-    }
-
-    [Fact]
-    public async Task Poem_PrefersTheSeason_ThenAnyEnabledPoem()
-    {
-        await using var db = _fx.CreateContext();
-        db.WelcomePhrases.AddRange(
-            Phrase("poem", "春句", author: "甲", source: "春题", season: "spring"),
-            Phrase("poem", "秋句", author: "乙", source: "秋题", season: "autumn"),
-            Phrase("poem", "停用秋句", author: "丙", source: "秋题二", season: "autumn", enabled: false));
-        await db.SaveChangesAsync();
-
-        var october = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        Assert.Equal("秋句", october.Poem!.Text);
-        Assert.Equal("乙", october.Poem.Author);
-        Assert.Equal("秋题", october.Poem.Source);
-
-        var autumn = await db.WelcomePhrases.SingleAsync(row => row.Text == "秋句");
-        autumn.IsEnabled = false;
-        await db.SaveChangesAsync();
-
-        var fallback = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        Assert.Equal("春句", fallback.Poem!.Text);
-        Assert.Equal("甲", fallback.Poem.Author);
-        Assert.Equal("春题", fallback.Poem.Source);
-
-        var spring = await db.WelcomePhrases.SingleAsync(row => row.Text == "春句");
-        spring.IsDeleted = true;
-        await db.SaveChangesAsync();
-        var none = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
-        Assert.Null(none.Poem);
-    }
-
-    [Fact]
-    public async Task Poem_IsStableForTheDay_AndChangesTheNextDay()
-    {
-        await using var db = _fx.CreateContext();
-        db.WelcomePhrases.AddRange(
-            Phrase("poem", "秋一", author: "甲", source: "其一", season: "autumn"),
-            Phrase("poem", "秋二", author: "乙", source: "其二", season: "autumn"));
-        await db.SaveChangesAsync();
-
-        var morning = await Greet(db, Shanghai(2026, 10, 8, 8, 0), null);
-        var evening = await Greet(db, Shanghai(2026, 10, 8, 21, 0), null);
-        var next = await Greet(db, Shanghai(2026, 10, 9, 8, 0), null);
-
-        Assert.Equal(morning.Poem!.Text, evening.Poem!.Text);
-        Assert.NotEqual(morning.Poem.Text, next.Poem!.Text);
+        Assert.Null(WelcomeGreetingService.Pick(Array.Empty<string>(), new DateOnly(2026, 10, 8), "morning"));
+        Assert.NotEmpty(WelcomeGreetingCopy.MorningLines);
+        Assert.NotEmpty(WelcomeGreetingCopy.RainLines);
+        Assert.NotEmpty(WelcomeGreetingCopy.FridayLines);
     }
 
     [Fact]
@@ -224,8 +137,6 @@ public class WelcomePhraseTests : IDisposable
     {
         await using var db = _fx.CreateContext();
         var userId = await db.Users.Select(u => u.Id).SingleAsync();
-        db.WelcomePhrases.Add(Phrase("greeting", "早安，{name}", period: "morning"));
-        await db.SaveChangesAsync();
         var clock = new FixedClock(Shanghai(2026, 10, 9, 10, 0));
         var service = new WelcomeGreetingService(db, new FeatureLaunchCatalog([]));
 
@@ -242,65 +153,62 @@ public class WelcomePhraseTests : IDisposable
         var shiftedBody = Body(shifted);
         var spaceBody = Body(fromSpace);
         var brokenBody = Body(broken);
+        var morning = Line("morning", new DateOnly(2026, 10, 8), "tester");
 
         Assert.Equal("10月9日 · 周五", ignoredBody.DateLine);
-        Assert.Null(ignoredBody.GreetingLine);
+        Assert.Equal("周五了，tester", ignoredBody.GreetingLine);
         Assert.Equal("10月8日 · 周四", shiftedBody.DateLine);
-        Assert.Equal("早安，tester", shiftedBody.GreetingLine);
+        Assert.Equal(morning, shiftedBody.GreetingLine);
         Assert.Equal("10月8日 · 周四", spaceBody.DateLine);
-        Assert.Equal("早安，tester", spaceBody.GreetingLine);
+        Assert.Equal(morning, spaceBody.GreetingLine);
         Assert.Equal("10月9日 · 周五", brokenBody.DateLine);
+        Assert.Equal("周五了，tester", brokenBody.GreetingLine);
+        Assert.Null(ignoredBody.InspirationLine);
         Assert.False(WelcomeGreetingService.AllowsWelcomeNowOverride(new TestHostEnvironment("Production")));
         Assert.True(WelcomeGreetingService.AllowsWelcomeNowOverride(new TestHostEnvironment("Development")));
         Assert.True(WelcomeGreetingService.AllowsWelcomeNowOverride(new TestHostEnvironment("Test")));
     }
 
     [Fact]
-    public async Task Admin_RejectsUnknownKind_AndSoftDeletes()
+    public void GreetingResponse_HasInspirationLine_AndNoAuthorOrSource()
     {
-        await using var db = _fx.CreateContext();
-        var admin = new WelcomePhraseAdminService(db);
-        var created = await admin.CreateAsync(new WelcomePhraseWriteRequest
-        {
-            Kind = "poem",
-            Text = "春眠不觉晓，处处闻啼鸟。",
-            Author = "孟浩然",
-            Source = "春晓",
-            Season = "spring",
-            SortOrder = 3,
-        });
-        Assert.True(created.IsEnabled);
+        var type = typeof(WelcomeGreetingResponse);
+        Assert.NotNull(type.GetProperty(nameof(WelcomeGreetingResponse.InspirationLine)));
+        Assert.NotNull(type.GetProperty(nameof(WelcomeGreetingResponse.GreetingLine)));
+        Assert.Null(type.GetProperty("Poem"));
+        Assert.Null(type.GetProperty("Author"));
+        Assert.Null(type.GetProperty("Source"));
 
-        var disabled = await admin.SetEnabledAsync(created.Id, false);
-        Assert.False(disabled.IsEnabled);
-        var listed = await admin.ListAsync(null);
-        Assert.Contains(listed, row => row.Id == created.Id && !row.IsEnabled);
-
-        await admin.DeleteAsync(created.Id);
-        Assert.Empty(await admin.ListAsync("poem"));
-
-        var ex = await Assert.ThrowsAsync<BusinessException>(() => admin.CreateAsync(new WelcomePhraseWriteRequest
-        {
-            Kind = "haiku",
-            Text = "一句",
-        }));
-        Assert.Equal(400, ex.StatusCode);
+        var sample = new WelcomeGreetingResponse(
+            "雅美",
+            null,
+            null,
+            [],
+            "雅美",
+            "10月9日 · 周五",
+            null,
+            null,
+            "周五了，雅美",
+            "今天不必赶完所有事，把眼前这一小步走稳。");
+        var json = JsonSerializer.Serialize(sample, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains("\"inspirationLine\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("poem", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("author", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("source", json, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task AdminEndpoint_NonAdminIsForbidden_AdminCanList()
+    [Theory]
+    [InlineData("GET", "/api/v1/admin/welcome-phrases")]
+    [InlineData("POST", "/api/v1/admin/welcome-phrases")]
+    [InlineData("PUT", "/api/v1/admin/welcome-phrases/1")]
+    [InlineData("PATCH", "/api/v1/admin/welcome-phrases/1/enabled")]
+    [InlineData("DELETE", "/api/v1/admin/welcome-phrases/1")]
+    public async Task AdminEndpoints_AreNotFound(string method, string path)
     {
         await using var factory = new WelcomePhraseApiFactory();
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MiraiNoteDbContext>();
         await db.Database.EnsureCreatedAsync();
-        var member = new User
-        {
-            Username = "member",
-            Email = "member@example.com",
-            PasswordHash = "hash",
-            IsAdmin = false,
-        };
         var admin = new User
         {
             Username = "root",
@@ -308,47 +216,26 @@ public class WelcomePhraseTests : IDisposable
             PasswordHash = "hash",
             IsAdmin = true,
         };
-        db.Users.AddRange(member, admin);
+        db.Users.Add(admin);
         await db.SaveChangesAsync();
 
         var tokens = scope.ServiceProvider.GetRequiredService<IJwtTokenService>();
-        var memberToken = tokens.GenerateAccessToken(member).token;
-        var adminToken = tokens.GenerateAccessToken(admin).token;
         var client = factory.CreateClient();
+        var anonymous = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GenerateAccessToken(admin).token);
+        var signedIn = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
 
-        var anonymous = await client.GetAsync("/api/v1/admin/welcome-phrases");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", memberToken);
-        var forbidden = await client.GetAsync("/api/v1/admin/welcome-phrases");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
-        var allowed = await client.GetAsync("/api/v1/admin/welcome-phrases");
-
-        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
-        var body = await allowed.Content.ReadFromJsonAsync<ApiResponse<List<WelcomePhraseDto>>>();
-        Assert.NotNull(body);
-        Assert.True(body!.Success);
-        Assert.NotNull(body.Data);
-    }
-
-    [Fact]
-    public void Migration_GrantsAppUser_AndSeedsAboutSixtyPoems()
-    {
-        Assert.Equal(60, WelcomePhraseMigrationSeed.PoemCount);
-        var migration = Directory.GetFiles(
-                FindRepoDir("backend/MiraiNote.Data/Migrations"),
-                "*AddWelcomePhrase.cs",
-                SearchOption.TopDirectoryOnly)
-            .Single(path => !path.EndsWith(".Designer.cs", StringComparison.Ordinal));
-        var text = File.ReadAllText(migration);
-        Assert.Contains("WelcomePhraseMigrationSeed.Insert", text, StringComparison.Ordinal);
-        Assert.Contains("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'appuser')", text, StringComparison.Ordinal);
-        Assert.Contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"WelcomePhrase\" TO appuser;", text, StringComparison.Ordinal);
-        Assert.Contains("GRANT USAGE, SELECT ON SEQUENCE \"WelcomePhrase_Id_seq\" TO appuser;", text, StringComparison.Ordinal);
-        Assert.Contains("pg_get_serial_sequence('\"WelcomePhrase\"', 'Id')", text, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.NotFound, anonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, signedIn.StatusCode);
     }
 
     public void Dispose() => _fx.Dispose();
+
+    private static string Line(string slot, DateOnly day, string name)
+    {
+        var picked = WelcomeGreetingService.Pick(WelcomeGreetingCopy.Lines(slot), day, slot);
+        return WelcomeGreetingService.FillName(picked!, name);
+    }
 
     private static DateTimeOffset Shanghai(int year, int month, int day, int hour, int minute) =>
         new(year, month, day, hour, minute, 0, TimeSpan.FromHours(8));
@@ -368,66 +255,16 @@ public class WelcomePhraseTests : IDisposable
         user.Nickname = "雅美";
         user.WeatherPlace = null;
         await db.SaveChangesAsync();
-        await SeedSlots(db);
         var rainy = new ScriptedWeather("暴雨");
         var service = new WelcomeGreetingService(db, new FeatureLaunchCatalog([]), rainy, new ScriptedNews(), rainy);
         return await service.GetGreetingAsync(user.Id, moment);
     }
-
-    private static async Task SeedSlots(MiraiNoteDbContext db)
-    {
-        db.WelcomePhrases.AddRange(
-            Phrase("greeting", "早上好，{name}", period: "morning"),
-            Phrase("greeting", "中午好，{name}", period: "noon"),
-            Phrase("greeting", "下午好，{name}", period: "afternoon"),
-            Phrase("greeting", "晚上好，{name}", period: "evening"),
-            Phrase("greeting", "夜深了，{name}", period: "latenight"),
-            Phrase("greeting", "下雨了，{name}，记得带伞", special: "rain"),
-            Phrase("greeting", "周五了，{name}", special: "friday"));
-        await db.SaveChangesAsync();
-    }
-
-    private static WelcomePhrase Phrase(
-        string kind,
-        string text,
-        string? period = null,
-        string? special = null,
-        string? season = null,
-        string? author = null,
-        string? source = null,
-        bool enabled = true,
-        int sort = 0) => new()
-    {
-        Kind = kind,
-        Text = text,
-        Period = period,
-        Special = special,
-        Season = season,
-        Author = author,
-        Source = source,
-        IsEnabled = enabled,
-        SortOrder = sort,
-    };
 
     private static WelcomeGreetingResponse Body(Microsoft.AspNetCore.Mvc.ActionResult<ApiResponse<WelcomeGreetingResponse>> result)
     {
         var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result);
         var body = Assert.IsType<ApiResponse<WelcomeGreetingResponse>>(ok.Value);
         return body.Data!;
-    }
-
-    private static string FindRepoDir(string relative)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir.FullName, relative);
-            if (Directory.Exists(candidate))
-                return candidate;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException(relative);
     }
 
     private sealed class ScriptedWeather(string? nowText) : IWelcomeWeatherSource, ISevereWeatherWarningSource

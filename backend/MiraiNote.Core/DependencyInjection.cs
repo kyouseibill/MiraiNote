@@ -57,6 +57,7 @@ public static class DependencyInjection
         services.AddScoped<Services.Mirai.IDayOverviewService, Services.Mirai.DayOverviewService>();
         services.AddScoped<Services.Mirai.IMiraiStatsService, Services.Mirai.MiraiStatsService>();
         services.AddMemoryCache();
+        services.AddDistributedMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddHttpClient(Services.QWeatherWarningClient.HttpClientName, client =>
         {
@@ -86,8 +87,8 @@ public static class DependencyInjection
         services.AddSingleton<Services.IWelcomeNewsSeenStore, Services.WelcomeNewsSeenStore>();
         services.AddSingleton<Services.IWelcomeNewsSource, Services.WelcomeNewsClient>();
         services.AddScoped<Services.IWelcomePlaceSettingsService, Services.WelcomePlaceSettingsService>();
+        services.AddSingleton<Services.IWelcomeInspirationSource, Services.DeepSeekWelcomeInspiration>();
         services.AddScoped<Services.IWelcomeGreetingService, Services.WelcomeGreetingService>();
-        services.AddScoped<Services.IWelcomePhraseAdminService, Services.WelcomePhraseAdminService>();
         services.AddScoped<Services.Mirai.IMiraiContextProvider, Services.Mirai.MiraiContextProvider>();
         services.AddHostedService<Services.TempCleanupBackgroundService>();
         services.AddScoped<Services.ServerAgentToolRegistry>();
