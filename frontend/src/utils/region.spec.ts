@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterCountries, findExactCountry } from '@/utils/region'
+import { cityDedupeKey, filterCountries, findExactCountry, mergeCityHits } from '@/utils/region'
 
 const countries = [
   { name: '中国', englishName: 'China', code: 'cn' },
@@ -27,5 +27,21 @@ describe('国家搜索匹配', () => {
     expect(findExactCountry(countries, 'us')?.name).toBe('美国')
     expect(findExactCountry(countries, 'Japan')?.name).toBe('日本')
     expect(findExactCountry(countries, '中国')?.code).toBe('cn')
+  })
+
+  it('城市按行政区后缀去重，常用城市只补和风没有的', () => {
+    expect(cityDedupeKey('大阪市')).toBe('大阪')
+    expect(cityDedupeKey('札幌市')).toBe('札幌')
+    expect(cityDedupeKey('东京')).toBe('东京')
+
+    const commons = [
+      { name: '东京' },
+      { name: '大阪' },
+      { name: '札幌市' },
+    ]
+    expect(mergeCityHits([{ name: '大阪市' }], commons, '大阪').map((item) => item.name)).toEqual(['大阪市'])
+    expect(mergeCityHits([], commons, '札幌').map((item) => item.name)).toEqual(['札幌市'])
+    expect(mergeCityHits([], commons, '').map((item) => item.name)).toEqual(['东京', '大阪', '札幌市'])
+    expect(mergeCityHits(Array.from({ length: 20 }, (_, i) => ({ name: `城${i}` })), commons, '东')).toHaveLength(20)
   })
 })

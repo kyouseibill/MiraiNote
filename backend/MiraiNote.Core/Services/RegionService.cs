@@ -39,27 +39,45 @@ public sealed class RegionService : IRegionService
         string? query,
         CancellationToken ct = default)
     {
-        var text = query?.Trim() ?? "";
-        if (text.Length == 0)
-            return [];
-
         var name = country?.Trim() ?? "";
         var match = _countries.FirstOrDefault(item => item.Name == name);
         if (match == null)
             throw new BusinessException("请选择国家");
+
+        var text = query?.Trim() ?? "";
         if (text.Length > 30)
             throw new BusinessException("请输入更短的城市名");
 
-        var names = await _cities.SearchAsync(match.Name, match.Code, text, ct);
+        // 空关键字不请求和风。常用城市来自本地清单。
+        IReadOnlyList<string> found = text.Length == 0
+            ? []
+            : await _cities.SearchAsync(match.Name, match.Code, text, ct);
+        var names = Merge(found, CommonCities.Matching(match.Name, text));
         return names
-            .Where(city => !string.IsNullOrWhiteSpace(city))
-            .Distinct(StringComparer.Ordinal)
-            .Take(10)
             .Select(city => new RegionCityDto
             {
                 Name = city,
                 Label = WelcomePlace.Format(match.Name, city),
             })
             .ToArray();
+    }
+
+    private static IReadOnlyList<string> Merge(IReadOnlyList<string> primary, IReadOnlyList<string> extra)
+    {
+        var result = new List<string>(CityNames.MaxResults);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var city in primary.Concat(extra))
+        {
+            var trimmed = city.Trim();
+            if (trimmed.Length == 0 || WelcomePlace.IsDistrictName(trimmed))
+                continue;
+            if (!seen.Add(CityNames.Key(trimmed)))
+                continue;
+            result.Add(trimmed);
+            if (result.Count == CityNames.MaxResults)
+                break;
+        }
+
+        return result;
     }
 }
