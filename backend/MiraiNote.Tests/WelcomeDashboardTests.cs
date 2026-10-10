@@ -41,6 +41,29 @@ public class WelcomeDashboardTests : IDisposable
     }
 
     [Fact]
+    public async Task CanonicalPlace_QueriesWeather_AndRegionChangeRefreshesImmediately()
+    {
+        var handler = new RecordingHandler(RouteHappy);
+        await SetPlace("中国 · 上海");
+        var first = await Greet(handler, WithKey(ApiKey), cache: _cache);
+
+        Assert.Equal("晴 22°C", first.WeatherBrief);
+        Assert.Equal("10月9日 · 周五 · 晴 22°C", first.DateLine);
+
+        await SetPlace("日本 · 东京");
+        await Greet(handler, WithKey(ApiKey), cache: _cache);
+
+        var geos = handler.Calls.Where(call => call.Uri.AbsolutePath == "/geo/v2/city/lookup").ToList();
+        Assert.Equal(2, geos.Count);
+        Assert.Equal("上海", geos[0].Query["location"]);
+        Assert.Equal("cn", geos[0].Query["range"]);
+        Assert.Equal("东京", geos[1].Query["location"]);
+        Assert.Equal("jp", geos[1].Query["range"]);
+        Assert.DoesNotContain(ApiKey, geos[0].Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.DoesNotContain(ApiKey, geos[1].Uri.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MissingApiKey_HidesWeather_AndStillReturnsNews()
     {
         var handler = new RecordingHandler(RouteHappy);
@@ -319,9 +342,9 @@ public class WelcomeDashboardTests : IDisposable
         var userId = await lookup.Users.Select(u => u.Id).SingleAsync();
 
         var saved = await service.UpdateAsync(userId, "  中国 - 上海  ", "  雅美  ");
-        Assert.Equal("中国 - 上海", saved.Place);
+        Assert.Equal("中国 · 上海", saved.Place);
         Assert.Equal("雅美", saved.Nickname);
-        Assert.Equal("中国 - 上海", (await service.GetAsync(userId)).Place);
+        Assert.Equal("中国 · 上海", (await service.GetAsync(userId)).Place);
         Assert.Equal("雅美", (await service.GetAsync(userId)).Nickname);
 
         var cleared = await service.UpdateAsync(userId, "   ", "   ");
@@ -552,7 +575,7 @@ public class WelcomeDashboardTests : IDisposable
 
         var current = await service.GetAsync(userId);
         Assert.Equal(twenty, current.Nickname);
-        Assert.Equal("中国-上海", current.Place);
+        Assert.Equal("中国 · 上海", current.Place);
         var json = JsonSerializer.Serialize(current);
         Assert.DoesNotContain("unitTestBarkKey1", json, StringComparison.Ordinal);
         Assert.DoesNotContain("Password", json, StringComparison.Ordinal);

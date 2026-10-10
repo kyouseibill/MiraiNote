@@ -6,6 +6,9 @@ import { useToast } from '@/composables/useToast'
 import { useResendCooldown } from '@/composables/useResendCooldown'
 import { useRouter } from 'vue-router'
 import { IconLogout } from '@tabler/icons-vue'
+import RegionPicker from '@/components/RegionPicker.vue'
+import RegionPrompt from '@/components/RegionPrompt.vue'
+import { formatRegion, parseRegion } from '@/utils/region'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -49,10 +52,13 @@ function fmtDate(iso: string | null): string {
 const barkKey = ref('')
 const barkConfigured = ref(false)
 const barkSubmitting = ref(false)
-const weatherPlace = ref('')
-const weatherSubmitting = ref(false)
+const savedPlace = ref('')
+const regionPlace = ref('')
+const regionSubmitting = ref(false)
+const regionPromptDismissed = ref(false)
 const nickname = ref('')
 const nicknameSubmitting = ref(false)
+const showRegionPrompt = computed(() => !savedPlace.value.trim() && !regionPromptDismissed.value)
 
 onMounted(async () => {
   try {
@@ -62,28 +68,32 @@ onMounted(async () => {
     // 拦截器已 toast
   }
   try {
-    const settings = await authApi.getWelcomeSettings()
-    weatherPlace.value = settings.place ?? ''
-    nickname.value = settings.nickname ?? ''
+    applyWelcome(await authApi.getWelcomeSettings())
   } catch {
     // 拦截器已 toast
   }
 })
 
-async function saveWeatherPlace() {
-  weatherSubmitting.value = true
+function applyWelcome(settings: { place: string | null; nickname: string | null }) {
+  savedPlace.value = settings.place ?? ''
+  nickname.value = settings.nickname ?? ''
+  const parsed = parseRegion(settings.place)
+  regionPlace.value = parsed ? formatRegion(parsed.country, parsed.city) : ''
+}
+
+async function saveRegion() {
+  regionSubmitting.value = true
   try {
     const settings = await authApi.updateWelcomeSettings({
-      place: weatherPlace.value.trim(),
+      place: regionPlace.value.trim(),
       nickname: nickname.value.trim(),
     })
-    weatherPlace.value = settings.place ?? ''
-    nickname.value = settings.nickname ?? ''
-    toast.success(weatherPlace.value ? '国家-城市已保存' : '已关闭天气')
+    applyWelcome(settings)
+    toast.success(savedPlace.value ? '所在地区已保存' : '已关闭天气')
   } catch {
     // 拦截器已 toast
   } finally {
-    weatherSubmitting.value = false
+    regionSubmitting.value = false
   }
 }
 
@@ -91,11 +101,10 @@ async function saveNickname() {
   nicknameSubmitting.value = true
   try {
     const settings = await authApi.updateWelcomeSettings({
-      place: weatherPlace.value.trim(),
+      place: savedPlace.value.trim(),
       nickname: nickname.value.trim(),
     })
-    weatherPlace.value = settings.place ?? ''
-    nickname.value = settings.nickname ?? ''
+    applyWelcome(settings)
     toast.success(nickname.value ? '昵称已保存' : '已改回用户名')
   } catch {
     // 拦截器已 toast
@@ -131,6 +140,8 @@ async function handleLogout() {
 
 <template>
   <div class="max-w-3xl mx-auto px-4 py-6 sm:px-6 lg:py-10 space-y-8">
+
+    <RegionPrompt v-if="showRegionPrompt" settings @skip="regionPromptDismissed = true" />
 
     <!-- 账户信息卡 -->
     <section class="surface-card overflow-hidden">
@@ -260,36 +271,20 @@ async function handleLogout() {
       </form>
     </section>
 
-    <!-- 天气位置 -->
-    <section class="surface-card">
+    <!-- 所在地区。和注册页共用选择器，只保留国家、城市两级。 -->
+    <section id="region" class="surface-card">
       <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">天气位置</h2>
-        <p class="text-sm text-gray-500 mt-0.5">填写后，工作台日期行会带上当天实况和气温；有特别预警时另起一行。留空则不查询、不显示。</p>
+        <h2 class="font-semibold text-gray-900">所在地区</h2>
+        <p class="text-sm text-gray-500 mt-0.5">先选国家，再选城市。填写后，工作台日期行会带上当天实况和气温；留空并保存则不查询、不显示。</p>
       </div>
-      <form class="px-6 py-5 space-y-3" data-testid="weather-place-form" @submit.prevent="saveWeatherPlace">
-        <div>
-          <label class="block text-sm text-gray-700 mb-1" for="weather-place">国家-城市</label>
-          <input
-            id="weather-place"
-            v-model="weatherPlace"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            maxlength="80"
-            data-testid="weather-place-input"
-            placeholder="例如 中国-上海"
-            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-          />
-          <p class="mt-1 text-xs text-gray-500" data-testid="weather-place-status">
-            当前：{{ weatherPlace ? weatherPlace : '未填写' }}。留空并保存后，工作台不显示天气。
-          </p>
-        </div>
+      <form class="px-6 py-5 space-y-3" data-testid="region-form" @submit.prevent="saveRegion">
+        <RegionPicker v-model="regionPlace" />
         <button
           type="submit"
           class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-          :disabled="weatherSubmitting"
+          :disabled="regionSubmitting"
         >
-          {{ weatherSubmitting ? '保存中…' : '保存' }}
+          {{ regionSubmitting ? '保存中…' : '保存' }}
         </button>
       </form>
     </section>

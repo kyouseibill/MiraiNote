@@ -15,6 +15,13 @@ vi.mock('@/api/workLog', () => ({
   },
 }))
 
+vi.mock('@/api/auth', () => ({
+  bindAuthHooks: vi.fn(),
+  authApi: {
+    getWelcomeSettings: vi.fn().mockResolvedValue({ place: '中国 · 上海', nickname: null }),
+  },
+}))
+
 vi.mock('@/api/welcome', () => ({
   welcomeApi: {
     getGreeting: vi.fn().mockResolvedValue({
@@ -30,6 +37,7 @@ vi.mock('@/api/welcome', () => ({
   },
 }))
 
+import { authApi } from '@/api/auth'
 import { welcomeApi, type WelcomeGreeting } from '@/api/welcome'
 import { composeGreeting } from '@/utils/greetingPeriod'
 import DashboardView from '@/views/DashboardView.vue'
@@ -68,6 +76,7 @@ describe('工作台欢迎语挂载', () => {
     vi.useFakeTimers()
     vi.setSystemTime(fixedNow)
     vi.mocked(welcomeApi.getGreeting).mockResolvedValue(greeting({ displayName: 'tester' }))
+    vi.mocked(authApi.getWelcomeSettings).mockResolvedValue({ place: '中国 · 上海', nickname: null })
   })
 
   afterEach(() => {
@@ -398,5 +407,30 @@ describe('工作台欢迎语挂载', () => {
     expect(heading).not.toBe('周五了，Bill')
     expect(heading).not.toContain('雷阵雨')
     wrapper.unmount()
+  })
+
+  it('没填所在地区时每次进入工作台都提醒，跳过只对这一次生效', async () => {
+    vi.mocked(authApi.getWelcomeSettings).mockResolvedValue({ place: null, nickname: null })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: DashboardView },
+        { path: '/profile', component: { template: '<div>profile</div>' } },
+      ],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    const first = mount(DashboardView, { global: { plugins: [createPinia(), router] } })
+    await reveal()
+    expect(first.get('[data-testid="region-prompt"]').text()).toContain('所在地区')
+    await first.get('[data-testid="region-prompt-skip"]').trigger('click')
+    expect(first.find('[data-testid="region-prompt"]').exists()).toBe(false)
+    first.unmount()
+
+    const again = mount(DashboardView, { global: { plugins: [createPinia(), router] } })
+    await reveal()
+    expect(again.get('[data-testid="region-prompt"]').text()).toContain('下次打开工作台还会再提醒')
+    again.unmount()
   })
 })

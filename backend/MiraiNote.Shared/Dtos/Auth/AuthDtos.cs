@@ -8,6 +8,9 @@ public class RegisterRequest
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public string ConfirmPassword { get; set; } = string.Empty;
+
+    /// <summary>所在地区，例如「中国 · 上海」。注册必填。</summary>
+    public string? Place { get; set; }
 }
 
 public class LoginRequest

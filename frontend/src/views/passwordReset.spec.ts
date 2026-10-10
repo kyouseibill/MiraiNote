@@ -4,6 +4,13 @@ import { defineComponent, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/api/region', () => ({
+  regionApi: {
+    countries: vi.fn().mockResolvedValue([{ name: '中国', code: 'cn' }]),
+    cities: vi.fn().mockResolvedValue([]),
+  },
+}))
+
 vi.mock('@/api/auth', () => ({
   bindAuthHooks: vi.fn(),
   authApi: {

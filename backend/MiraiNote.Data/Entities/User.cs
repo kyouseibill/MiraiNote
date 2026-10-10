@@ -53,8 +53,8 @@ public class User : BaseEntity
     public string? BarkDeviceKey { get; set; }
 
     /// <summary>
-    /// 工作台天气用的「国家-城市」，例如「中国-上海」。空表示不查天气、不显示天气。
-    /// 这不是密钥，可以回显给本人编辑。
+    /// 所在地区，规范写法是「中国 · 上海」。旧的「中国-上海」仍能查天气。
+    /// 空表示不查天气、不显示天气。这不是密钥，可以回显给本人编辑。
     /// </summary>
     [MaxLength(80)]
     public string? WeatherPlace { get; set; }

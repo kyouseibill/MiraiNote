@@ -27,6 +27,7 @@ public class WelcomeInspirationTests : IDisposable
         var otherWeather = Key("中国-上海", "小雨", "22", thursday);
         var nextHour = Key("中国-上海", "多云", "22", thursday.AddHours(1));
         var tokyo = Key("日本-东京", "多云", "22", thursday);
+        var dotted = Key("中国 · 上海", "多云", "22", thursday);
         var noCity = Key(null, "暴雨", "30", thursday);
         var noCityOtherWeather = Key("  ", "晴", "1", thursday);
 
@@ -35,11 +36,32 @@ public class WelcomeInspirationTests : IDisposable
         Assert.NotEqual(shanghai, otherWeather);
         Assert.NotEqual(shanghai, nextHour);
         Assert.NotEqual(shanghai, tokyo);
+        Assert.Equal(shanghai, dotted);
         Assert.Equal(noCity, noCityOtherWeather);
         Assert.Contains("_none", noCity, StringComparison.Ordinal);
         Assert.DoesNotContain("暴雨", noCity, StringComparison.Ordinal);
         Assert.Equal(-5, DeepSeekWelcomeInspiration.TempBand("-3"));
         Assert.Equal(TimeSpan.FromSeconds(2), DeepSeekWelcomeInspiration.DefaultTimeout);
+    }
+
+    [Fact]
+    public async Task CityChange_RegeneratesWithoutWaitingForTheHour()
+    {
+        var calls = 0;
+        var handler = new ScriptHandler(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(Ok(Line));
+        });
+        var inspiration = Create(handler, DeepSeekWelcomeInspiration.DefaultTimeout);
+        var wall = new DateTime(2026, 10, 8, 15, 0, 0);
+
+        Assert.Equal(Line, await inspiration.GetLineAsync(new WelcomeInspirationContext("中国 · 上海", "多云", "22", wall)));
+        Assert.Equal(Line, await inspiration.GetLineAsync(new WelcomeInspirationContext("中国 · 上海", "多云", "24", wall)));
+        Assert.Equal(1, calls);
+
+        Assert.Equal(Line, await inspiration.GetLineAsync(new WelcomeInspirationContext("日本 · 东京", "多云", "22", wall)));
+        Assert.Equal(2, calls);
     }
 
     [Fact]

@@ -16,6 +16,38 @@ namespace MiraiNote.Tests;
 public class EmailVerificationAcceptanceTests
 {
     [Fact]
+    public async Task Register_WithoutRegion_IsRejectedAndCreatesNoUser()
+    {
+        using var h = new Harness(requireVerification: false);
+        var request = Bill();
+        request.Place = "  ";
+
+        var ex = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.RegisterAsync(request));
+
+        Assert.Equal("请选择所在地区", ex.Message);
+        Assert.False(await h.Db.Users.AnyAsync(u => u.Email == "bill@example.com"));
+    }
+
+    [Fact]
+    public async Task Register_StoresCanonicalRegion_AndRejectsDistrict()
+    {
+        using var h = new Harness(requireVerification: false);
+        var request = Bill();
+        request.Place = "中国-上海";
+        await h.Auth.RegisterAsync(request);
+
+        var place = await h.Db.Users.Where(u => u.Email == "bill@example.com").Select(u => u.WeatherPlace).SingleAsync();
+        Assert.Equal("中国 · 上海", place);
+
+        request.Username = "OtherUser";
+        request.Email = "other@example.com";
+        request.Place = "中国 · 徐汇区";
+        var ex = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.RegisterAsync(request));
+        Assert.Equal("请选择城市", ex.Message);
+        Assert.DoesNotContain("徐汇", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Register_LinkIsAbsoluteAndUsernameKeepsDisplayCase()
     {
         using var h = new Harness();
@@ -240,7 +272,8 @@ public class EmailVerificationAcceptanceTests
             Username = "MailFail",
             Email = "fail@example.com",
             Password = "Password1",
-            ConfirmPassword = "Password1"
+            ConfirmPassword = "Password1",
+            Place = "中国 · 上海"
         });
 
         Assert.Equal(RegisterOutcomes.VerificationEmailFailed, result.Outcome);
@@ -266,7 +299,8 @@ public class EmailVerificationAcceptanceTests
             Username = "OpenUser",
             Email = "open@example.com",
             Password = "Password1",
-            ConfirmPassword = "Password1"
+            ConfirmPassword = "Password1",
+            Place = "日本-东京"
         });
 
         Assert.Equal(RegisterOutcomes.VerificationDisabled, result.Outcome);
@@ -311,7 +345,8 @@ public class EmailVerificationAcceptanceTests
         Username = "BillUser",
         Email = "Bill@Example.COM",
         Password = "Password1",
-        ConfirmPassword = "Password1"
+        ConfirmPassword = "Password1",
+        Place = "中国 · 上海"
     };
 
     private static string TokenFromLink(string link)

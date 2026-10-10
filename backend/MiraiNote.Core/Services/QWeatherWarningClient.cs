@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MiraiNote.Shared.Common;
 
 namespace MiraiNote.Core.Services;
 
@@ -26,7 +27,7 @@ public interface IWelcomeWeatherSource
 /// 和风实况与特别预警。实况只读 /v7/weather/now 的 now.text 和 now.temp，不请求每日预报。
 /// 预警走城市搜索拿到经纬度后再查现行预警；旧的 /v7/warning/now 已于 2026-10-01 停服。
 /// </summary>
-public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcomeWeatherSource
+public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcomeWeatherSource, IRegionCitySource
 {
     public const string HttpClientName = "QWeather";
     public static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(8);
@@ -49,6 +50,25 @@ public sealed class QWeatherWarningClient : ISevereWeatherWarningSource, IWelcom
         _options = options;
         _clock = clock;
         _logger = logger;
+    }
+
+    public async Task<IReadOnlyList<string>> SearchAsync(
+        string countryName,
+        string countryCode,
+        string query,
+        CancellationToken ct = default)
+    {
+        var text = query.Trim();
+        if (text.Length == 0)
+            return [];
+        if (string.IsNullOrWhiteSpace(_options.Value.ApiKey) || !TryHost(_options.Value.ApiHost, out var host))
+            throw new BusinessException("暂时无法搜索城市");
+
+        var apiKey = _options.Value.ApiKey.Trim();
+        var path = "/geo/v2/city/lookup?location=" + Uri.EscapeDataString(text)
+            + "&number=20&lang=zh&range=" + Uri.EscapeDataString(countryCode);
+        using var document = await GetJsonAsync(host, path, apiKey, ct);
+        return document is null ? [] : QWeatherCityList.Read(document.RootElement, countryName);
     }
 
     public async Task<string?> GetWarningAsync(string? place, CancellationToken ct = default)
@@ -384,6 +404,90 @@ internal static class QWeatherNow
         if (!sawDigit || text[^1] == '.')
             return null;
         return text;
+    }
+}
+
+internal static class QWeatherCityList
+{
+    public static IReadOnlyList<string> Read(JsonElement root, string country)
+    {
+        var names = new List<string>();
+        if (root.TryGetProperty("code", out var code))
+        {
+            var value = code.ValueKind == JsonValueKind.String ? code.GetString() : code.ToString();
+            if (!string.Equals(value, "200", StringComparison.Ordinal))
+                return names;
+        }
+
+        if (!root.TryGetProperty("location", out var locations) || locations.ValueKind != JsonValueKind.Array)
+            return names;
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var location in locations.EnumerateArray())
+        {
+            if (!CountryMatches(location, country))
+                continue;
+            var name = ReadString(location, "name");
+            if (string.IsNullOrEmpty(name) || WelcomePlace.IsDistrictName(name))
+                continue;
+            var type = ReadString(location, "type");
+            if (type is "scenic" or "poi")
+                continue;
+            if (!IsCityLevel(location, name))
+                continue;
+            if (seen.Add(name))
+                names.Add(name);
+            if (names.Count == 10)
+                break;
+        }
+
+        return names;
+    }
+
+    private static bool IsCityLevel(JsonElement location, string name)
+    {
+        var adm2 = ReadString(location, "adm2");
+        var adm1 = ReadString(location, "adm1");
+        if (string.IsNullOrEmpty(adm2) && string.IsNullOrEmpty(adm1))
+            return true;
+        if (!string.IsNullOrEmpty(adm2) && string.Equals(adm2, name, StringComparison.Ordinal))
+            return true;
+        if (!string.IsNullOrEmpty(adm1)
+            && (string.Equals(adm1, name, StringComparison.Ordinal)
+                || string.Equals(TrimAdmin(adm1), name, StringComparison.Ordinal)))
+            return true;
+        if (!string.IsNullOrEmpty(adm2))
+            return false;
+        return true;
+    }
+
+    private static string TrimAdmin(string value)
+    {
+        ReadOnlySpan<string> suffixes = ["特别行政区", "自治区", "省", "市", "州", "都", "府", "道"];
+        foreach (var suffix in suffixes)
+        {
+            if (value.Length > suffix.Length && value.EndsWith(suffix, StringComparison.Ordinal))
+                return value[..^suffix.Length];
+        }
+
+        return value;
+    }
+
+    private static bool CountryMatches(JsonElement location, string country)
+    {
+        var actual = ReadString(location, "country");
+        if (string.IsNullOrEmpty(actual))
+            return false;
+        return actual.Contains(country, StringComparison.OrdinalIgnoreCase)
+            || country.Contains(actual, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ReadString(JsonElement location, string name)
+    {
+        if (!location.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.String)
+            return null;
+        var text = element.GetString()?.Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
     }
 }
 
