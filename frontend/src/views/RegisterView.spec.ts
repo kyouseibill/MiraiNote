@@ -55,6 +55,12 @@ describe('注册必须选择所在地区', () => {
     await passwords[1].setValue('Password1')
   }
 
+  async function chooseCountry(wrapper: Awaited<ReturnType<typeof mountRegister>>, name: string) {
+    const input = wrapper.get('[data-testid="region-country"]')
+    await input.setValue(name)
+    await input.trigger('keydown', { key: 'Enter' })
+  }
+
   it('没选地区时不能提交', async () => {
     const wrapper = await mountRegister()
     expect(wrapper.text()).toContain('所在地区')
@@ -69,18 +75,18 @@ describe('注册必须选择所在地区', () => {
   it('换国家后城市被清空，选好城市才能提交', async () => {
     const wrapper = await mountRegister()
     await fillAccount(wrapper)
-    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    await chooseCountry(wrapper, '中国')
     await wrapper.get('[data-testid="region-city"]').setValue('上')
     await flushPromises()
     await wrapper.get('[data-testid="region-city-option"]').trigger('mousedown')
-    await wrapper.get('[data-testid="region-country"]').setValue('日本')
+    await chooseCountry(wrapper, '日本')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     expect(authApi.register).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="region-error"]').text()).toBe('请选择所在地区')
 
-    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    await chooseCountry(wrapper, '中国')
     await wrapper.get('[data-testid="region-city"]').setValue('上')
     await flushPromises()
     await wrapper.get('[data-testid="region-city-option"]').trigger('mousedown')

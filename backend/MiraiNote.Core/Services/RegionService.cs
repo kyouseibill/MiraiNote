@@ -27,7 +27,12 @@ public sealed class RegionService : IRegionService
     }
 
     public IReadOnlyList<RegionCountryDto> ListCountries() =>
-        _countries.Select(item => new RegionCountryDto { Name = item.Name, Code = item.Code }).ToArray();
+        _countries.Select(item => new RegionCountryDto
+        {
+            Name = item.Name,
+            EnglishName = item.EnglishName,
+            Code = item.Code,
+        }).ToArray();
 
     public async Task<IReadOnlyList<RegionCityDto>> SearchCitiesAsync(
         string? country,

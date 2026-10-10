@@ -3,31 +3,35 @@ import { defineComponent, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const countries = [
-  { name: '中国', code: 'cn' },
-  { name: '日本', code: 'jp' },
-  { name: '美国', code: 'us' },
-  { name: '英国', code: 'gb' },
-  { name: '新加坡', code: 'sg' },
-  { name: '澳大利亚', code: 'au' },
-  { name: '加拿大', code: 'ca' },
-  { name: '韩国', code: 'kr' },
-  { name: '德国', code: 'de' },
-  { name: '法国', code: 'fr' },
+  { name: '中国', englishName: 'China', code: 'cn' },
+  { name: '日本', englishName: 'Japan', code: 'jp' },
+  { name: '美国', englishName: 'United States', code: 'us' },
+  { name: '英国', englishName: 'United Kingdom', code: 'gb' },
+  { name: '新加坡', englishName: 'Singapore', code: 'sg' },
+  { name: '澳大利亚', englishName: 'Australia', code: 'au' },
+  { name: '加拿大', englishName: 'Canada', code: 'ca' },
+  { name: '韩国', englishName: 'South Korea', code: 'kr' },
+  { name: '德国', englishName: 'Germany', code: 'de' },
+  { name: '法国', englishName: 'France', code: 'fr' },
+  { name: '印度', englishName: 'India', code: 'in' },
+  { name: '巴西', englishName: 'Brazil', code: 'br' },
 ]
 
 vi.mock('@/api/region', () => ({
   regionApi: {
     countries: vi.fn().mockResolvedValue([
-      { name: '中国', code: 'cn' },
-      { name: '日本', code: 'jp' },
-      { name: '美国', code: 'us' },
-      { name: '英国', code: 'gb' },
-      { name: '新加坡', code: 'sg' },
-      { name: '澳大利亚', code: 'au' },
-      { name: '加拿大', code: 'ca' },
-      { name: '韩国', code: 'kr' },
-      { name: '德国', code: 'de' },
-      { name: '法国', code: 'fr' },
+      { name: '中国', englishName: 'China', code: 'cn' },
+      { name: '日本', englishName: 'Japan', code: 'jp' },
+      { name: '美国', englishName: 'United States', code: 'us' },
+      { name: '英国', englishName: 'United Kingdom', code: 'gb' },
+      { name: '新加坡', englishName: 'Singapore', code: 'sg' },
+      { name: '澳大利亚', englishName: 'Australia', code: 'au' },
+      { name: '加拿大', englishName: 'Canada', code: 'ca' },
+      { name: '韩国', englishName: 'South Korea', code: 'kr' },
+      { name: '德国', englishName: 'Germany', code: 'de' },
+      { name: '法国', englishName: 'France', code: 'fr' },
+      { name: '印度', englishName: 'India', code: 'in' },
+      { name: '巴西', englishName: 'Brazil', code: 'br' },
     ]),
     cities: vi.fn().mockImplementation(async (country: string, q: string) => {
       if (!q.trim()) return []
@@ -70,31 +74,88 @@ describe('所在地区选择器', () => {
     return wrapper
   }
 
-  it('国家按给定顺序展示，未选国家时城市不可用', async () => {
+  async function chooseCountry(wrapper: Awaited<ReturnType<typeof mountHost>>, query: string) {
+    const input = wrapper.get('[data-testid="region-country"]')
+    await input.setValue(query)
+    await input.trigger('keydown', { key: 'Enter' })
+  }
+
+  function countryNames(wrapper: Awaited<ReturnType<typeof mountHost>>) {
+    return wrapper.findAll('[data-testid="region-country-name"]').map((item) => item.text())
+  }
+
+  it('国家按置顶顺序展示，未选国家时城市不可用', async () => {
     const wrapper = await mountHost()
-    const names = wrapper.get('[data-testid="region-country"]').findAll('option').map((option) => option.text())
-    expect(names.slice(1)).toEqual(countries.map((item) => item.name))
     expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('所在地区')
+    await wrapper.get('[data-testid="region-country"]').trigger('focus')
+    expect(countryNames(wrapper)).toEqual(countries.map((item) => item.name))
+    expect(countryNames(wrapper).slice(0, 2)).toEqual(['中国', '日本'])
   })
 
-  it('更换国家会清掉已选城市', async () => {
+  it('中文、英文和代码都能搜到国家，并按原顺序显示', async () => {
     const wrapper = await mountHost()
-    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    const input = wrapper.get('[data-testid="region-country"]')
+
+    await input.setValue('日本')
+    expect(countryNames(wrapper)).toEqual(['日本'])
+    await input.setValue('Japan')
+    expect(countryNames(wrapper)).toEqual(['日本'])
+    await input.setValue('jp')
+    expect(countryNames(wrapper)).toEqual(['日本'])
+
+    await input.setValue('India')
+    expect(countryNames(wrapper)).toEqual(['印度'])
+    await input.setValue('br')
+    expect(countryNames(wrapper)).toEqual(['巴西'])
+    await input.setValue('us')
+    expect(countryNames(wrapper)).toEqual(['美国', '澳大利亚'])
+
+    await input.setValue('   ')
+    expect(countryNames(wrapper)).toEqual(countries.map((item) => item.name))
+    expect(wrapper.find('[data-testid="region-country-empty"]').exists()).toBe(false)
+
+    await input.setValue('没有这个国家')
+    expect(countryNames(wrapper)).toEqual([])
+    expect(wrapper.get('[data-testid="region-country-empty"]').text()).toContain('没有匹配的国家')
+  })
+
+  it('更换国家会清掉已选城市，城市仍按所选国家搜索', async () => {
+    const wrapper = await mountHost()
+    await chooseCountry(wrapper, '中国')
     await wrapper.get('[data-testid="region-city"]').setValue('上')
     await flushPromises()
     await wrapper.get('[data-testid="region-city-option"]').trigger('mousedown')
     expect(wrapper.get('[data-testid="region-status"]').text()).toContain('中国 · 上海')
 
-    await wrapper.get('[data-testid="region-country"]').setValue('日本')
+    await chooseCountry(wrapper, 'jp')
     expect(wrapper.get('[data-testid="region-status"]').text()).toContain('未填写')
     expect((wrapper.get('[data-testid="region-city"]').element as HTMLInputElement).value).toBe('')
     expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeUndefined()
+    expect((wrapper.get('[data-testid="region-country"]').element as HTMLInputElement).value).toBe('日本')
+
+    await wrapper.get('[data-testid="region-city"]').setValue('东')
+    await flushPromises()
+    expect(regionApi.cities).toHaveBeenLastCalledWith('日本', '东')
   })
 
   it('空搜索和选中后再清空都不会把无效内容提交出去', async () => {
     const wrapper = await mountHost()
-    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    await wrapper.get('[data-testid="region-country"]').setValue('   ')
+    await wrapper.get('[data-testid="region-country"]').trigger('keydown', { key: 'Enter' })
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.vm.submitted).toBe('')
+    expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="region-country"]').setValue('法国')
+    await wrapper.get('[data-testid="region-country"]').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="region-country"]').setValue('不是国家')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.vm.submitted).toBe('')
+    expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeDefined()
+
+    await chooseCountry(wrapper, '中国')
     await wrapper.get('[data-testid="region-city"]').setValue('   ')
     await wrapper.get('[data-testid="region-city"]').trigger('keydown', { key: 'Enter' })
     await wrapper.get('form').trigger('submit')
