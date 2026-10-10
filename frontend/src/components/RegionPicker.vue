@@ -246,7 +246,7 @@ async function search(text: string) {
         </ul>
       </div>
     </div>
-    <p class="mt-1 text-xs text-gray-500" data-testid="region-status">
+    <p class="mt-1 text-xs text-gray-400" data-testid="region-status">
       当前：{{ display || '未填写' }}
     </p>
     <p v-if="loadError" class="mt-1 text-xs text-red-600">{{ loadError }}</p>
