@@ -1,12 +1,16 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MiraiNote.Core.Services;
 using MiraiNote.Core.Services.AgentRuns;
+using MiraiNote.Core.Services.ChatModels;
+using MiraiNote.Data.Entities;
 using MiraiNote.Shared.Dtos.Chat;
+using Moq;
 using Xunit;
 
 namespace MiraiNote.Tests;
@@ -220,6 +224,79 @@ public class AgentRunConcurrencyTests
     }
 
     [Fact]
+    public async Task Create_with_free_capacity_is_running_and_the_next_per_user_run_stays_queued()
+    {
+        var options = new AgentRunOptions();
+        Assert.Equal(2, options.MaxConcurrent);
+        Assert.Equal(1, options.MaxPerUser);
+
+        using var fixture = new MiraiTestFixture();
+        await using var db = fixture.CreateContext();
+        var session = new ChatSession { UserId = 1, Title = "工作", AiProvider = "deepseek", AiModel = "deepseek-v4-flash" };
+        db.ChatSessions.Add(session);
+        await db.SaveChangesAsync();
+
+        var admission = new AgentRunAdmissionQueue(options.MaxConcurrent, options.MaxPerUser);
+        var service = new AgentRunService(
+            db,
+            new AgentRunDispatcher(),
+            admission,
+            Mock.Of<IChatService>(),
+            WorkModelRegistry(),
+            NullLogger<AgentRunService>.Instance);
+
+        var first = await service.CreateAsync(1, session.Id, new SendMessageRequest { Content = "先做" }, CancellationToken.None);
+        var second = await service.CreateAsync(1, session.Id, new SendMessageRequest { Content = "再做" }, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.Running, first.Status);
+        Assert.Null(first.QueuePosition);
+        Assert.Equal(AgentRunStatus.Queued, second.Status);
+        Assert.Equal(1, second.QueuePosition);
+        Assert.True(admission.IsRunning(first.Id));
+        Assert.False(admission.IsRunning(second.Id));
+        Assert.Equal(1, admission.RunningCount);
+        Assert.Equal(1, admission.PendingCount);
+        Assert.True(admission.TryTakeReady(out var ready));
+        Assert.Equal(first.Id, ready.RunId);
+
+        var readBack = await service.GetAsync(1, first.Id, CancellationToken.None);
+        var waiting = await service.GetAsync(1, second.Id, CancellationToken.None);
+        Assert.Equal(AgentRunStatus.Running, readBack.Status);
+        Assert.Null(readBack.QueuePosition);
+        Assert.Equal(AgentRunStatus.Queued, waiting.Status);
+        Assert.Equal(1, waiting.QueuePosition);
+        Assert.False(await service.TryClaimQueuedAsync(first.Id, CancellationToken.None));
+
+        await using var read = fixture.CreateContext();
+        var stored = await read.AgentRuns.AsNoTracking().ToDictionaryAsync(item => item.Id);
+        Assert.Equal(AgentRunStatus.Running, stored[first.Id].Status);
+        Assert.NotNull(stored[first.Id].StartedAt);
+        Assert.Equal(AgentRunStatus.Queued, stored[second.Id].Status);
+        Assert.Null(stored[second.Id].StartedAt);
+    }
+
+    [Fact]
+    public async Task Immediately_ready_run_starts_without_claiming_again_and_frees_the_slot()
+    {
+        await using var harness = await Harness.Start(new AgentRunOptions { MaxConcurrent = 1, MaxPerUser = 1 });
+        var running = Guid.NewGuid();
+        var queued = Guid.NewGuid();
+        Assert.True(harness.Queue.TryReserve(running, 71));
+        harness.Queue.MarkReady(running, 71);
+        harness.Enqueue(queued, 72);
+
+        var started = await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+        Assert.Equal(running, Assert.Single(started));
+        Assert.Equal(0, harness.Runs.ClaimCount);
+        Assert.DoesNotContain(queued, harness.Runs.StartedIds);
+
+        harness.Runs.Complete(running);
+        var followed = await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+        Assert.Equal(queued, Assert.Single(followed));
+        Assert.Equal(1, harness.Runs.ClaimCount);
+    }
+
+    [Fact]
     public async Task Work_mode_runs_do_not_block_normal_chat_sessions()
     {
         await using var harness = await Harness.Start(new AgentRunOptions { MaxConcurrent = 4, MaxPerUser = 2 });
@@ -279,9 +356,11 @@ public class AgentRunConcurrencyTests
         private readonly ConcurrentDictionary<Guid, byte> _fail = new();
         private readonly ConcurrentDictionary<Guid, byte> _notQueued = new();
         private readonly ConcurrentBag<Guid> _startedIds = new();
+        private int _claimCount;
 
         public IReadOnlyCollection<Guid> StartedIds => _startedIds.ToArray();
         public Action<Guid>? OnClaim { get; set; }
+        public int ClaimCount => Volatile.Read(ref _claimCount);
 
         public void Fail(Guid runId) => _fail[runId] = 1;
 
@@ -309,6 +388,7 @@ public class AgentRunConcurrencyTests
 
         public Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken)
         {
+            Interlocked.Increment(ref _claimCount);
             OnClaim?.Invoke(runId);
             return Task.FromResult(!_notQueued.ContainsKey(runId));
         }
@@ -339,4 +419,18 @@ public class AgentRunConcurrencyTests
             throw new NotSupportedException();
         public int CurrentSignalVersion(Guid runId) => 0;
     }
+
+    private static IChatModelRegistry WorkModelRegistry() =>
+        Mock.Of<IChatModelRegistry>(registry =>
+            registry.ResolveForExistingSession(It.IsAny<string?>(), It.IsAny<string?>()) ==
+            new ChatModelDescriptor(
+                "deepseek:deepseek-v4-flash",
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash",
+                true,
+                true,
+                true,
+                true));
 }

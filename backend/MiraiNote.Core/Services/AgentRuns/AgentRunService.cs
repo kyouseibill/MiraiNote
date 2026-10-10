@@ -98,8 +98,41 @@ public sealed class AgentRunService : IAgentRunService
         };
         _db.AgentRuns.Add(run);
         await _db.SaveChangesAsync(ct);
-        _admission.Enqueue(run.Id, run.UserId);
-        return ToSnapshot(run, 0, _admission.GetPosition(run.Id));
+        if (!await TryStartImmediatelyAsync(run, ct))
+            _admission.Enqueue(run.Id, run.UserId);
+        var position = run.Status == AgentRunStatus.Queued ? _admission.GetPosition(run.Id) : null;
+        return ToSnapshot(run, 0, position);
+    }
+
+    /// <summary>
+    /// 还有全局和每用户名额时，用原子更新把 queued 领成 running，再交给后台执行。
+    /// 这样创建响应和第一次状态读取不会短暂显示排队。没有名额时返回 false，由调用方入队。
+    /// </summary>
+    private async Task<bool> TryStartImmediatelyAsync(AgentRun run, CancellationToken ct)
+    {
+        if (!_admission.TryReserve(run.Id, run.UserId)) return false;
+
+        bool claimed;
+        try
+        {
+            claimed = await TryClaimQueuedAsync(run.Id, ct);
+        }
+        catch
+        {
+            _admission.Release(run.Id, run.UserId);
+            throw;
+        }
+
+        if (!claimed)
+        {
+            _admission.Release(run.Id, run.UserId);
+            return false;
+        }
+
+        run.Status = AgentRunStatus.Running;
+        run.LastActivityAt = DateTime.UtcNow;
+        _admission.MarkReady(run.Id, run.UserId);
+        return true;
     }
 
     public async Task<AgentRunSnapshot> GetAsync(int userId, Guid runId, CancellationToken ct)
@@ -169,8 +202,9 @@ public sealed class AgentRunService : IAgentRunService
         run.LastActivityAt = DateTime.UtcNow;
         await AppendEventAsync(run, "context", "{\"message\":\"任务已恢复，正在继续执行\"}", ct);
         await SaveChangesDetachingFailedEventsAsync(ct);
+        if (!await TryStartImmediatelyAsync(run, ct))
+            _admission.Enqueue(runId, run.UserId);
         _dispatcher.Signal(runId);
-        _admission.Enqueue(runId, run.UserId);
         return true;
     }
 
