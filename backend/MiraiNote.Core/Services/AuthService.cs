@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -20,7 +21,7 @@ namespace MiraiNote.Core.Services;
 /// 3. 安全：
 ///    - 密码 BCrypt 哈希
 ///    - 登录连续失败 5 次，账户锁定 15 分钟（IMemoryCache，进程级，重启重置 —— 可接受）
-///    - 重置邮件：60 秒内同一账户只保留一封有效发送；1 小时内最多 3 封（IMemoryCache）。超限时不发信也不单独报错
+///    - 重置邮件：同一账户加锁后才检查 60 秒冷却，邮件发送成功后才作废旧链接；1 小时内最多 3 封（IMemoryCache）。超限时不发信也不单独报错
 ///    - 验证邮件重发次数记在 EmailVerifyToken 表，超限时不发信也不单独报错
 ///    - 忘记密码无论邮箱是否存在均返回成功，防止账户枚举
 ///    - RefreshToken 入库只存 SHA-256 哈希，原文随响应返回，由 Controller 写入 HttpOnly Cookie
@@ -54,6 +55,9 @@ public class AuthService : IAuthService
     private readonly AppOptions _appOptions;
     private readonly ILogger<AuthService> _logger;
     private readonly IBackgroundWork _background;
+
+    /// <summary>同一账户的重置邮件串行发送，避免并发请求都通过 60 秒检查。</summary>
+    private static readonly ConcurrentDictionary<int, SemaphoreSlim> ResetPasswordSendLocks = new();
 
     /// <summary>测试可替换，生产使用 UTC 现在。</summary>
     internal Func<DateTime> UtcNowProvider { get; set; } = static () => DateTime.UtcNow;
@@ -433,50 +437,94 @@ public class AuthService : IAuthService
             return; // 防止枚举：邮箱不存在也返回成功
         }
 
-        // 短间隔连点只保留已发出的那一封，不另发、不另建令牌。
-        var now = UtcNow();
-        var sentRecently = await _db.EmailVerifyTokens.AnyAsync(t =>
-            t.UserId == user.Id
-            && t.Type == EmailVerifyTokenType.ResetPassword
-            && t.CreatedAt >= now - ResetPasswordMinInterval, ct);
-        if (sentRecently)
-        {
-            return;
-        }
-
-        // 1 小时上限。超限仍对外成功，避免账户枚举。
+        var gate = ResetPasswordSendLock(user.Id);
+        await gate.WaitAsync(ct);
         try
         {
-            EnforceEmailRateLimit($"email:reset:{normalizedEmail}");
-        }
-        catch (BusinessException)
-        {
-            return;
-        }
+            var now = UtcNow();
+            var rateKey = $"email:reset:{normalizedEmail}";
+            EmailVerifyToken created;
+            await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+            {
+                // 锁住账户行，让其他进程的并发请求排队后再看 60 秒窗口。
+                var locked = await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""UPDATE "User" SET "UpdatedAt" = "UpdatedAt" WHERE "Id" = {user.Id}""", ct);
+                if (locked == 0)
+                    return;
 
+                if (await HasRecentResetPasswordAsync(user.Id, now, ct) || !CanSendAnotherResetEmail(rateKey))
+                    return;
+
+                created = new EmailVerifyToken
+                {
+                    UserId = user.Id,
+                    Token = Guid.NewGuid().ToString("N"),
+                    Type = EmailVerifyTokenType.ResetPassword,
+                    ExpiresAt = now.Add(ResetPasswordTokenLifetime),
+                    IsUsed = false
+                };
+                _db.EmailVerifyTokens.Add(created);
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+            }
+
+            var link = BuildAbsoluteLink($"/reset-password?token={created.Token}");
+            try
+            {
+                await _email.SendResetPasswordAsync(user.Email, user.Username, link, ct);
+            }
+            catch (Exception ex)
+            {
+                await DiscardUnsentResetTokenAsync(created, ct);
+                _logger.LogError(
+                    "重置邮件发送失败，未作废已有链接，用户 {UserId}，类型 {ExceptionType}",
+                    user.Id,
+                    ex.GetType().Name);
+                throw;
+            }
+
+            RecordResetEmailSent(rateKey);
+            await ExpireOtherUnusedResetTokensAsync(user.Id, created.Id, now, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static SemaphoreSlim ResetPasswordSendLock(int userId) =>
+        ResetPasswordSendLocks.GetOrAdd(userId, static _ => new SemaphoreSlim(1, 1));
+
+    private Task<bool> HasRecentResetPasswordAsync(int userId, DateTime now, CancellationToken ct) =>
+        _db.EmailVerifyTokens.AnyAsync(t =>
+            t.UserId == userId
+            && t.Type == EmailVerifyTokenType.ResetPassword
+            && t.CreatedAt >= now - ResetPasswordMinInterval, ct);
+
+    private async Task DiscardUnsentResetTokenAsync(EmailVerifyToken created, CancellationToken ct)
+    {
+        var tracked = await _db.EmailVerifyTokens.FirstOrDefaultAsync(t => t.Id == created.Id, ct);
+        if (tracked == null)
+            return;
+        _db.EmailVerifyTokens.Remove(tracked);
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private async Task ExpireOtherUnusedResetTokensAsync(int userId, int keepId, DateTime now, CancellationToken ct)
+    {
         var previous = await _db.EmailVerifyTokens
-            .Where(t => t.UserId == user.Id
+            .Where(t => t.UserId == userId
+                && t.Id != keepId
                 && t.Type == EmailVerifyTokenType.ResetPassword
                 && !t.IsUsed
                 && t.ExpiresAt > now)
             .ToListAsync(ct);
-        // 新邮件发出后，旧的未使用链接立刻过期，账户上只留这一封有效。
+        if (previous.Count == 0)
+            return;
+
         foreach (var old in previous)
             old.ExpiresAt = now.AddSeconds(-1);
-
-        var token = Guid.NewGuid().ToString("N");
-        _db.EmailVerifyTokens.Add(new EmailVerifyToken
-        {
-            UserId = user.Id,
-            Token = token,
-            Type = EmailVerifyTokenType.ResetPassword,
-            ExpiresAt = now.Add(ResetPasswordTokenLifetime),
-            IsUsed = false
-        });
         await _db.SaveChangesAsync(ct);
-
-        var link = BuildAbsoluteLink($"/reset-password?token={token}");
-        await _email.SendResetPasswordAsync(user.Email, user.Username, link, ct);
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct = default)
@@ -587,17 +635,19 @@ public class AuthService : IAuthService
         foreach (var t in tokens) t.IsRevoked = true;
     }
 
-    private void EnforceEmailRateLimit(string key)
+    private bool CanSendAnotherResetEmail(string key)
     {
         var count = _cache.GetOrCreate(key, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = EmailRateWindow;
             return 0;
         });
-        if (count >= MaxEmailsPerHour)
-        {
-            throw new BusinessException("发送过于频繁，请稍后再试");
-        }
+        return count < MaxEmailsPerHour;
+    }
+
+    private void RecordResetEmailSent(string key)
+    {
+        var count = _cache.TryGetValue(key, out int current) ? current : 0;
         _cache.Set(key, count + 1, EmailRateWindow);
     }
 

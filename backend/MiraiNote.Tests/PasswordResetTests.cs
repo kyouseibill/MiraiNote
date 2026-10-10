@@ -121,6 +121,75 @@ public class PasswordResetTests
         Assert.Equal(3, h.ResetLinks.Count);
     }
 
+    [Fact]
+    public async Task ForgotPassword_SendFailureKeepsPreviousUnusedLink()
+    {
+        using var h = new Harness();
+        var token = await h.IssueResetTokenAsync();
+        var row = await h.Db.EmailVerifyTokens.SingleAsync(t => t.Token == token);
+        var expiresAt = row.ExpiresAt;
+        await h.BackdateResetTokensAsync(TimeSpan.FromSeconds(61));
+
+        h.Email.Setup(e => e.SendResetPasswordAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("smtp-down"));
+
+        var failed = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Auth.ForgotPasswordAsync("bill@example.com"));
+        Assert.Equal("smtp-down", failed.Message);
+
+        await h.Db.Entry(row).ReloadAsync();
+        Assert.Equal(expiresAt, row.ExpiresAt);
+        Assert.False(row.IsUsed);
+        Assert.Equal(1, await h.Db.EmailVerifyTokens.CountAsync(t =>
+            t.Type == EmailVerifyTokenType.ResetPassword && !t.IsUsed));
+
+        await h.Auth.ResetPasswordAsync(new ResetPasswordRequest
+        {
+            Token = token,
+            NewPassword = "Newpass1",
+            ConfirmPassword = "Newpass1"
+        });
+        var oldPassword = await Assert.ThrowsAsync<BusinessException>(() => h.Auth.LoginAsync(Login("Password1")));
+        Assert.Equal("用户名或密码错误", oldPassword.Message);
+    }
+
+    [Fact]
+    public async Task ForgotPassword_ConcurrentRequestsSendOnlyOne()
+    {
+        using var h = new Harness();
+        await h.RegisterVerifiedAsync();
+        using var peer = h.CreatePeer();
+
+        var sends = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Email.Setup(e => e.SendResetPasswordAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string _, string link, CancellationToken _) => HoldFirst(link));
+
+        async Task HoldFirst(string link)
+        {
+            h.ResetLinks.Add(link);
+            if (Interlocked.Increment(ref sends) == 1)
+            {
+                started.TrySetResult();
+                await hold.Task;
+            }
+        }
+
+        var first = h.Auth.ForgotPasswordAsync("bill@example.com");
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = peer.Auth.ForgotPasswordAsync("bill@example.com");
+        await Task.Delay(200);
+        Assert.Equal(1, Volatile.Read(ref sends));
+
+        hold.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, sends);
+        Assert.Single(h.ResetLinks);
+    }
+
     private static LoginRequest Login(string password) => new()
     {
         UsernameOrEmail = "billuser",
@@ -139,35 +208,47 @@ public class PasswordResetTests
         public MiraiNoteDbContext Db { get; }
         public List<string> VerifyLinks { get; } = [];
         public List<string> ResetLinks { get; } = [];
+        public Mock<IEmailService> Email { get; } = new();
         public AuthService Auth { get; }
+        private readonly Mock<IJwtTokenService> _jwt = new();
 
         public Harness()
         {
-            var email = new Mock<IEmailService>();
-            email.Setup(e => e.SendVerifyEmailAsync(
+            Email.Setup(e => e.SendVerifyEmailAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Callback<string, string, string, CancellationToken>((_, _, link, _) => VerifyLinks.Add(link))
                 .Returns(Task.CompletedTask);
-            email.Setup(e => e.SendResetPasswordAsync(
+            Email.Setup(e => e.SendResetPasswordAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Callback<string, string, string, CancellationToken>((_, _, link, _) => ResetLinks.Add(link))
                 .Returns(Task.CompletedTask);
-            email.Setup(e => e.SendPasswordChangedAsync(
+            Email.Setup(e => e.SendPasswordChangedAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-            var jwt = new Mock<IJwtTokenService>();
-            jwt.Setup(j => j.GenerateAccessToken(It.IsAny<User>()))
+            _jwt.Setup(j => j.GenerateAccessToken(It.IsAny<User>()))
                 .Returns(("access-token", DateTime.UtcNow.AddHours(1)));
-            jwt.Setup(j => j.GenerateRefreshToken()).Returns("refresh-token");
-            jwt.Setup(j => j.HashRefreshToken(It.IsAny<string>())).Returns("refresh-hash");
+            _jwt.Setup(j => j.GenerateRefreshToken()).Returns("refresh-token");
+            _jwt.Setup(j => j.HashRefreshToken(It.IsAny<string>())).Returns("refresh-hash");
 
             Db = Fx.CreateContext();
-            Auth = new AuthService(
-                Db,
-                jwt.Object,
-                email.Object,
-                new MemoryCache(new MemoryCacheOptions()),
+            Auth = BuildAuth(Db, new MemoryCache(new MemoryCacheOptions()));
+        }
+
+        public Peer CreatePeer()
+        {
+            var db = Fx.CreateContext();
+            var cache = new MemoryCache(new MemoryCacheOptions());
+            var auth = BuildAuth(db, cache);
+            return new Peer(db, cache, auth);
+        }
+
+        private AuthService BuildAuth(MiraiNoteDbContext db, IMemoryCache cache) =>
+            new(
+                db,
+                _jwt.Object,
+                Email.Object,
+                cache,
                 Options.Create(new JwtOptions
                 {
                     Secret = new string('k', 32),
@@ -182,7 +263,6 @@ public class PasswordResetTests
                 }),
                 new ListLogger<AuthService>(),
                 new InlineBackgroundWork());
-        }
 
         public async Task RegisterVerifiedAsync()
         {
@@ -218,6 +298,17 @@ public class PasswordResetTests
         {
             Db.Dispose();
             Fx.Dispose();
+        }
+    }
+
+    private sealed class Peer(MiraiNoteDbContext db, MemoryCache cache, AuthService auth) : IDisposable
+    {
+        public AuthService Auth { get; } = auth;
+
+        public void Dispose()
+        {
+            db.Dispose();
+            cache.Dispose();
         }
     }
 
