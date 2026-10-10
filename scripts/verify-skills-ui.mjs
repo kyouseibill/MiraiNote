@@ -64,6 +64,7 @@ await context.route('**/*', async (route) => {
 try {
   await page.goto(`${baseURL}/skills`, { waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: '技能管理' }).waitFor()
+  await page.getByText('也可以在对话里直接说「帮我创建一个 Skill」或「改一下这个 Skill」，Mirai 会帮你写好。').waitFor()
   await page.getByRole('heading', { name: 'yahoo-transit-jp' }).waitFor()
   assert.match(await page.getByLabel('Skill 原文').inputValue(), /先查询实时路线/)
   await mkdir(outputDir, { recursive: true })
