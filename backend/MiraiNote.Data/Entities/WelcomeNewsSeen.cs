@@ -7,6 +7,7 @@ namespace MiraiNote.Data.Entities;
 /// 欢迎语新闻已经展示给某个用户的链接。
 /// 同一用户同一链接只留一行；再次展示时刷新 <see cref="ShownAt"/>。
 /// 超过 7 天的行由欢迎语读取时删掉，链接可以重新进入候选。
+/// 若 7 天内的已读把当前候选池滤空，挑选时改用池里最久没再展示的链接，避免欢迎语空白。
 /// </summary>
 [Table("WelcomeNewsSeen")]
 public class WelcomeNewsSeen : BaseEntity

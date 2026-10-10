@@ -7,8 +7,10 @@ namespace MiraiNote.Core.Services;
 
 public interface IWelcomeNewsSeenStore
 {
-    /// <summary>该用户近 7 天内展示过的链接。读取时会删掉更早的行。</summary>
-    Task<IReadOnlySet<string>> GetRecentUrlsAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default);
+    /// <summary>
+    /// 该用户近 7 天内展示过的链接。键是规范化链接，值是最近一次展示时间（UTC）。读取时会删掉更早的行。
+    /// </summary>
+    Task<IReadOnlyDictionary<string, DateTime>> GetRecentUrlsAsync(int userId, DateTimeOffset utcNow, CancellationToken ct = default);
 
     /// <summary>记下这次展示的链接，并删掉该用户 7 天前的行。</summary>
     Task RecordAsync(int userId, IReadOnlyList<string> urls, DateTimeOffset utcNow, CancellationToken ct = default);
@@ -33,22 +35,31 @@ public sealed class WelcomeNewsSeenStore : IWelcomeNewsSeenStore
         _open = _ => Task.FromResult(new Lease(db, scope: null));
     }
 
-    public async Task<IReadOnlySet<string>> GetRecentUrlsAsync(
+    public async Task<IReadOnlyDictionary<string, DateTime>> GetRecentUrlsAsync(
         int userId,
         DateTimeOffset utcNow,
         CancellationToken ct = default)
     {
         if (userId <= 0)
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         var cutoff = Cutoff(utcNow);
         await using var lease = await _open(ct);
         await PruneAsync(lease.Db, userId, cutoff, ct);
-        var urls = await lease.Db.WelcomeNewsSeens.AsNoTracking()
+        var rows = await lease.Db.WelcomeNewsSeens.AsNoTracking()
             .Where(row => row.UserId == userId && row.ShownAt >= cutoff)
-            .Select(row => row.Url)
+            .Select(row => new { row.Url, row.ShownAt })
             .ToListAsync(ct);
-        return urls.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var seen = new Dictionary<string, DateTime>(rows.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (string.IsNullOrEmpty(row.Url))
+                continue;
+            if (!seen.TryGetValue(row.Url, out var existing) || row.ShownAt > existing)
+                seen[row.Url] = row.ShownAt;
+        }
+
+        return seen;
     }
 
     public async Task RecordAsync(
