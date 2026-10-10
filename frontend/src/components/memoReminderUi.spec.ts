@@ -90,7 +90,7 @@ describe('备忘提醒界面', () => {
     expect(wrapper.get('[data-testid="bark-key-status"]').text()).toContain('未填写')
     const input = wrapper.get('[data-testid="bark-key-input"]')
     await input.setValue('unitTestBarkKey1')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('[data-testid="bark-form"]').trigger('submit')
     await flushPromises()
 
     expect(authApi.updateMemoReminderSettings).toHaveBeenCalledWith({ barkKey: 'unitTestBarkKey1' })
@@ -99,7 +99,7 @@ describe('备忘提醒界面', () => {
     expect(wrapper.get('[data-testid="bark-key-status"]').text()).toContain('已填写')
 
     await input.setValue('   ')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('[data-testid="bark-form"]').trigger('submit')
     await flushPromises()
     expect(authApi.updateMemoReminderSettings).toHaveBeenLastCalledWith({ barkKey: '' })
     expect(wrapper.get('[data-testid="bark-key-status"]').text()).toContain('未填写')
@@ -185,13 +185,13 @@ describe('备忘提醒界面', () => {
     expect(authApi.updateWelcomeSettings).toHaveBeenCalledWith({ place: '', nickname: '雅美' })
     expect((input.element as HTMLInputElement).value).toBe('雅美')
     expect(wrapper.get('[data-testid="nickname-status"]').text()).toContain('雅美')
-    expect(wrapper.get('p.font-semibold').text()).toBe('tester')
+    expect(wrapper.get('[data-testid="account-username"]').text()).toBe('tester')
 
     await input.setValue('   ')
     await wrapper.get('[data-testid="nickname-form"]').trigger('submit')
     await flushPromises()
     expect(authApi.updateWelcomeSettings).toHaveBeenLastCalledWith({ place: '', nickname: '' })
     expect(wrapper.get('[data-testid="nickname-status"]').text()).toContain('使用用户名')
-    expect(wrapper.get('p.font-semibold').text()).toBe('tester')
+    expect(wrapper.get('[data-testid="account-username"]').text()).toBe('tester')
   })
 })

@@ -139,110 +139,77 @@ async function handleLogout() {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-4 py-6 sm:px-6 lg:py-10 space-y-8">
+  <div class="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6 lg:py-10">
 
     <RegionPrompt v-if="showRegionPrompt" settings @skip="regionPromptDismissed = true" />
 
-    <!-- 账户信息卡 -->
-    <section class="surface-card overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
-        <!-- 头像占位 -->
-        <div class="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center text-xl font-bold select-none">
-          {{ auth.user?.username?.charAt(0).toUpperCase() }}
-        </div>
-        <div>
-          <p class="font-semibold text-gray-900 text-lg">{{ auth.user?.username }}</p>
-          <p class="text-sm text-gray-500">{{ auth.user?.email }}</p>
-        </div>
-        <div class="ml-auto flex gap-2">
-          <span
-            v-if="auth.isAdmin"
-            class="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium"
-          >管理员</span>
-          <span
-            class="inline-flex items-center leading-none text-xs px-2.5 py-1 rounded-full"
-            :class="auth.user?.isEmailVerified
-              ? 'bg-green-100 text-green-700'
-              : 'bg-amber-100 text-amber-700'"
-          >
-            {{ auth.user?.isEmailVerified ? '邮箱已验证' : '邮箱未验证' }}
-          </span>
-          <button
-            class="ml-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#ddd8cf] px-3 text-[12px] leading-none text-[#716c65] transition hover:border-[#c7a59f] hover:text-[#973a33]"
-            data-testid="logout-button" @click="handleLogout"
-          >
-            <IconLogout :size="15" :stroke-width="1.5" />
-            退出
-          </button>
-        </div>
-      </div>
-
-      <dl class="divide-y divide-gray-50 px-6">
-        <div class="py-3 flex items-center justify-between">
-          <dt class="text-sm text-gray-500">用户 ID</dt>
-          <dd class="text-sm text-gray-800 font-mono">{{ auth.user?.id }}</dd>
-        </div>
-        <div class="py-3 flex items-center justify-between">
-          <dt class="text-sm text-gray-500">账户状态</dt>
-          <dd class="text-sm">
-            <span
-              class="px-2 py-0.5 rounded-full text-xs"
-              :class="auth.user?.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'"
+    <!-- 账户 -->
+    <section class="space-y-2.5" aria-labelledby="settings-account">
+      <h2 id="settings-account" class="px-0.5 text-[11px] font-medium tracking-[0.16em] text-[#9a958d]">账户</h2>
+      <div class="surface-card overflow-hidden">
+        <div class="flex items-start gap-4 px-5 py-5 sm:px-6">
+          <div class="flex h-16 w-16 shrink-0 select-none items-center justify-center rounded-full bg-teal-100 text-2xl font-semibold text-teal-600">
+            {{ auth.user?.username?.charAt(0).toUpperCase() }}
+          </div>
+          <div class="min-w-0 flex-1 pt-0.5">
+            <p
+              class="font-serif text-[22px] font-medium leading-tight tracking-[0.04em] text-gray-900"
+              data-testid="account-username"
             >
-              {{ auth.user?.isActive ? '正常' : '已禁用' }}
-            </span>
-          </dd>
+              {{ auth.user?.username }}
+            </p>
+            <div class="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-2">
+              <span class="min-w-0 break-all text-sm text-gray-500">{{ auth.user?.email }}</span>
+              <span
+                class="inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs leading-none"
+                :class="auth.user?.isEmailVerified
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-amber-100 text-amber-700'"
+              >
+                {{ auth.user?.isEmailVerified ? '邮箱已验证' : '邮箱未验证' }}
+              </span>
+              <span
+                v-if="auth.isAdmin"
+                class="inline-flex shrink-0 items-center rounded-full bg-teal-100 px-2.5 py-1 text-xs font-medium leading-none text-teal-700"
+              >管理员</span>
+            </div>
+          </div>
         </div>
-        <div class="py-3 flex items-center justify-between">
-          <dt class="text-sm text-gray-500">注册时间</dt>
-          <dd class="text-sm text-gray-800">{{ fmtDate(auth.user?.createdAt ?? null) }}</dd>
-        </div>
-        <div class="py-3 flex items-center justify-between">
-          <dt class="text-sm text-gray-500">上次登录</dt>
-          <dd class="text-sm text-gray-800">{{ fmtDate(auth.user?.lastLoginAt ?? null) }}</dd>
-        </div>
-      </dl>
-    </section>
 
-    <!-- 手机提醒 -->
-    <section class="surface-card">
-      <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">手机提醒</h2>
-        <p class="text-sm text-gray-500 mt-0.5">备忘到点后推到手机。留空则不推送，邮件提醒照常。</p>
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-gray-100 px-5 py-4 sm:gap-x-8 sm:px-6">
+          <div class="min-w-0">
+            <dt class="text-xs text-gray-400">用户 ID</dt>
+            <dd class="mt-0.5 truncate font-mono text-[13px] text-gray-800">{{ auth.user?.id }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-gray-400">注册时间</dt>
+            <dd class="mt-0.5 text-[13px] leading-5 text-gray-800">{{ fmtDate(auth.user?.createdAt ?? null) }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-gray-400">上次登录</dt>
+            <dd class="mt-0.5 text-[13px] leading-5 text-gray-800">{{ fmtDate(auth.user?.lastLoginAt ?? null) }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-gray-400">账户状态</dt>
+            <dd class="mt-0.5">
+              <span
+                class="inline-flex items-center rounded-full px-2 py-0.5 text-xs leading-none"
+                :class="auth.user?.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'"
+              >
+                {{ auth.user?.isActive ? '正常' : '已禁用' }}
+              </span>
+            </dd>
+          </div>
+        </dl>
       </div>
-      <form class="px-6 py-5 space-y-3" @submit.prevent="saveBark">
-        <div>
-          <label class="block text-sm text-gray-700 mb-1" for="bark-key">Bark key</label>
-          <input
-            id="bark-key"
-            v-model="barkKey"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            data-testid="bark-key-input"
-            placeholder="只填 key，留空表示不推送"
-            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-          />
-          <p class="mt-1 text-xs text-gray-400">推送地址固定为 api.day.app，不用填写服务器地址。</p>
-          <p class="mt-1 text-xs text-gray-500" data-testid="bark-key-status">
-            当前：{{ barkConfigured ? '已填写' : '未填写' }}。留空并保存会关闭推送。
-          </p>
-        </div>
-        <button
-          type="submit"
-          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-          :disabled="barkSubmitting"
-        >
-          {{ barkSubmitting ? '保存中…' : '保存' }}
-        </button>
-      </form>
     </section>
 
-    <!-- 昵称。只影响工作台大标题，账户名仍是用户名。 -->
-    <section class="surface-card">
-      <form class="px-6 py-5 space-y-3" data-testid="nickname-form" @submit.prevent="saveNickname">
-        <div>
-          <label class="block text-sm text-gray-700 mb-1" for="welcome-nickname">昵称</label>
+    <!-- 个人偏好：昵称与所在地区仍各自保存，不合并提交。 -->
+    <section class="space-y-2.5" aria-labelledby="settings-preferences">
+      <h2 id="settings-preferences" class="px-0.5 text-[11px] font-medium tracking-[0.16em] text-[#9a958d]">个人偏好</h2>
+      <div class="surface-card divide-y divide-gray-100">
+        <form class="px-5 py-5 sm:px-6" data-testid="nickname-form" @submit.prevent="saveNickname">
+          <label class="mb-1 block text-sm text-gray-700" for="welcome-nickname">昵称</label>
           <input
             id="welcome-nickname"
             v-model="nickname"
@@ -251,61 +218,113 @@ async function handleLogout() {
             maxlength="20"
             data-testid="nickname-input"
             placeholder="例如 雅美"
-            class="w-full h-9 px-3 rounded-md border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+            class="h-9 w-full rounded-md border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
           />
-          <p class="mt-1 text-xs text-gray-500" data-testid="nickname-status">
+          <p class="mt-1 text-xs text-gray-400" data-testid="nickname-status">
             当前：{{ nickname ? nickname : '使用用户名' }}。最多 20 个字。
           </p>
+          <div class="mt-4 flex justify-end">
+            <button
+              type="submit"
+              class="inline-flex h-9 items-center justify-center rounded-md bg-teal-600 px-5 text-sm text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="nicknameSubmitting"
+            >
+              {{ nicknameSubmitting ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
+
+        <form id="region" class="px-5 py-5 sm:px-6" data-testid="region-form" @submit.prevent="saveRegion">
+          <p class="mb-3 text-xs leading-5 text-gray-400">先选国家，再选城市。填写后，工作台日期行会带上当天实况和气温；留空并保存则不查询、不显示。</p>
+          <RegionPicker v-model="regionPlace" />
+          <div class="mt-4 flex justify-end">
+            <button
+              type="submit"
+              class="inline-flex h-9 items-center justify-center rounded-md bg-teal-600 px-5 text-sm text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="regionSubmitting"
+            >
+              {{ regionSubmitting ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 提醒与安全 -->
+    <section class="space-y-2.5" aria-labelledby="settings-safety">
+      <h2 id="settings-safety" class="px-0.5 text-[11px] font-medium tracking-[0.16em] text-[#9a958d]">提醒与安全</h2>
+      <div class="surface-card divide-y divide-gray-100">
+        <form class="px-5 py-5 sm:px-6" data-testid="bark-form" @submit.prevent="saveBark">
+          <h3 class="text-sm font-medium text-gray-900">手机提醒</h3>
+          <p class="mt-1 text-xs leading-5 text-gray-400">备忘到点后推到手机。留空则不推送，邮件提醒照常。</p>
+          <label class="mb-1 mt-4 block text-sm text-gray-700" for="bark-key">Bark key</label>
+          <input
+            id="bark-key"
+            v-model="barkKey"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            data-testid="bark-key-input"
+            placeholder="只填 key，留空表示不推送"
+            class="h-9 w-full rounded-md border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+          />
+          <p class="mt-1 text-xs text-gray-400">推送地址固定为 api.day.app，不用填写服务器地址。</p>
+          <p class="mt-1 text-xs text-gray-400" data-testid="bark-key-status">
+            当前：{{ barkConfigured ? '已填写' : '未填写' }}。留空并保存会关闭推送。
+          </p>
+          <div class="mt-4 flex justify-end">
+            <button
+              type="submit"
+              class="inline-flex h-9 items-center justify-center rounded-md bg-teal-600 px-5 text-sm text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="barkSubmitting"
+            >
+              {{ barkSubmitting ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
+
+        <div class="px-5 py-5 sm:px-6" data-testid="login-password-section">
+          <h3 class="text-sm font-medium text-gray-900">登录密码</h3>
+          <p class="mt-1 text-xs leading-5 text-gray-400">通过绑定邮箱收取重置链接，邮件里设置新密码。</p>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <p class="min-w-0 break-all text-sm text-gray-800" data-testid="masked-email">
+              {{ maskedEmail || '未绑定邮箱' }}
+            </p>
+            <button
+              type="button"
+              class="inline-flex h-9 shrink-0 items-center justify-center rounded-md px-5 text-sm transition disabled:cursor-not-allowed"
+              :class="resetCooldown > 0
+                ? 'bg-gray-200 text-gray-500'
+                : 'bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-60'"
+              data-testid="send-reset-email"
+              :disabled="resetSending || resetCooldown > 0 || !boundEmail"
+              @click="sendResetEmail"
+            >
+              <span v-if="resetSending">发送中…</span>
+              <span v-else-if="resetCooldown > 0">{{ resetCooldown }} 秒后可再次发送</span>
+              <span v-else>发送重置邮件</span>
+            </button>
+          </div>
         </div>
-        <button
-          type="submit"
-          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-          :disabled="nicknameSubmitting"
-        >
-          {{ nicknameSubmitting ? '保存中…' : '保存' }}
-        </button>
-      </form>
+      </div>
     </section>
 
-    <!-- 所在地区。和注册页共用选择器，只保留国家、城市两级。 -->
-    <section id="region" class="surface-card">
-      <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">所在地区</h2>
-        <p class="text-sm text-gray-500 mt-0.5">先选国家，再选城市。填写后，工作台日期行会带上当天实况和气温；留空并保存则不查询、不显示。</p>
-      </div>
-      <form class="px-6 py-5 space-y-3" data-testid="region-form" @submit.prevent="saveRegion">
-        <RegionPicker v-model="regionPlace" />
-        <button
-          type="submit"
-          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-          :disabled="regionSubmitting"
-        >
-          {{ regionSubmitting ? '保存中…' : '保存' }}
-        </button>
-      </form>
-    </section>
-
-    <!-- 登录密码：只发重置邮件，不在页面上填写新密码。 -->
-    <section class="surface-card" data-testid="login-password-section">
-      <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">登录密码</h2>
-        <p class="text-sm text-gray-500 mt-0.5">通过绑定邮箱收取重置链接，邮件里设置新密码。</p>
-      </div>
-      <div class="px-6 py-5 flex flex-wrap items-center justify-between gap-3">
-        <p class="text-sm text-gray-800" data-testid="masked-email">
-          {{ maskedEmail || '未绑定邮箱' }}
-        </p>
-        <button
-          type="button"
-          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-          data-testid="send-reset-email"
-          :disabled="resetSending || resetCooldown > 0 || !boundEmail"
-          @click="sendResetEmail"
-        >
-          <span v-if="resetSending">发送中…</span>
-          <span v-else-if="resetCooldown > 0">{{ resetCooldown }} 秒后可再次发送</span>
-          <span v-else>发送重置邮件</span>
-        </button>
+    <!-- 危险操作 -->
+    <section class="space-y-2.5" aria-labelledby="settings-danger">
+      <h2 id="settings-danger" class="px-0.5 text-[11px] font-medium tracking-[0.16em] text-[#9a958d]">危险操作</h2>
+      <div class="surface-card px-5 py-4 sm:px-6">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-sm leading-6 text-gray-500">退出当前账号。下次使用需要重新登录。</p>
+          <button
+            type="button"
+            class="inline-flex h-9 w-full shrink-0 items-center justify-center gap-1.5 rounded-md border border-[#ddd8cf] px-3 text-[12px] leading-none text-[#716c65] transition hover:border-[#c7a59f] hover:text-[#973a33] sm:w-auto"
+            data-testid="logout-button"
+            @click="handleLogout"
+          >
+            <IconLogout :size="15" :stroke-width="1.5" />
+            退出
+          </button>
+        </div>
       </div>
     </section>
 
