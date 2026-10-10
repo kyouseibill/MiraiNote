@@ -153,6 +153,73 @@ public class AgentRunConcurrencyTests
     }
 
     [Fact]
+    public async Task Stopping_a_queued_run_lets_the_next_run_start_without_waiting()
+    {
+        await using var harness = await Harness.Start(new AgentRunOptions { MaxConcurrent = 2, MaxPerUser = 1 });
+        var user = 81;
+        var running = Guid.NewGuid();
+        var queued = Guid.NewGuid();
+        var next = Guid.NewGuid();
+
+        harness.Enqueue(running, user);
+        await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+        harness.Enqueue(queued, user);
+        harness.Enqueue(next, user);
+        Assert.Equal(1, harness.Queue.GetPosition(queued));
+        Assert.Equal(2, harness.Queue.GetPosition(next));
+        Assert.Equal(1, harness.Queue.RunningCount);
+        Assert.Equal(2, harness.Queue.PendingCount);
+
+        harness.StopQueued(queued);
+
+        Assert.Null(harness.Queue.GetPosition(queued));
+        Assert.Equal(1, harness.Queue.GetPosition(next));
+        Assert.Equal(1, harness.Queue.RunningCount);
+        Assert.Equal(1, harness.Queue.PendingCount);
+        Assert.False(harness.Queue.IsRunning(queued));
+
+        harness.Runs.Complete(running);
+        var started = await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+        Assert.Equal(next, Assert.Single(started));
+        Assert.DoesNotContain(queued, harness.Runs.StartedIds);
+        Assert.Equal(1, harness.Queue.RunningCount);
+        Assert.Equal(0, harness.Queue.PendingCount);
+        Assert.False(harness.Queue.IsRunning(queued));
+    }
+
+    [Fact]
+    public async Task Dispatcher_does_not_reserve_a_slot_when_the_run_is_no_longer_queued()
+    {
+        await using var harness = await Harness.Start(new AgentRunOptions { MaxConcurrent = 2, MaxPerUser = 1 });
+        var user = 82;
+        var running = Guid.NewGuid();
+        var stale = Guid.NewGuid();
+        var next = Guid.NewGuid();
+        var reservedWhileClaiming = new List<bool>();
+
+        harness.Enqueue(running, user);
+        await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+        harness.Enqueue(stale, user);
+        harness.Enqueue(next, user);
+        harness.Runs.MarkNotQueued(stale);
+        harness.Runs.OnClaim = runId =>
+        {
+            if (runId == stale) reservedWhileClaiming.Add(harness.Queue.IsRunning(runId));
+        };
+
+        harness.Runs.Complete(running);
+        var started = await harness.Runs.TakeStarted(1, TimeSpan.FromSeconds(3));
+
+        Assert.Equal(next, Assert.Single(started));
+        Assert.DoesNotContain(stale, harness.Runs.StartedIds);
+        Assert.Equal(new[] { false }, reservedWhileClaiming);
+        Assert.Null(harness.Queue.GetPosition(stale));
+        Assert.Equal(0, harness.Queue.PendingCount);
+        Assert.Equal(1, harness.Queue.RunningCount);
+        Assert.False(harness.Queue.IsRunning(stale));
+    }
+
+    [Fact]
     public async Task Work_mode_runs_do_not_block_normal_chat_sessions()
     {
         await using var harness = await Harness.Start(new AgentRunOptions { MaxConcurrent = 4, MaxPerUser = 2 });
@@ -191,6 +258,12 @@ public class AgentRunConcurrencyTests
 
         public void Enqueue(Guid runId, int userId) => Queue.Enqueue(runId, userId);
 
+        public void StopQueued(Guid runId)
+        {
+            Runs.MarkNotQueued(runId);
+            Queue.TryRemovePending(runId);
+        }
+
         public async ValueTask DisposeAsync()
         {
             Runs.CompleteAll();
@@ -204,11 +277,15 @@ public class AgentRunConcurrencyTests
         private readonly Channel<Guid> _started = Channel.CreateUnbounded<Guid>();
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _gates = new();
         private readonly ConcurrentDictionary<Guid, byte> _fail = new();
+        private readonly ConcurrentDictionary<Guid, byte> _notQueued = new();
         private readonly ConcurrentBag<Guid> _startedIds = new();
 
         public IReadOnlyCollection<Guid> StartedIds => _startedIds.ToArray();
+        public Action<Guid>? OnClaim { get; set; }
 
         public void Fail(Guid runId) => _fail[runId] = 1;
+
+        public void MarkNotQueued(Guid runId) => _notQueued[runId] = 1;
 
         public void Complete(Guid runId) =>
             _gates.GetOrAdd(runId, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
@@ -229,6 +306,14 @@ public class AgentRunConcurrencyTests
                 list.Add(await _started.Reader.ReadAsync(cts.Token));
             return list;
         }
+
+        public Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken)
+        {
+            OnClaim?.Invoke(runId);
+            return Task.FromResult(!_notQueued.ContainsKey(runId));
+        }
+
+        public Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken) => ExecuteAsync(runId, stoppingToken);
 
         public async Task ExecuteAsync(Guid runId, CancellationToken stoppingToken)
         {

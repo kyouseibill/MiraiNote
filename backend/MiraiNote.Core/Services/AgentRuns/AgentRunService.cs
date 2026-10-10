@@ -20,6 +20,10 @@ public interface IAgentRunService
     Task<bool> ConfirmAsync(int userId, Guid runId, bool confirmed, CancellationToken ct);
     Task<bool> ResumeAsync(int userId, Guid runId, CancellationToken ct);
     Task ExecuteAsync(Guid runId, CancellationToken stoppingToken);
+    /// <summary>仅当数据库状态仍是 queued 时领走任务。没有领到时调用方不得占用执行名额。</summary>
+    Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken);
+    /// <summary>执行已经领走的任务。状态已不是 running 时直接返回。</summary>
+    Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken);
     Task RecoverInterruptedRunsAsync(CancellationToken ct);
     Task WaitForUpdateAsync(Guid runId, int observedSignalVersion, TimeSpan timeout, CancellationToken ct);
     int CurrentSignalVersion(Guid runId);
@@ -138,6 +142,8 @@ public sealed class AgentRunService : IAgentRunService
         run.LastActivityAt = run.CompletedAt;
         await AppendEventAsync(run, "stopped", "{\"message\":\"已停止\"}", ct);
         await SaveChangesDetachingFailedEventsAsync(ct);
+        // 还排在准入队列里时立刻腾出位置，避免之后被领走并占住名额。
+        _admission.TryRemovePending(runId);
         _dispatcher.Signal(runId);
         _dispatcher.Stop(runId);
         return true;
@@ -195,6 +201,12 @@ public sealed class AgentRunService : IAgentRunService
 
     public async Task ExecuteAsync(Guid runId, CancellationToken stoppingToken)
     {
+        if (!await TryClaimQueuedAsync(runId, stoppingToken)) return;
+        await ExecuteClaimedAsync(runId, stoppingToken);
+    }
+
+    public async Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken)
+    {
         var now = DateTime.UtcNow;
         var claimed = await _db.AgentRuns
             .Where(r => r.Id == runId && r.Status == AgentRunStatus.Queued)
@@ -202,14 +214,18 @@ public sealed class AgentRunService : IAgentRunService
                 .SetProperty(r => r.Status, AgentRunStatus.Running)
                 .SetProperty(r => r.LastActivityAt, now)
                 .SetProperty(r => r.StartedAt, r => r.StartedAt ?? now), stoppingToken);
-        if (claimed != 1) return;
+        if (claimed != 1) return false;
 
         // ExecuteUpdate 不刷新跟踪器。同一上下文里若还留着 Queued 实体，后续 SaveChanges 会把它写回去。
         foreach (var stale in _db.ChangeTracker.Entries<AgentRun>().Where(e => e.Entity.Id == runId).ToList())
             stale.State = EntityState.Detached;
+        return true;
+    }
 
+    public async Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken)
+    {
         var run = await _db.AgentRuns.FirstOrDefaultAsync(r => r.Id == runId, stoppingToken);
-        if (run == null) return;
+        if (run == null || run.Status != AgentRunStatus.Running) return;
 
         _nextSequence = await _db.AgentRunEvents.AsNoTracking()
             .Where(e => e.RunId == runId)

@@ -142,6 +142,25 @@ public class AgentRunEventSequenceTests
     }
 
     [Fact]
+    public async Task Stop_removes_a_queued_run_from_the_admission_queue()
+    {
+        using var fixture = new MiraiTestFixture();
+        await using var db = fixture.CreateContext();
+        var runId = await SeedQueuedRunAsync(db);
+        var admission = new AgentRunAdmissionQueue(2, 1);
+        admission.Enqueue(runId, 1);
+        var service = CreateService(db, Mock.Of<IChatService>(), admission: admission);
+
+        Assert.True(await service.StopAsync(1, runId, CancellationToken.None));
+
+        Assert.Null(admission.GetPosition(runId));
+        Assert.Equal(0, admission.PendingCount);
+        Assert.Equal(0, admission.RunningCount);
+        await using var read = fixture.CreateContext();
+        Assert.Equal(AgentRunStatus.Stopped, (await read.AgentRuns.AsNoTracking().SingleAsync(item => item.Id == runId)).Status);
+    }
+
+    [Fact]
     public async Task Status_reads_do_not_stick_to_the_first_tracked_value()
     {
         using var fixture = new MiraiTestFixture();

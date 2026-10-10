@@ -132,5 +132,7 @@ public class AgentRunEventStreamTests
         public Task<bool> ConfirmAsync(int userId, Guid runId, bool confirmed, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool> ResumeAsync(int userId, Guid runId, CancellationToken ct) => throw new NotSupportedException();
         public Task ExecuteAsync(Guid runId, CancellationToken stoppingToken) => throw new NotSupportedException();
+        public Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken) => throw new NotSupportedException();
+        public Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken) => throw new NotSupportedException();
     }
 }

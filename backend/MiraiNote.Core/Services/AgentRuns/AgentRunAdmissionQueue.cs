@@ -40,26 +40,85 @@ public sealed class AgentRunAdmissionQueue
         }
     }
 
-    /// <summary>在全局和该用户都还有空位时，取出队列中第一个可运行任务（可跳过队头）。</summary>
-    public bool TryAdmit(out PendingRun admitted)
+    public int RunningCount
+    {
+        get { lock (_gate) return _running; }
+    }
+
+    public int PendingCount
+    {
+        get { lock (_gate) return _pending.Count; }
+    }
+
+    public bool IsRunning(Guid runId)
+    {
+        lock (_gate) return _runningIds.Contains(runId);
+    }
+
+    /// <summary>看一眼下一个可运行任务，不把它移出队列，也不占用名额。</summary>
+    public bool TryPeekEligible(out PendingRun peeked)
     {
         lock (_gate)
         {
-            admitted = default;
+            peeked = default;
             if (_running >= _maxConcurrent) return false;
 
             var node = _pending.First;
             while (node != null)
             {
                 var candidate = node.Value;
-                var userRunning = _runningByUser.GetValueOrDefault(candidate.UserId);
-                if (userRunning < _maxPerUser)
+                if (_runningByUser.GetValueOrDefault(candidate.UserId) < _maxPerUser)
+                {
+                    peeked = candidate;
+                    return true;
+                }
+
+                node = node.Next;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 数据库已经确认任务仍是 queued 并领走之后，才把它记入正在执行的名额。
+    /// 任务已不在等待队列里时返回 false，不占用名额。
+    /// </summary>
+    public bool TryReservePending(Guid runId, int userId)
+    {
+        lock (_gate)
+        {
+            var node = _pending.First;
+            while (node != null)
+            {
+                if (node.Value.RunId == runId)
                 {
                     _pending.Remove(node);
                     _running++;
-                    _runningByUser[candidate.UserId] = userRunning + 1;
-                    _runningIds.Add(candidate.RunId);
-                    admitted = candidate;
+                    _runningByUser[userId] = _runningByUser.GetValueOrDefault(userId) + 1;
+                    _runningIds.Add(runId);
+                    return true;
+                }
+
+                node = node.Next;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>停止或取消仍在排队的任务时立刻移出等待队列，不触碰正在执行的名额。</summary>
+    public bool TryRemovePending(Guid runId)
+    {
+        lock (_gate)
+        {
+            var node = _pending.First;
+            while (node != null)
+            {
+                if (node.Value.RunId == runId)
+                {
+                    _pending.Remove(node);
+                    BumpNoLock();
                     return true;
                 }
 
