@@ -30,6 +30,7 @@ export interface RegisterRequest {
   email: string
   password: string
   confirmPassword: string
+  place: string
 }
 
 // 认证 Token 响应（与后端 AuthTokenResponse 对齐）

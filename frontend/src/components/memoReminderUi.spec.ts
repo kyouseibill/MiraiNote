@@ -14,6 +14,20 @@ vi.mock('@/api/memo', () => ({
   },
 }))
 
+vi.mock('@/api/region', () => ({
+  regionApi: {
+    countries: vi.fn().mockResolvedValue([
+      { name: '中国', code: 'cn' },
+      { name: '日本', code: 'jp' },
+    ]),
+    cities: vi.fn().mockImplementation(async (country: string, q: string) => {
+      if (!q.trim()) return []
+      if (q.includes('上')) return [{ name: '上海', label: `${country} · 上海` }]
+      return []
+    }),
+  },
+}))
+
 vi.mock('@/api/auth', () => ({
   bindAuthHooks: vi.fn(),
   authApi: {
@@ -32,6 +46,7 @@ vi.mock('@/api/auth', () => ({
 }))
 
 import { authApi } from '@/api/auth'
+import { regionApi } from '@/api/region'
 import MemoBoard from '@/components/MemoBoard.vue'
 import { useAuthStore } from '@/stores/auth'
 import ProfileView from '@/views/ProfileView.vue'
@@ -90,7 +105,7 @@ describe('备忘提醒界面', () => {
     expect(wrapper.get('[data-testid="bark-key-status"]').text()).toContain('未填写')
   })
 
-  it('个人设置可以填写或清空国家-城市', async () => {
+  it('个人设置用国家城市选择器保存所在地区，未点选的搜索词不会提交', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -104,21 +119,28 @@ describe('备忘提醒界面', () => {
     const wrapper = mount(Passthrough, { global: { plugins: [createPinia(), router] } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('未填写')
-    const input = wrapper.get('[data-testid="weather-place-input"]')
-    await input.setValue('  中国-上海  ')
-    await wrapper.get('[data-testid="weather-place-form"]').trigger('submit')
+    expect(wrapper.get('[data-testid="region-status"]').text()).toContain('未填写')
+    expect(wrapper.text()).toContain('所在地区')
+    const city = wrapper.get('[data-testid="region-city"]')
+    expect(city.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="region-city"]').setValue('上')
+    await flushPromises()
+    expect(regionApi.cities).toHaveBeenCalledWith('中国', '上')
+    await wrapper.get('[data-testid="region-city-option"]').trigger('mousedown')
+    await wrapper.get('[data-testid="region-form"]').trigger('submit')
     await flushPromises()
 
-    expect(authApi.updateWelcomeSettings).toHaveBeenCalledWith({ place: '中国-上海', nickname: '' })
-    expect((input.element as HTMLInputElement).value).toBe('中国-上海')
-    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('中国-上海')
+    expect(authApi.updateWelcomeSettings).toHaveBeenCalledWith({ place: '中国 · 上海', nickname: '' })
+    expect(wrapper.get('[data-testid="region-status"]').text()).toContain('中国 · 上海')
 
-    await input.setValue('   ')
-    await wrapper.get('[data-testid="weather-place-form"]').trigger('submit')
+    await wrapper.get('[data-testid="region-city"]').setValue('北京')
+    await wrapper.get('[data-testid="region-form"]').trigger('submit')
     await flushPromises()
     expect(authApi.updateWelcomeSettings).toHaveBeenLastCalledWith({ place: '', nickname: '' })
-    expect(wrapper.get('[data-testid="weather-place-status"]').text()).toContain('未填写')
+    expect(wrapper.get('[data-testid="region-status"]').text()).toContain('未填写')
   })
 
   it('个人设置可以填写或清空昵称，账户名仍是用户名', async () => {

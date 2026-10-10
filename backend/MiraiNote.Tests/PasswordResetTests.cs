@@ -306,7 +306,8 @@ public class PasswordResetTests
                 Username = "BillUser",
                 Email = "Bill@Example.COM",
                 Password = "Password1",
-                ConfirmPassword = "Password1"
+                ConfirmPassword = "Password1",
+                Place = "中国 · 上海"
             });
             await Auth.VerifyEmailAsync(TokenFromLink(VerifyLinks[0]));
         }

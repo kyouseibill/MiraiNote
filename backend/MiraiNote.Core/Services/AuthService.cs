@@ -55,6 +55,7 @@ public class AuthService : IAuthService
     private readonly AppOptions _appOptions;
     private readonly ILogger<AuthService> _logger;
     private readonly IBackgroundWork _background;
+    private readonly IReadOnlyList<RegionCountry> _regions;
 
     /// <summary>同一账户的重置邮件串行发送，避免并发请求都通过 60 秒检查。</summary>
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> ResetPasswordSendLocks = new();
@@ -70,7 +71,8 @@ public class AuthService : IAuthService
         IOptions<JwtOptions> jwtOptions,
         IOptions<AppOptions> appOptions,
         ILogger<AuthService> logger,
-        IBackgroundWork background)
+        IBackgroundWork background,
+        IOptions<RegionOptions>? regions = null)
     {
         _db = db;
         _jwt = jwt;
@@ -80,6 +82,7 @@ public class AuthService : IAuthService
         _appOptions = appOptions.Value;
         _logger = logger;
         _background = background;
+        _regions = RegionCatalog.Resolve(regions?.Value);
     }
 
     // ============================================================
@@ -97,6 +100,11 @@ public class AuthService : IAuthService
         if (request.Password != request.ConfirmPassword)
         {
             throw new BusinessException("两次输入的密码不一致");
+        }
+
+        if (!WelcomePlace.TryCanonicalize(request.Place, _regions, out var place, out var placeError) || place == null)
+        {
+            throw new BusinessException(placeError ?? "请选择所在地区");
         }
 
         if (await _db.Users.AnyAsync(u => u.NormalizedUserName == normalizedUsername, ct))
@@ -117,7 +125,8 @@ public class AuthService : IAuthService
             IsAdmin = false,
             // 关闭验证开关时也不自动标成已验证，与现有注册行为一致
             IsEmailVerified = false,
-            IsActive = true
+            IsActive = true,
+            WeatherPlace = place
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync(ct);

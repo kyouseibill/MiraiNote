@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using MiraiNote.Data.Context;
 using MiraiNote.Shared.Common;
 using MiraiNote.Shared.Dtos.Auth;
@@ -14,10 +15,12 @@ public interface IWelcomePlaceSettingsService
 public sealed class WelcomePlaceSettingsService : IWelcomePlaceSettingsService
 {
     private readonly MiraiNoteDbContext _db;
+    private readonly IReadOnlyList<RegionCountry> _regions;
 
-    public WelcomePlaceSettingsService(MiraiNoteDbContext db)
+    public WelcomePlaceSettingsService(MiraiNoteDbContext db, IOptions<RegionOptions>? regions = null)
     {
         _db = db;
+        _regions = RegionCatalog.Resolve(regions?.Value);
     }
 
     public async Task<WelcomeSettingsDto> GetAsync(int userId, CancellationToken ct = default)
@@ -37,11 +40,20 @@ public sealed class WelcomePlaceSettingsService : IWelcomePlaceSettingsService
 
     public async Task<WelcomeSettingsDto> UpdateAsync(int userId, string? place, string? nickname, CancellationToken ct = default)
     {
-        var normalizedPlace = WelcomePlace.Normalize(place);
-        var normalizedNickname = WelcomeNickname.Normalize(nickname);
-
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct)
             ?? throw new BusinessException("用户不存在", 404);
+
+        if (!WelcomePlace.TryCanonicalize(place, _regions, out var normalizedPlace, out var placeError))
+        {
+            var incoming = place?.Trim();
+            var current = user.WeatherPlace?.Trim();
+            if (!string.IsNullOrEmpty(current) && string.Equals(incoming, current, StringComparison.Ordinal))
+                normalizedPlace = user.WeatherPlace;
+            else
+                throw new BusinessException(placeError ?? "请选择所在地区");
+        }
+
+        var normalizedNickname = WelcomeNickname.Normalize(nickname);
 
         user.WeatherPlace = normalizedPlace;
         user.Nickname = normalizedNickname;

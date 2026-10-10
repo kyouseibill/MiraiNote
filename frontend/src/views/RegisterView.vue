@@ -9,6 +9,7 @@ import { RESEND_VERIFY_MESSAGE, type RegisterOutcome } from '@/types/auth'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
+import RegionPicker from '@/components/RegionPicker.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -19,6 +20,7 @@ const form = reactive({
   email: '',
   password: '',
   confirmPassword: '',
+  place: '',
 })
 // 用于区分各字段错误（空字符串 = 无错误）
 const errors = reactive({
@@ -26,6 +28,7 @@ const errors = reactive({
   email: '',
   password: '',
   confirmPassword: '',
+  region: '',
 })
 const loading = ref(false)
 const outcome = ref<RegisterOutcome | null>(null)
@@ -52,6 +55,10 @@ watch([() => form.password, () => form.confirmPassword], ([pwd, cpwd]) => {
 // 实时监听密码格式，正确后自动清除错误
 watch(() => form.password, (v) => {
   if (errors.password && passwordRe.test(v)) errors.password = ''
+})
+
+watch(() => form.place, (value) => {
+  if (errors.region && value.trim()) errors.region = ''
 })
 
 // 实时监听用户名格式
@@ -116,7 +123,9 @@ function validate(): boolean {
       ? ''
       : '两次输入的密码不一致'
 
-  return !errors.username && !errors.email && !errors.password && !errors.confirmPassword
+  errors.region = form.place.trim() ? '' : '请选择所在地区'
+
+  return !errors.username && !errors.email && !errors.password && !errors.confirmPassword && !errors.region
 }
 
 async function onSubmit() {
@@ -128,6 +137,7 @@ async function onSubmit() {
       email: form.email,
       password: form.password,
       confirmPassword: form.confirmPassword,
+      place: form.place.trim(),
     })
     if (result.outcome === 'verification_disabled') {
       toast.success('注册成功')
@@ -191,6 +201,8 @@ async function onResend() {
       <FormField label="确认密码" :error="errors.confirmPassword">
         <PasswordInput v-model="form.confirmPassword" autocomplete="new-password" @blur="checkConfirmPassword" />
       </FormField>
+
+      <RegionPicker v-model="form.place" required :error="errors.region" />
 
       <button type="submit" class="btn-primary" :disabled="loading">
         <span v-if="loading">注册中…</span>

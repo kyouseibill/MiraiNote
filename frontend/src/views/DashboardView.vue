@@ -15,6 +15,8 @@ import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
 import { joinWelcomeHeadline } from '@/utils/inspirationCopy'
 import { welcomeNowParam } from '@/utils/welcomeNow'
 import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api/auth'
+import RegionPrompt from '@/components/RegionPrompt.vue'
 import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
 import type { Memo } from '@/types/memo'
 import type { WorkLog } from '@/types/workLog'
@@ -40,6 +42,10 @@ const workMemos = ref<Memo[]>([])
 const lifeMemos = ref<Memo[]>([])
 const recentLogs = ref<WorkLog[]>([])
 const isDesignPreview = computed(() => import.meta.env.DEV && route.query.designPreview === '1')
+/** 只藏这一次打开。不写入本地存储，下次进入工作台还会提醒，直到填了所在地区。 */
+const regionPlace = ref<string | null | undefined>(undefined)
+const regionPromptDismissed = ref(false)
+const showRegionPrompt = computed(() => regionPlace.value === null && !regionPromptDismissed.value && !isDesignPreview.value)
 
 const shanghaiWeekdays: Record<string, string> = {
   Sun: '周日',
@@ -406,12 +412,26 @@ async function toggleMemo(item: Memo) {
   if (index >= 0) target.value[index] = updated
 }
 
-onMounted(load)
+async function loadRegionPrompt() {
+  if (isDesignPreview.value) return
+  try {
+    const settings = await authApi.getWelcomeSettings()
+    regionPlace.value = settings.place?.trim() ? settings.place : null
+  } catch {
+    regionPlace.value = undefined
+  }
+}
+
+onMounted(() => {
+  void load()
+  void loadRegionPrompt()
+})
 onUnmounted(cancelWelcomeTypewriter)
 </script>
 
 <template>
   <div class="mx-auto w-full max-w-[1160px] px-6 py-12 sm:px-10 lg:px-14 lg:pb-16 lg:pt-[120px]">
+    <RegionPrompt v-if="showRegionPrompt" class="mb-8" @skip="regionPromptDismissed = true" />
     <div class="grid gap-12 xl:grid-cols-[minmax(0,1fr)_300px] xl:gap-16">
       <section class="min-w-0 xl:pr-2">
         <header>
