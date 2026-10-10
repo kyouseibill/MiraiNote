@@ -21,7 +21,7 @@ namespace MiraiNote.Core.Services;
 /// 3. 安全：
 ///    - 密码 BCrypt 哈希
 ///    - 登录连续失败 5 次，账户锁定 15 分钟（IMemoryCache，进程级，重启重置 —— 可接受）
-///    - 重置邮件：同一账户加锁后才检查 60 秒冷却，邮件发送成功后才作废旧链接；1 小时内最多 3 封（IMemoryCache）。超限时不发信也不单独报错
+///    - 重置邮件：同一账户加锁后才检查 60 秒冷却。行锁、冷却检查和写入新 token 放在执行策略里的用户事务中，兼容 Npgsql EnableRetryOnFailure。邮件发送成功后才作废旧链接；1 小时内最多 3 封（IMemoryCache）。超限时不发信也不单独报错
 ///    - 验证邮件重发次数记在 EmailVerifyToken 表，超限时不发信也不单独报错
 ///    - 忘记密码无论邮箱是否存在均返回成功，防止账户枚举
 ///    - RefreshToken 入库只存 SHA-256 哈希，原文随响应返回，由 Controller 写入 HttpOnly Cookie
@@ -443,19 +443,25 @@ public class AuthService : IAuthService
         {
             var now = UtcNow();
             var rateKey = $"email:reset:{normalizedEmail}";
-            EmailVerifyToken created;
-            await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+            // EnableRetryOnFailure 下，手动事务必须整段放进执行策略，否则后续 SQL / SaveChanges
+            // 会因 NpgsqlRetryingExecutionStrategy 拒绝用户事务而失败。
+            // 策略可能重试委托：每次开始前清空跟踪，避免上一次未提交的 token 再被插入。
+            var strategy = _db.Database.CreateExecutionStrategy();
+            var created = await strategy.ExecuteAsync(async () =>
             {
+                _db.ChangeTracker.Clear();
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
                 // 锁住账户行，让其他进程的并发请求排队后再看 60 秒窗口。
                 var locked = await _db.Database.ExecuteSqlInterpolatedAsync(
                     $"""UPDATE "User" SET "UpdatedAt" = "UpdatedAt" WHERE "Id" = {user.Id}""", ct);
                 if (locked == 0)
-                    return;
+                    return null;
 
                 if (await HasRecentResetPasswordAsync(user.Id, now, ct) || !CanSendAnotherResetEmail(rateKey))
-                    return;
+                    return null;
 
-                created = new EmailVerifyToken
+                var token = new EmailVerifyToken
                 {
                     UserId = user.Id,
                     Token = Guid.NewGuid().ToString("N"),
@@ -463,10 +469,13 @@ public class AuthService : IAuthService
                     ExpiresAt = now.Add(ResetPasswordTokenLifetime),
                     IsUsed = false
                 };
-                _db.EmailVerifyTokens.Add(created);
+                _db.EmailVerifyTokens.Add(token);
                 await _db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
-            }
+                return token;
+            });
+            if (created == null)
+                return;
 
             var link = BuildAbsoluteLink($"/reset-password?token={created.Token}");
             try
