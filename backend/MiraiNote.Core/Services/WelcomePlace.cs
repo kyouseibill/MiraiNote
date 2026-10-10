@@ -242,7 +242,14 @@ public static class WelcomePlace
     public static string? CountryCode(string country)
     {
         var key = Collapse(country);
-        return CountryCodes.TryGetValue(key, out var code) ? code : null;
+        if (CountryCodes.TryGetValue(key, out var code)) return code;
+        foreach (var item in RegionCatalog.Default)
+        {
+            if (string.Equals(item.Name, key, StringComparison.Ordinal))
+                return item.Code;
+        }
+
+        return null;
     }
 
     public static string CacheKey(string place)

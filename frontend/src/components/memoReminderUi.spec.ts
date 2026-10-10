@@ -124,7 +124,9 @@ describe('备忘提醒界面', () => {
     const city = wrapper.get('[data-testid="region-city"]')
     expect(city.attributes('disabled')).toBeDefined()
 
-    await wrapper.get('[data-testid="region-country"]').setValue('中国')
+    const country = wrapper.get('[data-testid="region-country"]')
+    await country.setValue('中国')
+    await country.trigger('keydown', { key: 'Enter' })
     expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('[data-testid="region-city"]').setValue('上')
     await flushPromises()

@@ -3,6 +3,8 @@ import { unwrap, http } from '@/api/auth'
 export interface RegionCountry {
   name: string
   code: string
+  /** 英文短名，只参与搜索。展示用 name。 */
+  englishName?: string
 }
 
 export interface RegionCity {

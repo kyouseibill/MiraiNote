@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { regionApi, type RegionCountry } from '@/api/region'
-import { formatRegion, parseRegion } from '@/utils/region'
+import { filterCountries, findExactCountry, formatRegion, parseRegion } from '@/utils/region'
 
 const props = defineProps<{
   modelValue: string
@@ -15,6 +15,8 @@ const emit = defineEmits<{
 
 const countries = ref<RegionCountry[]>([])
 const country = ref('')
+const countryQuery = ref('')
+const countryOpen = ref(false)
 const city = ref('')
 const query = ref('')
 const hits = ref<{ name: string; label: string }[]>([])
@@ -25,6 +27,8 @@ const loadError = ref('')
 let searchSeq = 0
 
 const display = computed(() => (country.value && city.value ? formatRegion(country.value, city.value) : ''))
+const visibleCountries = computed(() => filterCountries(countries.value, countryQuery.value))
+const countryInput = computed(() => (countryOpen.value ? countryQuery.value : country.value))
 
 watch(
   () => props.modelValue,
@@ -35,6 +39,8 @@ watch(
     country.value = parsed.country
     city.value = parsed.city
     query.value = parsed.city
+    countryQuery.value = ''
+    countryOpen.value = false
   },
   { immediate: true },
 )
@@ -48,10 +54,7 @@ onMounted(async () => {
   }
 })
 
-function onCountryChange(event: Event) {
-  const next = (event.target as HTMLSelectElement).value
-  if (next === country.value) return
-  country.value = next
+function resetCity() {
   city.value = ''
   query.value = ''
   hits.value = []
@@ -59,6 +62,45 @@ function onCountryChange(event: Event) {
   searched.value = false
   searchError.value = ''
   searchSeq += 1
+}
+
+function onCountryFocus() {
+  countryQuery.value = ''
+  countryOpen.value = true
+}
+
+function onCountryBlur() {
+  countryOpen.value = false
+  countryQuery.value = ''
+}
+
+function onCountryInput(event: Event) {
+  countryQuery.value = (event.target as HTMLInputElement).value
+  countryOpen.value = true
+  if (!country.value && !city.value) return
+  country.value = ''
+  resetCity()
+  emit('update:modelValue', '')
+}
+
+function onCountryKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    countryOpen.value = false
+    countryQuery.value = ''
+    return
+  }
+  if (event.key !== 'Enter') return
+  event.preventDefault()
+  const exact = findExactCountry(visibleCountries.value, countryQuery.value)
+  if (exact) selectCountry(exact)
+}
+
+function selectCountry(item: RegionCountry) {
+  countryOpen.value = false
+  countryQuery.value = ''
+  if (item.name === country.value) return
+  country.value = item.name
+  resetCity()
   emit('update:modelValue', '')
 }
 
@@ -122,18 +164,52 @@ async function search(text: string) {
   <div data-testid="region-picker">
     <label class="mb-1 block text-sm text-gray-700" for="region-country">所在地区</label>
     <div class="grid gap-2 sm:grid-cols-2">
-      <select
-        id="region-country"
-        data-testid="region-country"
-        class="h-9 rounded-md border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-        :value="country"
-        :required="required"
-        :aria-required="required || undefined"
-        @change="onCountryChange"
-      >
-        <option value="" disabled>选择国家</option>
-        <option v-for="item in countries" :key="item.code" :value="item.name">{{ item.name }}</option>
-      </select>
+      <div class="relative">
+        <input
+          id="region-country"
+          data-testid="region-country"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-controls="region-country-list"
+          :aria-expanded="countryOpen"
+          :aria-required="required || undefined"
+          class="h-9 w-full rounded-md border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+          :value="countryInput"
+          :placeholder="country ? country : '搜索国家'"
+          @focus="onCountryFocus"
+          @blur="onCountryBlur"
+          @input="onCountryInput"
+          @keydown="onCountryKeydown"
+        />
+        <ul
+          v-if="countryOpen"
+          id="region-country-list"
+          data-testid="region-country-list"
+          class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white shadow"
+        >
+          <li v-for="item in visibleCountries" :key="item.code">
+            <button
+              type="button"
+              class="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-teal-50"
+              data-testid="region-country-option"
+              @mousedown.prevent="selectCountry(item)"
+            >
+              <span data-testid="region-country-name">{{ item.name }}</span>
+              <span v-if="item.englishName" class="truncate text-xs text-gray-400">{{ item.englishName }}</span>
+            </button>
+          </li>
+          <li
+            v-if="countryQuery.trim() && visibleCountries.length === 0"
+            class="px-3 py-2 text-sm text-gray-500"
+            data-testid="region-country-empty"
+          >
+            没有匹配的国家
+          </li>
+        </ul>
+      </div>
       <div class="relative">
         <input
           id="region-city"

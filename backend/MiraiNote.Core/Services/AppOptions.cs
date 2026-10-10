@@ -92,8 +92,8 @@ public class WeatherOptions
 /// Host 或 Key 任一为空，就不请求天气。实况只读 /v7/weather/now 的 now.text，不另加环境变量。
 /// </summary>
 /// <summary>
-/// 所在地区的国家列表。留空用内置的 10 个常用国家。
-/// 写成非空数组时按该顺序整表替换，不要在这里放全世界国家。
+/// 所在地区的国家列表。留空用内置 ISO 3166-1 国家表，中国和日本置顶。
+/// 写成非空数组时按该顺序整表替换，不与内置表合并。
 /// </summary>
 public class RegionOptions
 {
@@ -105,6 +105,9 @@ public class RegionOptions
 public class RegionCountryOption
 {
     public string Name { get; set; } = "";
+
+    /// <summary>英文短名，只用于搜索。留空则只能按中文名和代码搜。</summary>
+    public string EnglishName { get; set; } = "";
 
     /// <summary>和风城市搜索 range 用的 ISO 3166-1 alpha-2，例如 cn。</summary>
     public string Code { get; set; } = "";

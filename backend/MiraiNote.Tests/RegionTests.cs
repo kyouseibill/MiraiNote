@@ -17,12 +17,55 @@ public class RegionTests : IDisposable
     private readonly MiraiTestFixture _fx = new();
 
     [Fact]
-    public void DefaultCountries_AreTheV1ListInOrder_AndNotAWorldDump()
+    public void DefaultCountries_UseIso3166_PinChinaAndJapan_AndKeepTheOriginalTen()
     {
-        var names = RegionCatalog.Default.Select(item => item.Name).ToArray();
-        Assert.Equal(["中国", "日本", "美国", "英国", "新加坡", "澳大利亚", "加拿大", "韩国", "德国", "法国"], names);
-        Assert.Equal(10, names.Length);
-        Assert.DoesNotContain(names, name => name is "印度" or "巴西" or "俄罗斯");
+        var countries = RegionCatalog.Default;
+        var names = countries.Select(item => item.Name).ToArray();
+        Assert.Equal(["中国", "日本", "美国", "英国", "新加坡", "澳大利亚", "加拿大", "韩国", "德国", "法国"], names.Take(10).ToArray());
+        Assert.InRange(countries.Count, 200, 260);
+        Assert.Equal(249, countries.Count);
+        Assert.Equal(countries.Count, countries.Select(item => item.Code).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(countries.Count, countries.Select(item => item.Name).Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains(countries, item => item is { Name: "印度", EnglishName: "India", Code: "in" });
+        Assert.Contains(countries, item => item is { Name: "巴西", EnglishName: "Brazil", Code: "br" });
+        Assert.Contains(countries, item => item is { Name: "俄罗斯", EnglishName: "Russia", Code: "ru" });
+        Assert.Contains(countries, item => item is { Name: "挪威", EnglishName: "Norway", Code: "no" });
+        Assert.All(countries, item => Assert.DoesNotContain(item.Name, ch => WelcomePlace.IsSeparatorChar(ch)));
+
+        Assert.Same(countries, RegionCatalog.Resolve(null));
+        Assert.Same(countries, RegionCatalog.Resolve(new RegionOptions()));
+        Assert.Same(countries, RegionCatalog.Resolve(new RegionOptions
+        {
+            Countries = [new RegionCountryOption { Name = "法国", Code = "france" }],
+        }));
+    }
+
+    [Fact]
+    public void CountrySearch_MatchesChineseEnglishAndCode_WithoutReorderingPins()
+    {
+        var countries = RegionCatalog.Default;
+
+        Assert.Equal(["jp"], RegionCatalog.Search(countries, "日本").Select(item => item.Code).ToArray());
+        Assert.Equal(["jp"], RegionCatalog.Search(countries, "Japan").Select(item => item.Code).ToArray());
+        Assert.Equal(["jp"], RegionCatalog.Search(countries, "JP").Select(item => item.Code).ToArray());
+        Assert.Equal(["cn"], RegionCatalog.Search(countries, "cn").Select(item => item.Code).ToArray());
+
+        var china = RegionCatalog.Search(countries, "中国");
+        Assert.Equal("cn", china[0].Code);
+        Assert.Contains(china, item => item.Code == "hk");
+        Assert.Contains(china, item => item.Code == "mo");
+
+        var byCode = RegionCatalog.Search(countries, "us");
+        Assert.Equal("美国", byCode[0].Name);
+        Assert.Contains(byCode, item => item.Code == "au");
+
+        var india = RegionCatalog.Search(countries, "India");
+        Assert.Contains(india, item => item is { Name: "印度", Code: "in" });
+        Assert.Equal(countries, RegionCatalog.Search(countries, "   "));
+
+        Assert.Equal("no", WelcomePlace.CountryCode("挪威"));
+        Assert.Equal("jp", WelcomePlace.CountryCode("日本"));
+        Assert.Equal("挪威 · 奥斯陆", Canonical("挪威-奥斯陆", countries));
     }
 
     [Fact]
@@ -32,7 +75,7 @@ public class RegionTests : IDisposable
         {
             Countries =
             [
-                new RegionCountryOption { Name = "泰国", Code = "TH" },
+                new RegionCountryOption { Name = "泰国", Code = "TH", EnglishName = "Thailand" },
                 new RegionCountryOption { Name = "中国", Code = "cn" },
                 new RegionCountryOption { Name = "", Code = "jp" },
                 new RegionCountryOption { Name = "法国", Code = "france" },
@@ -42,6 +85,11 @@ public class RegionTests : IDisposable
         var resolved = RegionCatalog.Resolve(options);
         Assert.Equal(["泰国", "中国"], resolved.Select(item => item.Name).ToArray());
         Assert.Equal("th", resolved[0].Code);
+        Assert.Equal("Thailand", resolved[0].EnglishName);
+        Assert.Equal("", resolved[1].EnglishName);
+        Assert.Equal(["th"], RegionCatalog.Search(resolved, "thai").Select(item => item.Code).ToArray());
+        Assert.Equal(["cn"], RegionCatalog.Search(resolved, "cn").Select(item => item.Code).ToArray());
+        Assert.Empty(RegionCatalog.Search(resolved, "Japan"));
 
         Assert.Equal("泰国 · 曼谷", Canonical("泰国-曼谷", resolved));
         var rejected = WelcomePlace.TryCanonicalize("日本-东京", resolved, out _, out var error);
@@ -82,7 +130,21 @@ public class RegionTests : IDisposable
 
         var countries = service.ListCountries();
         Assert.Equal("中国", countries[0].Name);
-        Assert.Equal("法国", countries[^1].Name);
+        Assert.Equal("cn", countries[0].Code);
+        Assert.Equal("China", countries[0].EnglishName);
+        Assert.Equal("日本", countries[1].Name);
+        Assert.True(countries.Count >= 200);
+
+        var cities = await service.SearchCitiesAsync("挪威", "奥");
+        Assert.Equal("挪威", source.LastCountry);
+        Assert.Equal("no", source.LastCode);
+        Assert.Equal("奥", source.LastQuery);
+        Assert.Equal(["奥"], cities.Select(item => item.Name).ToArray());
+        Assert.Equal("挪威 · 奥", cities[0].Label);
+
+        var unknown = await Assert.ThrowsAsync<BusinessException>(() => service.SearchCitiesAsync("不是国家", "城"));
+        Assert.Equal("请选择国家", unknown.Message);
+        Assert.Equal(1, source.Calls);
     }
 
     [Fact]
@@ -160,10 +222,16 @@ public class RegionTests : IDisposable
     private sealed class CountingCitySource : IRegionCitySource
     {
         public int Calls { get; private set; }
+        public string? LastCountry { get; private set; }
+        public string? LastCode { get; private set; }
+        public string? LastQuery { get; private set; }
 
         public Task<IReadOnlyList<string>> SearchAsync(string countryName, string countryCode, string query, CancellationToken ct = default)
         {
             Calls++;
+            LastCountry = countryName;
+            LastCode = countryCode;
+            LastQuery = query;
             return Task.FromResult<IReadOnlyList<string>>([query]);
         }
     }
