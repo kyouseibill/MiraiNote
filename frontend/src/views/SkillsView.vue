@@ -198,6 +198,7 @@ onMounted(async () => {
         <div class="flex items-center justify-between px-3 py-2 text-[11px] font-medium tracking-[0.12em] text-[var(--mn-muted)]">
           <span>我的技能</span><span>{{ skills.length }}</span>
         </div>
+        <p class="px-3 pb-3 text-[11px] leading-5 text-[var(--mn-muted)]">也可以在对话里直接说「帮我创建一个 Skill」或「改一下这个 Skill」，Mirai 会帮你写好。</p>
         <div v-if="loading && !skills.length" role="status" class="px-3 py-8 text-[13px] text-[var(--mn-muted)]">正在读取工作区…</div>
         <div v-else-if="!skills.length" class="px-3 py-8 text-[13px] leading-6 text-[var(--mn-muted)]">还没有 Skill。新建一个，或将 SKILL.md 放入私有工作区的 skills/名称/ 目录。</div>
         <ul v-else class="space-y-1">
