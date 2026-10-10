@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { regionApi, type RegionCountry } from '@/api/region'
-import { filterCountries, findExactCountry, formatRegion, parseRegion } from '@/utils/region'
+import { regionApi, type RegionCity, type RegionCountry } from '@/api/region'
+import { filterCountries, findExactCountry, formatRegion, mergeCityHits, parseRegion } from '@/utils/region'
 
 const props = defineProps<{
   modelValue: string
@@ -19,7 +19,8 @@ const countryQuery = ref('')
 const countryOpen = ref(false)
 const city = ref('')
 const query = ref('')
-const hits = ref<{ name: string; label: string }[]>([])
+const commons = ref<RegionCity[]>([])
+const hits = ref<RegionCity[]>([])
 const open = ref(false)
 const searched = ref(false)
 const searchError = ref('')
@@ -57,6 +58,7 @@ onMounted(async () => {
 function resetCity() {
   city.value = ''
   query.value = ''
+  commons.value = []
   hits.value = []
   open.value = false
   searched.value = false
@@ -102,6 +104,16 @@ function selectCountry(item: RegionCountry) {
   country.value = item.name
   resetCity()
   emit('update:modelValue', '')
+  void loadCities('')
+}
+
+function onCityFocus() {
+  if (!country.value || query.value.trim()) return
+  if (hits.value.length > 0) {
+    open.value = true
+    return
+  }
+  void loadCities('')
 }
 
 function onCityInput(event: Event) {
@@ -113,14 +125,14 @@ function onCityInput(event: Event) {
     city.value = ''
     emit('update:modelValue', '')
   }
-  if (!country.value || !trimmed) {
+  if (!country.value) {
     hits.value = []
     open.value = false
     searched.value = false
     searchSeq += 1
     return
   }
-  void search(trimmed)
+  void loadCities(trimmed)
 }
 
 function onCityKeydown(event: KeyboardEvent) {
@@ -142,16 +154,21 @@ function selectCity(name: string) {
   emit('update:modelValue', formatRegion(country.value, name))
 }
 
-async function search(text: string) {
+async function loadCities(text: string) {
   const seq = ++searchSeq
+  const selected = country.value
   try {
-    const rows = await regionApi.cities(country.value, text)
+    const rows = await regionApi.cities(selected, text)
+    if (selected !== country.value) return
+    if (!text) commons.value = rows
     if (seq !== searchSeq) return
-    hits.value = rows
-    open.value = true
+    const merged = text ? mergeCityHits(rows, commons.value, text) : rows
+    hits.value = merged
+    open.value = text.length > 0 || merged.length > 0
     searched.value = true
+    searchError.value = ''
   } catch {
-    if (seq !== searchSeq) return
+    if (selected !== country.value || seq !== searchSeq) return
     hits.value = []
     open.value = true
     searched.value = true
@@ -220,8 +237,9 @@ async function search(text: string) {
           class="h-9 w-full rounded-md border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:bg-gray-50 disabled:text-gray-400"
           :value="query"
           :disabled="!country"
-          :placeholder="country ? '搜索城市' : '请先选择国家'"
+          :placeholder="country ? '选择或搜索城市' : '请先选择国家'"
           aria-label="城市"
+          @focus="onCityFocus"
           @input="onCityInput"
           @keydown="onCityKeydown"
         />
@@ -240,7 +258,7 @@ async function search(text: string) {
               {{ hit.label }}
             </button>
           </li>
-          <li v-if="searched && hits.length === 0" class="px-3 py-2 text-sm text-gray-500" data-testid="region-city-empty">
+          <li v-if="searched && hits.length === 0 && (query.trim() || searchError)" class="px-3 py-2 text-sm text-gray-500" data-testid="region-city-empty">
             {{ searchError || '没有匹配的城市' }}
           </li>
         </ul>

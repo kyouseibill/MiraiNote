@@ -66,6 +66,12 @@ const Host = defineComponent({
 describe('所在地区选择器', () => {
   beforeEach(() => {
     vi.mocked(regionApi.cities).mockClear()
+    vi.mocked(regionApi.cities).mockImplementation(async (country: string, q: string) => {
+      if (!q.trim()) return []
+      if (country === '中国' && q.includes('上')) return [{ name: '上海', label: '中国 · 上海' }]
+      if (country === '日本' && q.includes('东')) return [{ name: '东京', label: '日本 · 东京' }]
+      return []
+    })
   })
 
   async function mountHost() {
@@ -156,10 +162,12 @@ describe('所在地区选择器', () => {
     expect(wrapper.get('[data-testid="region-city"]').attributes('disabled')).toBeDefined()
 
     await chooseCountry(wrapper, '中国')
+    await flushPromises()
     await wrapper.get('[data-testid="region-city"]').setValue('   ')
     await wrapper.get('[data-testid="region-city"]').trigger('keydown', { key: 'Enter' })
     await wrapper.get('form').trigger('submit')
-    expect(regionApi.cities).not.toHaveBeenCalled()
+    expect(regionApi.cities).toHaveBeenCalledWith('中国', '')
+    expect(vi.mocked(regionApi.cities).mock.calls.every((call) => String(call[1]).trim() === '')).toBe(true)
     expect(wrapper.vm.submitted).toBe('')
 
     await wrapper.get('[data-testid="region-city"]').setValue('上')
@@ -175,5 +183,53 @@ describe('所在地区选择器', () => {
     await wrapper.get('form').trigger('submit')
     expect(wrapper.vm.submitted).toBe('')
     expect(wrapper.vm.submitted).not.toBe('上')
+  })
+
+  it('选中日本后不用输入就能滚动到札幌，搜索会和常用城市去重', async () => {
+    const japanCommons = [
+      { name: '东京', label: '日本 · 东京' },
+      { name: '大阪', label: '日本 · 大阪' },
+      { name: '名古屋', label: '日本 · 名古屋' },
+      { name: '札幌市', label: '日本 · 札幌市' },
+      { name: '福冈', label: '日本 · 福冈' },
+      { name: '京都', label: '日本 · 京都' },
+      { name: '神户', label: '日本 · 神户' },
+      { name: '横滨', label: '日本 · 横滨' },
+    ]
+    vi.mocked(regionApi.cities).mockImplementation(async (country: string, q: string) => {
+      if (country !== '日本') return []
+      if (!q.trim()) return japanCommons
+      if (q === '大阪') return [{ name: '大阪市', label: '日本 · 大阪市' }]
+      return []
+    })
+
+    const wrapper = await mountHost()
+    await chooseCountry(wrapper, '日本')
+    await flushPromises()
+
+    expect(regionApi.cities).toHaveBeenCalledWith('日本', '')
+    const list = wrapper.get('[data-testid="region-city-list"]')
+    expect(list.classes()).toEqual(expect.arrayContaining(['max-h-60', 'overflow-auto']))
+    expect(list.text()).toContain('札幌市')
+    expect(list.text()).toContain('大阪')
+    expect(list.text()).toContain('名古屋')
+    expect(list.text()).toContain('东京')
+
+    const sapporo = wrapper.get('[data-testid="region-city-list"]').findAll('[data-testid="region-city-option"]')
+      .find((item) => item.text().includes('札幌'))
+    expect(sapporo).toBeTruthy()
+    await sapporo!.trigger('mousedown')
+    expect(wrapper.get('[data-testid="region-status"]').text()).toContain('日本 · 札幌市')
+
+    await wrapper.get('[data-testid="region-city"]').setValue('大阪')
+    await flushPromises()
+    expect(regionApi.cities).toHaveBeenLastCalledWith('日本', '大阪')
+    const osaka = wrapper.findAll('[data-testid="region-city-option"]').map((item) => item.text())
+    expect(osaka.filter((item) => item.includes('大阪'))).toEqual(['日本 · 大阪市'])
+
+    await wrapper.get('[data-testid="region-city"]').setValue('札')
+    await flushPromises()
+    expect(regionApi.cities).toHaveBeenLastCalledWith('日本', '札')
+    expect(wrapper.get('[data-testid="region-city-list"]').text()).toContain('札幌市')
   })
 })

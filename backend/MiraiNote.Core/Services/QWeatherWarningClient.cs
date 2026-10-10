@@ -411,37 +411,61 @@ internal static class QWeatherCityList
 {
     public static IReadOnlyList<string> Read(JsonElement root, string country)
     {
-        var names = new List<string>();
         if (root.TryGetProperty("code", out var code))
         {
             var value = code.ValueKind == JsonValueKind.String ? code.GetString() : code.ToString();
             if (!string.Equals(value, "200", StringComparison.Ordinal))
-                return names;
+                return [];
         }
 
         if (!root.TryGetProperty("location", out var locations) || locations.ValueKind != JsonValueKind.Array)
-            return names;
+            return [];
 
+        var slots = new List<(int Index, string Name)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var promotions = new List<(int Index, string Name)>();
+        var promotionSeen = new HashSet<string>(StringComparer.Ordinal);
+        var index = 0;
+
         foreach (var location in locations.EnumerateArray())
         {
+            var order = index++;
             if (!CountryMatches(location, country))
                 continue;
             var name = ReadString(location, "name");
-            if (string.IsNullOrEmpty(name) || WelcomePlace.IsDistrictName(name))
+            if (string.IsNullOrEmpty(name))
                 continue;
             var type = ReadString(location, "type");
             if (type is "scenic" or "poi")
                 continue;
-            if (!IsCityLevel(location, name))
+
+            var adm2 = ReadString(location, "adm2");
+            if (!WelcomePlace.IsDistrictName(name) && IsCityLevel(location, name))
+            {
+                if (seen.Add(CityNames.Key(name)))
+                    slots.Add((order, name));
                 continue;
-            if (seen.Add(name))
-                names.Add(name);
-            if (names.Count == 10)
-                break;
+            }
+
+            // 札幌这类结果只有区，name 对不上城市。共享的 adm2（札幌市）提升成一条可选城市。
+            if (string.IsNullOrEmpty(adm2) || WelcomePlace.IsDistrictName(adm2))
+                continue;
+            if (promotionSeen.Add(CityNames.Key(adm2)))
+                promotions.Add((order, adm2));
         }
 
-        return names;
+        foreach (var (order, adm2) in promotions)
+        {
+            if (!seen.Add(CityNames.Key(adm2)))
+                continue;
+            slots.Add((order, adm2));
+        }
+
+        return slots
+            .OrderBy(item => item.Index)
+            .Select(item => item.Name)
+            .Take(CityNames.MaxResults)
+            .ToArray();
     }
 
     private static bool IsCityLevel(JsonElement location, string name)
@@ -450,27 +474,26 @@ internal static class QWeatherCityList
         var adm1 = ReadString(location, "adm1");
         if (string.IsNullOrEmpty(adm2) && string.IsNullOrEmpty(adm1))
             return true;
-        if (!string.IsNullOrEmpty(adm2) && string.Equals(adm2, name, StringComparison.Ordinal))
-            return true;
-        if (!string.IsNullOrEmpty(adm1)
-            && (string.Equals(adm1, name, StringComparison.Ordinal)
-                || string.Equals(TrimAdmin(adm1), name, StringComparison.Ordinal)))
+        if (AdminEquals(adm2, name) || AdminEquals(adm1, name))
             return true;
         if (!string.IsNullOrEmpty(adm2))
             return false;
         return true;
     }
 
-    private static string TrimAdmin(string value)
+    /// <summary>name 与 adm 相同，或任一侧去掉市/区/郡/都/府/道等后缀后相同。</summary>
+    private static bool AdminEquals(string? admin, string name)
     {
-        ReadOnlySpan<string> suffixes = ["特别行政区", "自治区", "省", "市", "州", "都", "府", "道"];
-        foreach (var suffix in suffixes)
-        {
-            if (value.Length > suffix.Length && value.EndsWith(suffix, StringComparison.Ordinal))
-                return value[..^suffix.Length];
-        }
+        if (string.IsNullOrEmpty(admin))
+            return false;
+        if (string.Equals(admin, name, StringComparison.Ordinal))
+            return true;
 
-        return value;
+        var adminKey = CityNames.Key(admin);
+        var nameKey = CityNames.Key(name);
+        return string.Equals(adminKey, name, StringComparison.Ordinal)
+            || string.Equals(admin, nameKey, StringComparison.Ordinal)
+            || string.Equals(adminKey, nameKey, StringComparison.Ordinal);
     }
 
     private static bool CountryMatches(JsonElement location, string country)

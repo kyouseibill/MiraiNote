@@ -21,6 +21,41 @@ export function formatRegion(country: string, city: string): string {
   return `${country} · ${city}`
 }
 
+const adminSuffixes = ['特别行政区', '自治区', '省', '市', '州', '郡', '都', '府', '道', '区']
+
+/** 与后端 CityNames 同一套后缀，用来把「大阪」和「大阪市」看成同一座城市。 */
+export function cityDedupeKey(name: string): string {
+  const value = name.trim()
+  for (const suffix of adminSuffixes) {
+    if (value.length > suffix.length && value.endsWith(suffix)) return value.slice(0, -suffix.length)
+  }
+  return value
+}
+
+/** 和风结果在前，常用城市补缺。同一座城市只留一条，最多 20 条。 */
+export function mergeCityHits<T extends { name: string }>(
+  geo: readonly T[],
+  commons: readonly T[],
+  query: string,
+): T[] {
+  const q = query.trim()
+  const extra = q
+    ? commons.filter((item) => item.name.includes(q) || cityDedupeKey(item.name).includes(q))
+    : commons
+  const seen = new Set<string>()
+  const result: T[] = []
+  for (const item of [...geo, ...extra]) {
+    const name = item.name.trim()
+    if (!name) continue
+    const key = cityDedupeKey(name)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(item)
+    if (result.length === 20) break
+  }
+  return result
+}
+
 export interface SearchableCountry {
   name: string
   code: string
