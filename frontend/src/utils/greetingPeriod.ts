@@ -1,9 +1,4 @@
-import {
-  fridayGreeting,
-  greetingPools,
-  rainGreeting,
-  type GreetingPeriod,
-} from './greetingCopy'
+import { greetingLines, type GreetingPeriod } from './greetingCopy'
 
 export type { GreetingPeriod }
 
@@ -23,53 +18,20 @@ export function greetingPeriod(date: Date): GreetingPeriod {
   return 'lateNight'
 }
 
-function localDateKey(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-/** 同一天同一时段稳定，隔天换下标。 */
-function hashKey(input: string): number {
-  let hash = 2166136261
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
-}
-
-export function pickPoolLine(date: Date, period: GreetingPeriod): string {
-  const pool = greetingPools[period]
-  const index = hashKey(`${localDateKey(date)}|${period}`) % pool.length
-  return pool[index] ?? pool[0]
-}
-
-function isRainyBrief(weatherBrief: string | null | undefined): boolean {
-  const text = weatherBrief?.trim()
-  if (!text) return false
-  return text.includes('雨')
-}
-
 function fillName(template: string, name: string): string {
   return template.split('{name}').join(name)
 }
 
 /**
- * 深夜永远用深夜池。其余：下雨 > 周五 > 时段池。
- * 下雨只看 weatherBrief，没有实况就不当下雨。
+ * 大标题只看钟点。下雨和周五不再换句。
+ * weatherBrief 仍保留在参数里，调用方不用改，但不再影响句子。
  */
 export function composeGreeting(options: {
   name: string
   now: Date
   weatherBrief?: string | null
 }): string {
-  const period = greetingPeriod(options.now)
-  if (period === 'lateNight') return fillName(pickPoolLine(options.now, period), options.name)
-  if (isRainyBrief(options.weatherBrief)) return fillName(rainGreeting, options.name)
-  if (options.now.getDay() === 5) return fillName(fridayGreeting, options.name)
-  return fillName(pickPoolLine(options.now, period), options.name)
+  return fillName(greetingLines[greetingPeriod(options.now)], options.name)
 }
 
 const WELCOME_NOW = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/

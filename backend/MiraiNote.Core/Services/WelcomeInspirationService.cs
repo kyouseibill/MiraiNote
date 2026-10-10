@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -40,6 +41,8 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         "你只写一句简体中文，20到40个字。" +
         "不要作者，不要出处，不要书名号，不要把两句叠在一起，不要恐吓，不要政治，不要广告，不要链接。" +
         "不要假托任何具体的古典诗词、诗人或篇名。" +
+        "可以轻轻带一点季节或天气的心情，但不要在同一句里既写钟点又写具体气温。" +
+        "不要用城市名当主语开头。" +
         "只输出这一句话本身，不要解释，不要引号。";
 
     private readonly IHttpClientFactory _http;
@@ -75,7 +78,7 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
     public async Task<string?> GetLineAsync(WelcomeInspirationContext context, CancellationToken ct = default)
     {
         var key = CacheKey(context);
-        var cached = await TryReadAsync(key, ct);
+        var cached = await TryReadAsync(key, context.Place, ct);
         if (cached != null)
             return cached;
 
@@ -83,7 +86,7 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         await gate.WaitAsync(ct);
         try
         {
-            cached = await TryReadAsync(key, ct);
+            cached = await TryReadAsync(key, context.Place, ct);
             if (cached != null)
                 return cached;
 
@@ -150,7 +153,7 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         var hour = $"{context.ShanghaiWall.Hour}点";
         if (!WelcomePlace.TrySplit(context.Place, out var country, out var city))
         {
-            return $"季节：{season}\n本地钟点：{hour}\n请写一句鸡汤、短诗或格言。不要出现地点，也不要写天气。";
+            return $"季节：{season}\n本地钟点：{hour}\n请写一句鸡汤、短诗或格言。不要出现地点，也不要写天气。不要在同一句里既写钟点又写具体气温。";
         }
 
         var lines = new List<string>
@@ -165,7 +168,11 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         var temp = QWeatherNow.NormalizeTemp(context.WeatherTemp);
         if (temp != null)
             lines.Add($"气温：{temp}°C");
-        lines.Add("可以轻轻带一点季节或天气，不要写成天气预报，也不要反复点地名。");
+        lines.Add(
+            "可以轻轻带一点季节或天气的心情，不要写成天气预报。" +
+            "不要在同一句里既写钟点又写具体气温。" +
+            $"不要用城市名当主语开头，不要写成「{city}的」。" +
+            "不要反复点地名。");
         return string.Join('\n', lines);
     }
 
@@ -177,18 +184,14 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         _ => "冬",
     };
 
-    /// <summary>空、超过 40 字、叠句、书名号、链接都丢掉。40 字整仍然留下。</summary>
-    public static string? Accept(string? raw, string? apiKey)
+    /// <summary>
+    /// 空、超过 40 字、叠句、书名号、链接都丢掉。40 字整仍然留下。
+    /// 同一句里既有钟点又有具体气温，或用「{城市}的」开头，也丢掉。
+    /// </summary>
+    public static string? Accept(string? raw, string? apiKey, string? place = null)
     {
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        var text = StripFence(raw.Trim());
-        if (text.Contains('\n') || text.Contains('\r'))
-            return null;
-
-        text = text.Trim().Trim('"', '\'', '“', '”', '「', '」', '『', '』').Trim();
-        if (text.Length is 0 or > MaxChars)
+        var text = NormalizeLine(raw);
+        if (text == null || text.Length > MaxChars)
             return null;
         if (!ContainsCjk(text))
             return null;
@@ -200,15 +203,17 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
             return null;
         if (text.Count(ch => ch is '。' or '！' or '？' or '!' or '?') > 1)
             return null;
+        if (LooksLikeForecast(text) || StartsWithCitySubject(text, place))
+            return null;
         if (!string.IsNullOrEmpty(apiKey) && text.Contains(apiKey, StringComparison.Ordinal))
             return null;
         return text;
     }
 
-    private async Task<string?> TryReadAsync(string key, CancellationToken ct)
+    private async Task<string?> TryReadAsync(string key, string? place, CancellationToken ct)
     {
         var cached = await _cache.GetStringAsync(key, ct);
-        return Accept(cached, _options.Value.ApiKey);
+        return Accept(cached, _options.Value.ApiKey, place);
     }
 
     private async Task<string?> GenerateAsync(WelcomeInspirationContext context, CancellationToken ct)
@@ -226,21 +231,18 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
                 new { role = "system", content = SystemPrompt },
                 new { role = "user", content = UserPrompt(context) },
             };
-            var content = await DeepSeekJsonClient.CompleteAsync(
-                client,
-                model,
-                messages,
-                temperature: 0.7,
-                maxTokens: 80,
-                jsonObject: false,
-                timeout: _timeout,
-                timeoutCts.Token,
-                disableThinking: true);
-            return Accept(content, apiKey);
+            var content = await CompleteAsync(client, model, messages, timeoutCts.Token);
+            var line = Accept(content, apiKey, context.Place);
+            if (line != null || !ShouldRetry(content, context.Place) || timeoutCts.IsCancellationRequested)
+                return line;
+
+            _logger.LogInformation("欢迎语小句像天气预报或用城市起句，再要一次");
+            content = await CompleteAsync(client, model, messages, timeoutCts.Token);
+            return Accept(content, apiKey, context.Place);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _logger.LogInformation("欢迎语小句超时，改由页面本地句顶上");
+            _logger.LogInformation("欢迎语小句超时，页面只留问候");
             return null;
         }
         catch (OperationCanceledException)
@@ -265,6 +267,82 @@ public sealed class DeepSeekWelcomeInspiration : IWelcomeInspirationSource
         return Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
             && uri.Scheme is "https" or "http";
     }
+
+    private Task<string> CompleteAsync(HttpClient client, string model, object[] messages, CancellationToken ct) =>
+        DeepSeekJsonClient.CompleteAsync(
+            client,
+            model,
+            messages,
+            temperature: 0.7,
+            maxTokens: 80,
+            jsonObject: false,
+            timeout: _timeout,
+            ct,
+            disableThinking: true);
+
+    /// <summary>像预报或用城市当主语时再要一次。其余不合格直接作废，避免空句和超长句多打一趟。</summary>
+    private static bool ShouldRetry(string? raw, string? place)
+    {
+        var text = NormalizeLine(raw);
+        return text != null && (LooksLikeForecast(text) || StartsWithCitySubject(text, place));
+    }
+
+    private static string? NormalizeLine(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var text = StripFence(raw.Trim());
+        if (text.Contains('\n') || text.Contains('\r'))
+            return null;
+
+        text = text.Trim().Trim('"', '\'', '“', '”', '「', '」', '『', '』').Trim();
+        return text.Length == 0 ? null : text;
+    }
+
+    /// <summary>同一句里既有时段或钟点，又有具体气温。「慢一点」里的「一点」不算钟点。</summary>
+    private static bool LooksLikeForecast(string text) =>
+        HasTimeOfDay(text) && HasNumericTemperature(text);
+
+    private static bool StartsWithCitySubject(string text, string? place)
+    {
+        if (!WelcomePlace.TrySplit(place, out _, out var city))
+            return false;
+        return city.Length > 0 && text.StartsWith(city + "的", StringComparison.Ordinal);
+    }
+
+    private static bool HasTimeOfDay(string text) => TimeOfDay.IsMatch(text);
+
+    private static bool HasNumericTemperature(string text)
+    {
+        if (ArabicTemperature.IsMatch(text) || TemperatureReading.IsMatch(text))
+            return true;
+
+        foreach (Match match in ChineseTemperature.Matches(text))
+        {
+            if (match.Value is "一度" or "两度" && match.Index > 0 && text[match.Index - 1] == '年')
+                continue;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static readonly Regex TimeOfDay = new(
+        @"凌晨|清晨|早晨|早上|上午|中午|午后|下午|傍晚|黄昏|晚上|夜晚|夜里|夜间|深夜|半夜|(?:[01]?\d|2[0-3])\s*[:：]\s*[0-5]\d|(?:[01]?\d|2[0-3]|二十[一二三四]?|十[一二]|[二三四五六七八九十两])\s*[点时]",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex ArabicTemperature = new(
+        @"-?\d+(?:\.\d+)?\s*(?:摄氏)?\s*(?:度|℃|°\s*[CcＣ])",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex ChineseTemperature = new(
+        @"[零〇一二三四五六七八九十百两]{1,6}\s*(?:摄氏)?\s*度",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex TemperatureReading = new(
+        @"(?:气温|温度)\s*(?:零下|负)?\s*(?:-?\d+(?:\.\d+)?|[零〇一二三四五六七八九十百两]{2,6})",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static string TempBandToken(string? temp)
     {

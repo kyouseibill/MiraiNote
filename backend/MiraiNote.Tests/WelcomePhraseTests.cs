@@ -40,25 +40,15 @@ public class WelcomePhraseTests : IDisposable
     }
 
     [Fact]
-    public void Slot_LateNightBeatsRainAndFriday()
+    public void Slot_IsTheClockPeriod_RainAndFridayDoNotChangeIt()
     {
+        var fridayMorning = new DateTime(2026, 10, 9, 10, 0, 0);
         var fridayNight = new DateTime(2026, 10, 9, 23, 30, 0);
         var fridayDawn = new DateTime(2026, 10, 9, 0, 30, 0);
-        Assert.Equal("latenight", WelcomeGreetingService.ResolveSlot(fridayNight, "中雨", new DateOnly(2026, 10, 9)));
-        Assert.Equal("latenight", WelcomeGreetingService.ResolveSlot(fridayDawn, "雷阵雨", new DateOnly(2026, 10, 9)));
-    }
-
-    [Fact]
-    public void Slot_RainBeatsFriday_AndMissingWeatherIsNotRain()
-    {
-        var morning = new DateTime(2026, 10, 9, 10, 0, 0);
-        var friday = new DateOnly(2026, 10, 9);
-        Assert.Equal("rain", WelcomeGreetingService.ResolveSlot(morning, "小雨", friday));
-        Assert.Equal("rain", WelcomeGreetingService.ResolveSlot(morning, " 雷阵雨 ", friday));
-        Assert.Equal("friday", WelcomeGreetingService.ResolveSlot(morning, null, friday));
-        Assert.Equal("friday", WelcomeGreetingService.ResolveSlot(morning, "   ", friday));
-        Assert.Equal("friday", WelcomeGreetingService.ResolveSlot(morning, "多云", friday));
-        Assert.Equal("morning", WelcomeGreetingService.ResolveSlot(new DateTime(2026, 10, 8, 10, 0, 0), "晴", new DateOnly(2026, 10, 8)));
+        Assert.Equal("morning", WelcomeGreetingService.ResolveSlot(fridayMorning));
+        Assert.Equal("latenight", WelcomeGreetingService.ResolveSlot(fridayNight));
+        Assert.Equal("latenight", WelcomeGreetingService.ResolveSlot(fridayDawn));
+        Assert.Equal("morning", WelcomeGreetingService.ResolveSlot(new DateTime(2026, 10, 8, 10, 0, 0)));
     }
 
     [Theory]
@@ -94,42 +84,44 @@ public class WelcomePhraseTests : IDisposable
         var friday = await Greet(db, Shanghai(2026, 10, 9, 10, 0), "晴");
         var noPlace = await GreetWithoutPlace(Shanghai(2026, 10, 8, 10, 0));
 
-        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "雅美"), morning.GreetingLine);
-        Assert.Equal(Line("noon", new DateOnly(2026, 10, 8), "雅美"), noon.GreetingLine);
-        Assert.Equal(Line("afternoon", new DateOnly(2026, 10, 8), "雅美"), afternoon.GreetingLine);
-        Assert.Equal(Line("evening", new DateOnly(2026, 10, 8), "雅美"), evening.GreetingLine);
-        Assert.Equal(Line("latenight", new DateOnly(2026, 10, 9), "雅美"), late.GreetingLine);
-        Assert.Equal("下雨了，雅美，记得带伞", rain.GreetingLine);
-        Assert.Equal("周五了，雅美", friday.GreetingLine);
-        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "雅美"), noPlace.GreetingLine);
+        Assert.Equal("早上好，雅美", morning.GreetingLine);
+        Assert.Equal("中午好，雅美", noon.GreetingLine);
+        Assert.Equal("下午好，雅美", afternoon.GreetingLine);
+        Assert.Equal("晚上好，雅美", evening.GreetingLine);
+        Assert.Equal("夜深了，雅美，早点休息", late.GreetingLine);
+        Assert.Equal("早上好，雅美", rain.GreetingLine);
+        Assert.Equal("早上好，雅美", friday.GreetingLine);
+        Assert.Equal("早上好，雅美", noPlace.GreetingLine);
         Assert.Equal("雅美", morning.Content);
         Assert.Equal("雅美", morning.DisplayName);
         Assert.Null(morning.InspirationLine);
     }
 
     [Fact]
-    public async Task Greeting_IsStableAcrossRefresh_AndChangesTheNextDay()
+    public async Task Greeting_StaysTheSameLineAcrossRefreshAndTheNextDay()
     {
         await using var db = _fx.CreateContext();
         var userId = await db.Users.Select(u => u.Id).SingleAsync();
 
         var first = await Greet(db, Shanghai(2026, 10, 8, 9, 0), null);
         var again = await Greet(db, Shanghai(2026, 10, 8, 9, 30), null);
-        var next = await Greet(db, Shanghai(2026, 10, 9, 9, 0), null);
+        var next = await Greet(db, Shanghai(2026, 10, 9, 9, 0), "小雨");
 
-        Assert.Equal(Line("morning", new DateOnly(2026, 10, 8), "tester"), first.GreetingLine);
+        Assert.Equal("早上好，tester", first.GreetingLine);
         Assert.Equal(first.GreetingLine, again.GreetingLine);
-        Assert.NotEqual(first.GreetingLine, next.GreetingLine);
+        Assert.Equal(first.GreetingLine, next.GreetingLine);
         Assert.Equal(userId, await db.Users.Select(u => u.Id).SingleAsync());
     }
 
     [Fact]
-    public void EmptyPool_ReturnsNull_ButBuiltinPoolsAreFilled()
+    public void FixedTemplates_AreOneLinePerPeriod()
     {
+        Assert.Equal("早上好，{name}", WelcomeGreetingCopy.Template(WelcomeGreetingCopy.Morning));
+        Assert.Equal("中午好，{name}", WelcomeGreetingCopy.Template(WelcomeGreetingCopy.Noon));
+        Assert.Equal("下午好，{name}", WelcomeGreetingCopy.Template(WelcomeGreetingCopy.Afternoon));
+        Assert.Equal("晚上好，{name}", WelcomeGreetingCopy.Template(WelcomeGreetingCopy.Evening));
+        Assert.Equal("夜深了，{name}，早点休息", WelcomeGreetingCopy.Template(WelcomeGreetingCopy.LateNight));
         Assert.Null(WelcomeGreetingService.Pick(Array.Empty<string>(), new DateOnly(2026, 10, 8), "morning"));
-        Assert.NotEmpty(WelcomeGreetingCopy.MorningLines);
-        Assert.NotEmpty(WelcomeGreetingCopy.RainLines);
-        Assert.NotEmpty(WelcomeGreetingCopy.FridayLines);
     }
 
     [Fact]
@@ -153,16 +145,14 @@ public class WelcomePhraseTests : IDisposable
         var shiftedBody = Body(shifted);
         var spaceBody = Body(fromSpace);
         var brokenBody = Body(broken);
-        var morning = Line("morning", new DateOnly(2026, 10, 8), "tester");
-
         Assert.Equal("10月9日 · 周五", ignoredBody.DateLine);
-        Assert.Equal("周五了，tester", ignoredBody.GreetingLine);
+        Assert.Equal("早上好，tester", ignoredBody.GreetingLine);
         Assert.Equal("10月8日 · 周四", shiftedBody.DateLine);
-        Assert.Equal(morning, shiftedBody.GreetingLine);
+        Assert.Equal("早上好，tester", shiftedBody.GreetingLine);
         Assert.Equal("10月8日 · 周四", spaceBody.DateLine);
-        Assert.Equal(morning, spaceBody.GreetingLine);
+        Assert.Equal("早上好，tester", spaceBody.GreetingLine);
         Assert.Equal("10月9日 · 周五", brokenBody.DateLine);
-        Assert.Equal("周五了，tester", brokenBody.GreetingLine);
+        Assert.Equal("早上好，tester", brokenBody.GreetingLine);
         Assert.Null(ignoredBody.InspirationLine);
         Assert.False(WelcomeGreetingService.AllowsWelcomeNowOverride(new TestHostEnvironment("Production")));
         Assert.True(WelcomeGreetingService.AllowsWelcomeNowOverride(new TestHostEnvironment("Development")));
@@ -188,7 +178,7 @@ public class WelcomePhraseTests : IDisposable
             "10月9日 · 周五",
             null,
             null,
-            "周五了，雅美",
+            "早上好，雅美",
             "今天不必赶完所有事，把眼前这一小步走稳。");
         var json = JsonSerializer.Serialize(sample, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Contains("\"inspirationLine\"", json, StringComparison.Ordinal);
@@ -230,12 +220,6 @@ public class WelcomePhraseTests : IDisposable
     }
 
     public void Dispose() => _fx.Dispose();
-
-    private static string Line(string slot, DateOnly day, string name)
-    {
-        var picked = WelcomeGreetingService.Pick(WelcomeGreetingCopy.Lines(slot), day, slot);
-        return WelcomeGreetingService.FillName(picked!, name);
-    }
 
     private static DateTimeOffset Shanghai(int year, int month, int day, int hour, int minute) =>
         new(year, month, day, hour, minute, 0, TimeSpan.FromHours(8));

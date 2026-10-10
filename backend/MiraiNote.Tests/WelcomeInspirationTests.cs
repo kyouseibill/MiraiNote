@@ -58,7 +58,14 @@ public class WelcomeInspirationTests : IDisposable
         Assert.DoesNotContain("暴雨", withoutCity, StringComparison.Ordinal);
         Assert.DoesNotContain("30", withoutCity, StringComparison.Ordinal);
         Assert.Contains("鸡汤", withoutCity, StringComparison.Ordinal);
+        Assert.Contains("既写钟点又写具体气温", withoutCity, StringComparison.Ordinal);
+        Assert.DoesNotContain("多云", withoutCity, StringComparison.Ordinal);
         Assert.Contains("不要假托", DeepSeekWelcomeInspiration.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("既写钟点又写具体气温", DeepSeekWelcomeInspiration.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("不要用城市名当主语开头", DeepSeekWelcomeInspiration.SystemPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("上海", DeepSeekWelcomeInspiration.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("「上海的」", withCity, StringComparison.Ordinal);
+        Assert.Contains("不要写成天气预报", withCity, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -85,6 +92,38 @@ public class WelcomeInspirationTests : IDisposable
         Assert.Null(DeepSeekWelcomeInspiration.Accept("把日子过慢一点。心也就宽一点。", "secret"));
         Assert.Null(DeepSeekWelcomeInspiration.Accept("今天很好secret呀", "secret"));
         Assert.Equal("今天不必赶完所有事，把眼前这一小步走稳。", DeepSeekWelcomeInspiration.Accept("「今天不必赶完所有事，把眼前这一小步走稳。」", "secret"));
+    }
+
+    [Fact]
+    public void Accept_RejectsForecastThatStatesClockAndTemperature()
+    {
+        const string bad = "上海的秋天多云，早晨九点气温二十四度。";
+        Assert.InRange(bad.Length, 1, DeepSeekWelcomeInspiration.MaxChars);
+        Assert.Null(DeepSeekWelcomeInspiration.Accept(bad, "secret", "中国-上海"));
+        Assert.Null(DeepSeekWelcomeInspiration.Accept(bad, "secret"));
+        Assert.Null(DeepSeekWelcomeInspiration.Accept("「" + bad + "」", "secret", "中国-上海"));
+    }
+
+    [Theory]
+    [InlineData("早晨的光很软，适合把一件小事安静做完。", "中国-上海", true)]
+    [InlineData("今天二十四度，心里也可以很轻很安静呀。", "中国-上海", true)]
+    [InlineData("秋日的云很薄，适合把一件小事慢慢做完。", "中国-上海", true)]
+    [InlineData("把步子放慢一点，二十四度的风也刚好。", "中国-上海", true)]
+    [InlineData("早晨想起一年一度的光。", null, true)]
+    [InlineData("上海的秋天云很薄，适合把窗开一条缝。", null, true)]
+    [InlineData("上海的秋天云很薄，适合把窗开一条缝。", "中国-上海", false)]
+    [InlineData("东京的傍晚适合把灯调暗一点。", "日本-东京", false)]
+    [InlineData("东京的傍晚适合把灯调暗一点。", "中国-上海", true)]
+    [InlineData("早晨九点气温二十四度，步子可以放慢些。", null, false)]
+    [InlineData("下午二十四度，窗边可以坐一会儿。", null, false)]
+    [InlineData("9点气温24°C，把步子放慢一点就好。", null, false)]
+    public void Accept_ForecastAndCitySubject(string raw, string? place, bool kept)
+    {
+        var line = DeepSeekWelcomeInspiration.Accept(raw, "secret", place);
+        if (kept)
+            Assert.Equal(raw, line);
+        else
+            Assert.Null(line);
     }
 
     [Fact]
@@ -233,6 +272,42 @@ public class WelcomeInspirationTests : IDisposable
     }
 
     [Fact]
+    public async Task ForecastLine_IsRejected_RetriedOnce_ThenNullAndNotCached()
+    {
+        const string bad = "上海的秋天多云，早晨九点气温二十四度。";
+        var calls = 0;
+        var handler = new ScriptHandler(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(Ok(bad));
+        });
+        var inspiration = Create(handler, DeepSeekWelcomeInspiration.DefaultTimeout);
+
+        Assert.Null(await inspiration.GetLineAsync(Sample()));
+        Assert.Equal(2, calls);
+        Assert.Null(await inspiration.GetLineAsync(Sample()));
+        Assert.Equal(4, calls);
+    }
+
+    [Fact]
+    public async Task ForecastLine_RetriesOnce_AndKeepsTheNextGoodLine()
+    {
+        const string bad = "上海的秋天多云，早晨九点气温二十四度。";
+        var calls = 0;
+        var handler = new ScriptHandler(_ =>
+        {
+            var n = Interlocked.Increment(ref calls);
+            return Task.FromResult(Ok(n == 1 ? bad : Line));
+        });
+        var inspiration = Create(handler, DeepSeekWelcomeInspiration.DefaultTimeout);
+
+        Assert.Equal(Line, await inspiration.GetLineAsync(Sample()));
+        Assert.Equal(2, calls);
+        Assert.Equal(Line, await inspiration.GetLineAsync(Sample()));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task MissingCredentials_ReturnsNullWithoutCalling()
     {
         var calls = 0;
@@ -263,7 +338,7 @@ public class WelcomeInspirationTests : IDisposable
 
         Assert.Equal("tester", greeting.DisplayName);
         Assert.Equal("10月9日 · 周五", greeting.DateLine);
-        Assert.Equal("周五了，tester", greeting.GreetingLine);
+        Assert.Equal("早上好，tester", greeting.GreetingLine);
         Assert.Null(greeting.InspirationLine);
         Assert.Equal(1, source.Calls);
     }

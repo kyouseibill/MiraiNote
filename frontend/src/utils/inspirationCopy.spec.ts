@@ -1,24 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { fallbackInspiration, inspirationFallbacks, resolveInspiration } from './inspirationCopy'
+import { joinWelcomeHeadline, visibleInspiration } from './inspirationCopy'
 
-describe('欢迎语小句回退', () => {
-  const day = new Date(2026, 9, 8, 15, 0, 0)
+describe('欢迎语标题合成', () => {
+  const inspiration = '上海秋日多云，梧桐叶在风里打着旋。'
 
-  it('同一天稳定，空和超长都改用本地句', () => {
-    const local = fallbackInspiration(day)
-    expect(inspirationFallbacks).toContain(local)
-    expect(resolveInspiration(null, day)).toBe(local)
-    expect(resolveInspiration('   ', day)).toBe(local)
-    expect(resolveInspiration('安'.repeat(41), day)).toBe(local)
-    expect(resolveInspiration('今天不必赶完所有事，把眼前这一小步走稳。', day)).toBe('今天不必赶完所有事，把眼前这一小步走稳。')
-    expect(resolveInspiration('安'.repeat(40), day)).toBe('安'.repeat(40))
+  it('有小句时用中文句号接成一行', () => {
+    expect(joinWelcomeHeadline('早上好，Bill', inspiration)).toBe(`早上好，Bill。${inspiration}`)
+    expect(joinWelcomeHeadline('  早上好，Bill  ', `  ${inspiration}  `)).toBe(`早上好，Bill。${inspiration}`)
+    expect(joinWelcomeHeadline('早上好，Bill。', inspiration)).toBe(`早上好，Bill。${inspiration}`)
   })
 
-  it('隔天可以换一句', () => {
-    const lines = new Set<string>()
-    for (let dayOfMonth = 1; dayOfMonth <= 12; dayOfMonth++) {
-      lines.add(fallbackInspiration(new Date(2026, 9, dayOfMonth, 9, 0, 0)))
-    }
-    expect(lines.size).toBeGreaterThan(1)
+  it('小句缺失、失败或空白时只留问候，不加句号，也不留空', () => {
+    expect(joinWelcomeHeadline('早上好，Bill', null)).toBe('早上好，Bill')
+    expect(joinWelcomeHeadline('早上好，Bill', undefined)).toBe('早上好，Bill')
+    expect(joinWelcomeHeadline('早上好，Bill', '   ')).toBe('早上好，Bill')
+    expect(joinWelcomeHeadline('早上好，Bill', '')).toBe('早上好，Bill')
+    expect(joinWelcomeHeadline('早上好，Bill', '安'.repeat(41))).toBe('早上好，Bill')
+    expect(visibleInspiration(null)).toBe('')
+    expect(visibleInspiration('   ')).toBe('')
+  })
+
+  it('合格的小句原样保留', () => {
+    const line = '今天不必赶完所有事，把眼前这一小步走稳。'
+    expect(visibleInspiration(line)).toBe(line)
+    expect(visibleInspiration('安'.repeat(40))).toBe('安'.repeat(40))
+    expect(joinWelcomeHeadline('下午好，雅美', line)).toBe(`下午好，雅美。${line}`)
   })
 })

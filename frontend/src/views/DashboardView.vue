@@ -12,7 +12,7 @@ import { useToast } from '@/composables/useToast'
 import { memoApi } from '@/api/memo'
 import { workLogApi } from '@/api/workLog'
 import { welcomeApi, type WelcomeNewsItem } from '@/api/welcome'
-import { resolveInspiration } from '@/utils/inspirationCopy'
+import { joinWelcomeHeadline } from '@/utils/inspirationCopy'
 import { welcomeNowParam } from '@/utils/welcomeNow'
 import { useAuthStore } from '@/stores/auth'
 import { composeGreeting, resolveGreetingNow } from '@/utils/greetingPeriod'
@@ -27,7 +27,6 @@ const auth = useAuthStore()
 const loading = ref(true)
 /** 初始必须为空，避免把上一句欢迎语留在首屏。 */
 const greeting = ref('')
-const inspirationLine = ref('')
 const featureNote = ref('')
 const weatherWarning = ref('')
 const memoSummary = ref('')
@@ -283,12 +282,11 @@ async function applyWelcome(
   const feature = (welcome?.featureNote ?? '').trim()
   const weather = (welcome?.weatherWarning ?? '').trim()
   const memo = (welcome?.memoSummary ?? '').trim()
-  const inspiration = resolveInspiration(welcome?.inspirationLine, greetingNow())
+  const headline = joinWelcomeHeadline(line, welcome?.inspirationLine)
   const headlines = visibleNews(welcome?.news)
   if (!name && !serverLine) {
     if (!signal.aborted) {
-      greeting.value = line
-      inspirationLine.value = inspiration
+      greeting.value = headline
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -299,14 +297,13 @@ async function applyWelcome(
     return
   }
   if (!signal.aborted) {
-    inspirationLine.value = inspiration
     featureNote.value = feature
     weatherWarning.value = weather
     memoSummary.value = memo
     news.value = headlines
     applyDateLine(welcome?.dateLine, welcome?.weatherBrief)
   }
-  await typewriterReveal(line, signal)
+  await typewriterReveal(headline, signal)
 }
 
 async function load() {
@@ -316,7 +313,6 @@ async function load() {
 
   loading.value = true
   greeting.value = ''
-  inspirationLine.value = ''
   featureNote.value = ''
   weatherWarning.value = ''
   memoSummary.value = ''
@@ -360,7 +356,6 @@ async function load() {
     if (!signal.aborted) {
       loading.value = false
       greeting.value = composeGreeting({ name: fallbackName(), now: greetingNow(), weatherBrief: null })
-      inspirationLine.value = resolveInspiration(null, greetingNow())
       featureNote.value = ''
       weatherWarning.value = ''
       memoSummary.value = ''
@@ -441,9 +436,6 @@ onUnmounted(cancelWelcomeTypewriter)
             <p v-if="weatherWarning" class="mt-3 max-w-[720px] text-[13px] leading-6 text-[#6a3d38]" data-testid="weather-warning">
               {{ weatherWarning }}
               <span class="ml-2 text-[11px] text-[#a39e96]">和风天气</span>
-            </p>
-            <p v-if="inspirationLine" class="mt-3 max-w-[720px] font-serif text-[13px] leading-6 text-[#8a847c]" data-testid="welcome-inspiration">
-              {{ inspirationLine }}
             </p>
             <p v-if="memoSummary" class="mt-3 max-w-[720px] font-serif text-[15px] leading-7 text-[#4a4945]" data-testid="welcome-memo">
               {{ memoSummary }}
@@ -575,25 +567,16 @@ onUnmounted(cancelWelcomeTypewriter)
 
 <style scoped>
 .greeting-stage {
-  position: relative;
-  height: 104px;
-  overflow: hidden;
+  max-width: 720px;
 }
 
 .greeting-copy,
 .greeting-placeholder {
-  position: absolute;
-  inset: 0;
   margin: 0;
 }
 
 .greeting-copy {
-  max-width: 720px;
-  overflow: hidden;
-  line-height: 1.62;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 1.45;
   animation: greeting-enter 360ms ease-out both;
 }
 
@@ -650,8 +633,7 @@ onUnmounted(cancelWelcomeTypewriter)
 }
 
 @media (max-width: 639px) {
-  .greeting-stage { height: 96px; }
-  .greeting-copy { line-height: 1.58; }
+  .greeting-copy { line-height: 1.4; }
 }
 
 @media (prefers-reduced-motion: reduce) {
