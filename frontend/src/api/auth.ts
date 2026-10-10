@@ -18,7 +18,6 @@ import type {
   ResendVerifyTokenRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
-  ChangePasswordRequest,
   MemoReminderSettings,
   UpdateMemoReminderSettingsRequest,
   WelcomeSettings,
@@ -185,10 +184,7 @@ export const authApi = {
     unwrap<null>(http.post('/auth/forgot-password', payload)),
 
   resetPassword: (payload: ResetPasswordRequest) =>
-    unwrap<null>(http.post('/auth/reset-password', payload)),
-
-  changePassword: (payload: ChangePasswordRequest) =>
-    unwrap<null>(http.put('/auth/change-password', payload)),
+    unwrap<null>(http.post('/auth/reset-password', payload, { skipErrorToastStatuses: [400] })),
 
   getMemoReminderSettings: () =>
     unwrap<MemoReminderSettings>(http.get('/auth/memo-reminder-settings')),

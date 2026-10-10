@@ -79,12 +79,6 @@ export interface ForgotPasswordRequest {
 export interface ResetPasswordRequest {
   token: string
   newPassword: string
-}
-
-// 修改密码（字段名与后端 DTO 对齐）
-export interface ChangePasswordRequest {
-  currentPassword: string
-  newPassword: string
   confirmPassword: string
 }
 

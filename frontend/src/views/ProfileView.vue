@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
+import { useResendCooldown } from '@/composables/useResendCooldown'
 import { useRouter } from 'vue-router'
 import { IconLogout } from '@tabler/icons-vue'
 
@@ -10,43 +11,30 @@ const auth = useAuthStore()
 const toast = useToast()
 const router = useRouter()
 
-// ===== 修改密码 =====
-const pwForm = reactive({
-  currentPassword: '',
-  newPassword: '',
-  confirmPassword: '',
-})
-const pwSubmitting = ref(false)
-const pwErrors = reactive({ currentPassword: '', newPassword: '', confirmPassword: '' })
+const RESET_SENT_MESSAGE = '重置邮件已发送，请到邮箱查收（也可能在垃圾箱）'
+const boundEmail = computed(() => auth.user?.email?.trim() ?? '')
+const maskedEmail = computed(() => maskEmail(boundEmail.value))
+const resetSending = ref(false)
+const { remaining: resetCooldown, start: startResetCooldown } = useResendCooldown()
 
-function validatePw(): boolean {
-  pwErrors.currentPassword = ''
-  pwErrors.newPassword = ''
-  pwErrors.confirmPassword = ''
-  let ok = true
-  if (!pwForm.currentPassword) { pwErrors.currentPassword = '请输入当前密码'; ok = false }
-  if (!pwForm.newPassword || pwForm.newPassword.length < 8) { pwErrors.newPassword = '新密码至少 8 位'; ok = false }
-  if (pwForm.newPassword !== pwForm.confirmPassword) { pwErrors.confirmPassword = '两次输入的密码不一致'; ok = false }
-  return ok
+function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@')
+  if (at <= 0 || at === email.length - 1) return ''
+  return `${email.slice(0, 1)}***@${email.slice(at + 1)}`
 }
 
-async function submitPw() {
-  if (!validatePw()) return
-  pwSubmitting.value = true
+async function sendResetEmail() {
+  const email = boundEmail.value
+  if (!email || resetSending.value || resetCooldown.value > 0) return
+  resetSending.value = true
   try {
-    await authApi.changePassword({
-      currentPassword: pwForm.currentPassword,
-      newPassword: pwForm.newPassword,
-      confirmPassword: pwForm.confirmPassword,
-    })
-    toast.success('密码修改成功，请重新登录')
-    // 后端已吊销 refresh token，前端清理并跳转登录
-    auth.clearAuth()
-    router.replace({ name: 'login' })
+    await authApi.forgotPassword({ email })
+    toast.success(RESET_SENT_MESSAGE)
+    startResetCooldown()
   } catch {
     // 拦截器已 toast
   } finally {
-    pwSubmitting.value = false
+    resetSending.value = false
   }
 }
 
@@ -306,63 +294,28 @@ async function handleLogout() {
       </form>
     </section>
 
-    <!-- 修改密码卡 -->
-    <section class="surface-card">
+    <!-- 登录密码：只发重置邮件，不在页面上填写新密码。 -->
+    <section class="surface-card" data-testid="login-password-section">
       <div class="px-6 py-4 border-b border-gray-100">
-        <h2 class="font-semibold text-gray-900">修改密码</h2>
-        <p class="text-sm text-gray-500 mt-0.5">修改后将自动退出，需重新登录</p>
+        <h2 class="font-semibold text-gray-900">登录密码</h2>
+        <p class="text-sm text-gray-500 mt-0.5">通过绑定邮箱收取重置链接，邮件里设置新密码。</p>
       </div>
-
-      <form class="px-6 py-5 space-y-4" @submit.prevent="submitPw">
-        <!-- 当前密码 -->
-        <div>
-          <label class="block text-sm text-gray-700 mb-1">当前密码 <span class="text-red-500">*</span></label>
-          <input
-            v-model="pwForm.currentPassword"
-            type="password"
-            autocomplete="current-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-            :class="pwErrors.currentPassword ? 'border-red-400' : 'border-gray-200'"
-          />
-          <p v-if="pwErrors.currentPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.currentPassword }}</p>
-        </div>
-
-        <!-- 新密码 -->
-        <div>
-          <label class="block text-sm text-gray-700 mb-1">新密码 <span class="text-red-500">*</span></label>
-          <input
-            v-model="pwForm.newPassword"
-            type="password"
-            autocomplete="new-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-            :class="pwErrors.newPassword ? 'border-red-400' : 'border-gray-200'"
-          />
-          <p v-if="pwErrors.newPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.newPassword }}</p>
-        </div>
-
-        <!-- 确认新密码 -->
-        <div>
-          <label class="block text-sm text-gray-700 mb-1">确认新密码 <span class="text-red-500">*</span></label>
-          <input
-            v-model="pwForm.confirmPassword"
-            type="password"
-            autocomplete="new-password"
-            class="w-full h-9 px-3 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-            :class="pwErrors.confirmPassword ? 'border-red-400' : 'border-gray-200'"
-          />
-          <p v-if="pwErrors.confirmPassword" class="mt-1 text-xs text-red-500">{{ pwErrors.confirmPassword }}</p>
-        </div>
-
-        <div class="pt-1">
-          <button
-            type="submit"
-            class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
-            :disabled="pwSubmitting"
-          >
-            {{ pwSubmitting ? '保存中…' : '保存修改' }}
-          </button>
-        </div>
-      </form>
+      <div class="px-6 py-5 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-gray-800" data-testid="masked-email">
+          {{ maskedEmail || '未绑定邮箱' }}
+        </p>
+        <button
+          type="button"
+          class="h-9 px-5 rounded-md bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-60 transition"
+          data-testid="send-reset-email"
+          :disabled="resetSending || resetCooldown > 0 || !boundEmail"
+          @click="sendResetEmail"
+        >
+          <span v-if="resetSending">发送中…</span>
+          <span v-else-if="resetCooldown > 0">{{ resetCooldown }} 秒后可再次发送</span>
+          <span v-else>发送重置邮件</span>
+        </button>
+      </div>
     </section>
 
   </div>

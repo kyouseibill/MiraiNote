@@ -26,7 +26,7 @@ vi.mock('@/api/auth', () => ({
       place: payload.place.trim() || null,
       nickname: payload.nickname.trim() || null,
     })),
-    changePassword: vi.fn(),
+    forgotPassword: vi.fn(),
     logout: vi.fn(),
   },
 }))

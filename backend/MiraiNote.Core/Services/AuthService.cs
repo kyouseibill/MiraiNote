@@ -20,7 +20,8 @@ namespace MiraiNote.Core.Services;
 /// 3. 安全：
 ///    - 密码 BCrypt 哈希
 ///    - 登录连续失败 5 次，账户锁定 15 分钟（IMemoryCache，进程级，重启重置 —— 可接受）
-///    - 重置邮件频率限制基于 IMemoryCache；验证邮件重发次数记在 EmailVerifyToken 表，超限时不发信也不单独报错
+///    - 重置邮件：60 秒内同一账户只保留一封有效发送；1 小时内最多 3 封（IMemoryCache）。超限时不发信也不单独报错
+///    - 验证邮件重发次数记在 EmailVerifyToken 表，超限时不发信也不单独报错
 ///    - 忘记密码无论邮箱是否存在均返回成功，防止账户枚举
 ///    - RefreshToken 入库只存 SHA-256 哈希，原文随响应返回，由 Controller 写入 HttpOnly Cookie
 /// </summary>
@@ -33,11 +34,13 @@ public class AuthService : IAuthService
     private const int MaxFailedAttempts = 5;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
 
-    // 重置邮件频率限制：1 小时内最多 3 封（内存）。验证邮件重发见数据库计数。
+    // 重置邮件：60 秒内同一账户只发一封（数据库，与设置页按钮冷却一致）；1 小时内最多 3 封（内存）。
+    // 验证邮件重发见数据库计数。
     private const int MaxEmailsPerHour = 3;
     private static readonly TimeSpan EmailRateWindow = TimeSpan.FromHours(1);
     private const int MaxVerifyEmailsPerDay = 5;
     private static readonly TimeSpan VerifyEmailMinInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan ResetPasswordMinInterval = VerifyEmailMinInterval;
 
     // Token 有效期
     private static readonly TimeSpan VerifyEmailTokenLifetime = TimeSpan.FromHours(24);
@@ -430,15 +433,36 @@ public class AuthService : IAuthService
             return; // 防止枚举：邮箱不存在也返回成功
         }
 
-        // 频率限制
+        // 短间隔连点只保留已发出的那一封，不另发、不另建令牌。
+        var now = UtcNow();
+        var sentRecently = await _db.EmailVerifyTokens.AnyAsync(t =>
+            t.UserId == user.Id
+            && t.Type == EmailVerifyTokenType.ResetPassword
+            && t.CreatedAt >= now - ResetPasswordMinInterval, ct);
+        if (sentRecently)
+        {
+            return;
+        }
+
+        // 1 小时上限。超限仍对外成功，避免账户枚举。
         try
         {
             EnforceEmailRateLimit($"email:reset:{normalizedEmail}");
         }
         catch (BusinessException)
         {
-            return; // 静默：仍然对外返回成功
+            return;
         }
+
+        var previous = await _db.EmailVerifyTokens
+            .Where(t => t.UserId == user.Id
+                && t.Type == EmailVerifyTokenType.ResetPassword
+                && !t.IsUsed
+                && t.ExpiresAt > now)
+            .ToListAsync(ct);
+        // 新邮件发出后，旧的未使用链接立刻过期，账户上只留这一封有效。
+        foreach (var old in previous)
+            old.ExpiresAt = now.AddSeconds(-1);
 
         var token = Guid.NewGuid().ToString("N");
         _db.EmailVerifyTokens.Add(new EmailVerifyToken
@@ -446,7 +470,7 @@ public class AuthService : IAuthService
             UserId = user.Id,
             Token = token,
             Type = EmailVerifyTokenType.ResetPassword,
-            ExpiresAt = DateTime.UtcNow.Add(ResetPasswordTokenLifetime),
+            ExpiresAt = now.Add(ResetPasswordTokenLifetime),
             IsUsed = false
         });
         await _db.SaveChangesAsync(ct);
@@ -475,7 +499,7 @@ public class AuthService : IAuthService
         {
             throw new BusinessException("链接已使用");
         }
-        if (record.ExpiresAt < DateTime.UtcNow)
+        if (record.ExpiresAt < UtcNow())
         {
             throw new BusinessException("链接已过期");
         }
