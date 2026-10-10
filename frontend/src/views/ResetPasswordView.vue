@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
+import { apiFailure } from '@/utils/apiError'
 import AuthCard from '@/components/AuthCard.vue'
 import FormField from '@/components/FormField.vue'
 import PasswordInput from '@/components/PasswordInput.vue'
@@ -26,7 +27,7 @@ function validate(): boolean {
   for (const k of Object.keys(errors)) delete errors[k]
   if (!token.value) errors.token = '缺少重置令牌，请重新通过邮箱链接进入'
   if (!passwordRe.test(form.newPassword)) errors.newPassword = '密码 8-32 位，须包含字母与数字'
-  if (form.confirmPassword !== form.newPassword) errors.confirmPassword = '两次密码不一致'
+  if (form.confirmPassword !== form.newPassword) errors.confirmPassword = '两次输入的密码不一致'
   return Object.keys(errors).length === 0
 }
 
@@ -34,12 +35,16 @@ async function onSubmit() {
   if (!validate()) return
   loading.value = true
   try {
-    await authApi.resetPassword({ token: token.value, newPassword: form.newPassword })
+    await authApi.resetPassword({
+      token: token.value,
+      newPassword: form.newPassword,
+      confirmPassword: form.confirmPassword,
+    })
     done.value = true
     toast.success('密码已重置，请重新登录')
     setTimeout(() => router.replace({ name: 'login' }), 1200)
-  } catch {
-    // toast
+  } catch (e: unknown) {
+    errors.submit = apiFailure(e, '重置失败，请重新申请邮件链接').message
   } finally {
     loading.value = false
   }
@@ -54,16 +59,16 @@ async function onSubmit() {
     </div>
 
     <form v-else class="space-y-4" @submit.prevent="onSubmit">
-      <div v-if="errors.token" class="rounded-md bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
-        {{ errors.token }}
+      <div v-if="errors.token || errors.submit" data-testid="reset-error" class="rounded-md bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
+        {{ errors.submit || errors.token }}
       </div>
 
       <FormField label="新密码" :error="errors.newPassword" hint="8-32 位，须包含字母与数字">
-        <PasswordInput v-model="form.newPassword" autocomplete="new-password" />
+        <PasswordInput v-model="form.newPassword" autocomplete="new-password" data-testid="new-password" />
       </FormField>
 
       <FormField label="确认新密码" :error="errors.confirmPassword">
-        <PasswordInput v-model="form.confirmPassword" autocomplete="new-password" />
+        <PasswordInput v-model="form.confirmPassword" autocomplete="new-password" data-testid="confirm-password" />
       </FormField>
 
       <button type="submit" class="btn-primary" :disabled="loading || !token">
