@@ -530,7 +530,9 @@ describe('记录此刻', () => {
     await wrapper.get('[data-testid="capture-section-life"]').trigger('click')
     expect(input.attributes('placeholder')).toBe('记一条生活备忘…')
     await input.setValue('买花')
+    expect(wrapper.get('[data-testid="quick-capture-submit"]').attributes('type')).toBe('submit')
     await wrapper.get('[data-testid="quick-capture-submit"]').trigger('click')
+    await wrapper.get('[data-testid="quick-capture"]').trigger('submit')
     await flushPromises()
 
     expect(memoApi.create).toHaveBeenLastCalledWith({ section: 'life', content: '买花', priority: 2 })
