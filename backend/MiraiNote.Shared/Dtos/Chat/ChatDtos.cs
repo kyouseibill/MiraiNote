@@ -180,6 +180,8 @@ public class AgentRunDto
     public string Status { get; set; } = string.Empty;
     public long LastSequence { get; set; }
     public string? FailureMessage { get; set; }
+    /// <summary>仍在排队时的 1-based 位次；已经开始执行则为 null。</summary>
+    public int? QueuePosition { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastActivityAt { get; set; }
     public DateTime? RecoverableAt { get; set; }

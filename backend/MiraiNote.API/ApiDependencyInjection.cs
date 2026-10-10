@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MiraiNote.API.Services;
 using MiraiNote.Core.Services;
+using MiraiNote.Core.Services.AgentRuns;
 using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Shared.Common;
 
@@ -42,6 +43,7 @@ public static class ApiDependencyInjection
         services.Configure<WeatherOptions>(configuration.GetSection(WeatherOptions.SectionName));
         services.Configure<QWeatherOptions>(configuration.GetSection(QWeatherOptions.SectionName));
         services.Configure<FileSystemOptions>(configuration.GetSection(FileSystemOptions.SectionName));
+        services.Configure<AgentRunOptions>(configuration.GetSection(AgentRunOptions.SectionName));
 
         // 当前用户上下文
         services.AddHttpContextAccessor();

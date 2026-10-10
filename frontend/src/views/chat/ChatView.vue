@@ -217,6 +217,10 @@ function readInitialUiMode(): ChatUiMode {
 }
 const uiMode = ref<ChatUiMode>(readInitialUiMode())
 const isWorkMode = computed(() => uiMode.value === 'work')
+const queueStatusText = computed(() => {
+  const position = store.agentQueuePosition
+  return position && position > 0 ? `排队中（第 ${position} 位）` : '排队中'
+})
 const selectedModelKey = ref('')
 const currentModel = computed<AiModel | undefined>(() =>
   store.availableModels.find((model) => model.key === store.currentSession?.modelKey),
@@ -1611,7 +1615,7 @@ async function reloadConversations() {
                 <div v-else class="chat-assistant-content">
                   <details v-if="msg.thinking" class="chat-thinking" @toggle="scrollThinkingToEnd">
                     <summary>
-                      <span>{{ msg.streaming && !msg.answer ? '正在思考' : '思考过程' }}</span>
+                      <span>{{ msg.streaming && store.agentQueued ? '排队中' : (msg.streaming && !msg.answer ? '正在思考' : '思考过程') }}</span>
                     </summary>
                     <div class="chat-markdown" v-html="safeMarkdown(msg.thinking)" @click="onMessageLinkClick" />
                   </details>
@@ -1694,7 +1698,9 @@ async function reloadConversations() {
                   <div v-if="msg.answer" class="chat-markdown" v-html="safeMarkdown(msg.answer)" @click="onMessageLinkClick" />
                   <div v-if="msg.streaming && (!msg.answer || isWorkMode)" class="chat-generation-status" role="status">
                     <IconLoader2 :size="16" class="chat-spin" /><span>{{
-                      store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…')
+                      store.agentQueued
+                        ? queueStatusText
+                        : (store.currentToolCall || (msg.thinking ? '正在组织回答…' : '正在思考，请稍候…'))
                     }}</span>
                   </div>
                 </div>

@@ -22,6 +22,7 @@ export async function consumeSseResponse(
   response: Response,
   onEvent: ParsedSseCallback,
   signal?: AbortSignal,
+  stopWhen?: (event: ParsedSseEvent) => boolean,
 ): Promise<void> {
   if (!response.body) {
     throw new Error('The streaming response has no body')
@@ -37,6 +38,7 @@ export async function consumeSseResponse(
   }
   const decoder = new TextDecoder()
   let buffer = ''
+  let stop = false
 
   const dispatchBlock = (block: string) => {
     let eventType = 'message'
@@ -66,7 +68,9 @@ export async function consumeSseResponse(
     } catch {
       // Plain-text SSE data is valid too.
     }
-    onEvent({ type: eventType, data, id: eventId })
+    const parsed = { type: eventType, data, id: eventId }
+    onEvent(parsed)
+    if (stopWhen?.(parsed)) stop = true
   }
 
   const drainCompleteBlocks = () => {
@@ -80,12 +84,16 @@ export async function consumeSseResponse(
     }
   }
 
-  while (true) {
+  while (!stop) {
     const { done, value } = await reader.read()
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
     drainCompleteBlocks()
+    if (stop) {
+      try { await reader.cancel() } catch { /* 终态后主动关掉读取端 */ }
+      break
+    }
   }
 
   buffer += decoder.decode()
@@ -114,7 +122,7 @@ export async function consumeSseResponseUntilTerminal(
         terminalReceived = true
       }
       onEvent(event)
-    }, signal)
+    }, signal, (event) => event.type === 'done' || event.type === 'error' || event.type === 'stopped')
   } catch (error) {
     // The server may close immediately after its terminal event. The user has
     // already received the real result/error, so do not replace it with a

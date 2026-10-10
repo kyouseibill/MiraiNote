@@ -270,17 +270,25 @@ public class ChatController : ControllerBase
     {
         ConfigureSseResponse();
         long cursor = Math.Max(0, afterSequence);
+        var userId = _currentUser.UserId;
+        int? announcedQueuePosition = null;
+        var announcedQueue = false;
         while (!ct.IsCancellationRequested)
         {
-            var events = await _agentRuns.GetEventsAsync(_currentUser.UserId, runId, cursor, ct);
+            var signalVersion = _agentRuns.CurrentSignalVersion(runId);
+            var events = await _agentRuns.GetEventsAsync(userId, runId, cursor, ct);
+            var sawTerminalEvent = false;
             foreach (var item in events)
             {
                 await Response.WriteAsync($"id: {item.Sequence}\nevent: {item.Type}\ndata: {item.DataJson}\n\n", ct);
                 cursor = item.Sequence;
+                if (IsTerminalStreamEvent(item.Type)) sawTerminalEvent = true;
             }
             if (events.Count > 0) await Response.Body.FlushAsync(ct);
+            // 终态事件本身就该结束响应，不能再等下一次状态轮询。
+            if (sawTerminalEvent) return;
 
-            var run = await _agentRuns.GetAsync(_currentUser.UserId, runId, ct);
+            var run = await _agentRuns.GetAsync(userId, runId, ct);
             if (AgentRunState.IsTerminal(run.Status)) return;
             if (run.Status == AgentRunStatus.Recoverable)
             {
@@ -289,10 +297,22 @@ public class ChatController : ControllerBase
                 return;
             }
 
-            // SQL is the source of truth; bounded polling also works when this API is scaled out.
-            await Task.Delay(TimeSpan.FromMilliseconds(750), ct);
+            if (run.Status == AgentRunStatus.Queued && (!announcedQueue || announcedQueuePosition != run.QueuePosition))
+            {
+                announcedQueue = true;
+                announcedQueuePosition = run.QueuePosition;
+                var payload = JsonSerializer.Serialize(new { status = AgentRunStatus.Queued, position = run.QueuePosition });
+                await Response.WriteAsync($"event: queued\ndata: {payload}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+
+            // 有新事件时由执行器唤醒；信号丢失时最多再等 2 秒，避免空转打库。
+            await _agentRuns.WaitForUpdateAsync(runId, signalVersion, TimeSpan.FromSeconds(2), ct);
         }
     }
+
+    private static bool IsTerminalStreamEvent(string type) =>
+        type is "done" or "error" or "stopped";
 
     [HttpPost("agent-runs/{runId:guid}/stop")]
     public async Task<ActionResult<ApiResponse>> StopAgentRun(Guid runId, CancellationToken ct)
@@ -464,6 +484,7 @@ public class ChatController : ControllerBase
         Response.Headers["Content-Type"] = "text/event-stream; charset=utf-8";
         Response.Headers["Cache-Control"] = "no-cache, no-transform";
         Response.Headers["Connection"] = "keep-alive";
+        // Nginx 需关闭 proxy_buffering，否则会攒完整段再下发，终态后连接也会被拖住。见 PR 说明。
         Response.Headers["X-Accel-Buffering"] = "no";
         HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
     }
@@ -625,6 +646,7 @@ public class ChatController : ControllerBase
         Status = run.Status,
         LastSequence = run.LastSequence,
         FailureMessage = run.FailureMessage,
+        QueuePosition = run.QueuePosition,
         CreatedAt = run.CreatedAt,
         LastActivityAt = run.LastActivityAt,
         RecoverableAt = run.RecoverableAt

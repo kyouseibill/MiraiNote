@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace MiraiNote.Core;
 
@@ -20,6 +21,13 @@ public static class DependencyInjection
         services.AddScoped<Services.IWeeklyReportService, Services.WeeklyReportService>();
         services.AddSingleton<Services.ChatSessionRunGate>();
         services.AddSingleton<Services.AgentRuns.AgentRunDispatcher>();
+        services.AddOptions<Services.AgentRuns.AgentRunOptions>();
+        services.AddSingleton(sp =>
+        {
+            var configured = sp.GetService<IOptions<Services.AgentRuns.AgentRunOptions>>()?.Value
+                ?? new Services.AgentRuns.AgentRunOptions();
+            return new Services.AgentRuns.AgentRunAdmissionQueue(configured.MaxConcurrent, configured.MaxPerUser);
+        });
         services.AddScoped<Services.AgentRuns.IAgentRunService, Services.AgentRuns.AgentRunService>();
         services.AddHostedService<Services.AgentRuns.AgentRunBackgroundService>();
         services.AddScoped<Services.IChatService, Services.ChatService>();

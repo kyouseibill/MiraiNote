@@ -50,4 +50,5 @@ public sealed record AgentRunSnapshot(
     string? FailureMessage,
     DateTime CreatedAt,
     DateTime? LastActivityAt,
-    DateTime? RecoverableAt);
+    DateTime? RecoverableAt,
+    int? QueuePosition = null);

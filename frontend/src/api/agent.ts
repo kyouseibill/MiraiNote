@@ -13,6 +13,7 @@ export type AgentSseEventType =
   | 'confirm'
   | 'context'
   | 'recoverable'
+  | 'queued'
   | 'done'
   | 'stopped'
   | 'error'
@@ -51,6 +52,16 @@ export interface AgentRun {
   lastSequence: number
   failureMessage?: string
   recoverableAt?: string
+  queuePosition?: number | null
+}
+
+const terminalAgentStatuses = new Set(['completed', 'failed', 'stopped'])
+
+/** 终态或可恢复状态不再按“连接中断”自动重连。可恢复由调用方单独轮询。 */
+export function shouldReconnectAgentStream(status: string | undefined): boolean {
+  if (!status) return true
+  if (status === 'recoverable') return false
+  return !terminalAgentStatuses.has(status)
 }
 
 /** Agent 模式消息请求 */
@@ -71,6 +82,42 @@ export interface AgentMessagePayload {
 
 export interface TemporaryAgentMessagePayload extends AgentMessagePayload {
   history: { role: 'user' | 'assistant'; content: string }[]
+}
+
+/**
+ * 连接在终态附近断开时，用相同的 afterSequence 把还没读到的事件（含 done/error/stopped）补拉一次。
+ * 补拉结束后不再重连。
+ */
+export async function replayRemainingAgentEvents(
+  runId: string,
+  afterSequence: number,
+  token: string | null,
+  onEvent: AgentSseCallback,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `${API_BASE_URL}/chat/agent-runs/${encodeURIComponent(runId)}/events?afterSequence=${afterSequence}`
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+      signal,
+    })
+  } catch (error: any) {
+    if (signal?.aborted || error?.name === 'AbortError') throw error
+    return
+  }
+  if (!response.ok) return
+  try {
+    await consumeSseResponseUntilTerminal(response, (event) => {
+      onEvent({ type: event.type as AgentSseEventType, data: event.data })
+    }, signal)
+  } catch (error: any) {
+    if (signal?.aborted || error?.name === 'AbortError') throw error
+  }
 }
 
 export const agentApi = {
@@ -115,6 +162,12 @@ export const agentApi = {
       } catch (error: any) {
         if (signal?.aborted || error?.name === 'AbortError') throw error
         const latest = await unwrap<AgentRun>(http.get(`/chat/agent-runs/${encodeURIComponent(run.runId)}`))
+        if (!shouldReconnectAgentStream(latest.status)) {
+          if (latest.status !== 'recoverable') {
+            await replayRemainingAgentEvents(run.runId, afterSequence, token, onEvent, signal)
+            return
+          }
+        }
         if (latest.status === 'recoverable') {
           onEvent({ type: 'recoverable', data: { runId: run.runId } })
           while (!signal?.aborted) {

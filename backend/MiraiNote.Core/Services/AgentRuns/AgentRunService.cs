@@ -1,6 +1,7 @@
-using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MiraiNote.Core.Services.ChatModels;
 using MiraiNote.Data.Context;
@@ -19,7 +20,13 @@ public interface IAgentRunService
     Task<bool> ConfirmAsync(int userId, Guid runId, bool confirmed, CancellationToken ct);
     Task<bool> ResumeAsync(int userId, Guid runId, CancellationToken ct);
     Task ExecuteAsync(Guid runId, CancellationToken stoppingToken);
+    /// <summary>仅当数据库状态仍是 queued 时领走任务。没有领到时调用方不得占用执行名额。</summary>
+    Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken);
+    /// <summary>执行已经领走的任务。状态已不是 running 时直接返回。</summary>
+    Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken);
     Task RecoverInterruptedRunsAsync(CancellationToken ct);
+    Task WaitForUpdateAsync(Guid runId, int observedSignalVersion, TimeSpan timeout, CancellationToken ct);
+    int CurrentSignalVersion(Guid runId);
 }
 
 /// <summary>
@@ -27,19 +34,37 @@ public interface IAgentRunService
 /// </summary>
 public sealed class AgentRunService : IAgentRunService
 {
+    private const int TokenCoalesceChars = 512;
+    private const long TokenCoalesceWindowMs = 100;
+
     private readonly MiraiNoteDbContext _db;
     private readonly AgentRunDispatcher _dispatcher;
+    private readonly AgentRunAdmissionQueue _admission;
     private readonly IChatService _chatService;
     private readonly IChatModelRegistry _modelRegistry;
     private readonly ILogger<AgentRunService> _logger;
+    private readonly IServiceScopeFactory? _scopes;
+    private readonly StringBuilder _tokenBuffer = new();
+    private long _nextSequence;
+    private bool _ownsSequence;
+    private long _tokenBufferedSince;
 
-    public AgentRunService(MiraiNoteDbContext db, AgentRunDispatcher dispatcher, IChatService chatService, IChatModelRegistry modelRegistry, ILogger<AgentRunService> logger)
+    public AgentRunService(
+        MiraiNoteDbContext db,
+        AgentRunDispatcher dispatcher,
+        AgentRunAdmissionQueue admission,
+        IChatService chatService,
+        IChatModelRegistry modelRegistry,
+        ILogger<AgentRunService> logger,
+        IServiceScopeFactory? scopes = null)
     {
         _db = db;
         _dispatcher = dispatcher;
+        _admission = admission;
         _chatService = chatService;
         _modelRegistry = modelRegistry;
         _logger = logger;
+        _scopes = scopes;
     }
 
     public async Task<AgentRunSnapshot> CreateAsync(int userId, int sessionId, SendMessageRequest request, CancellationToken ct)
@@ -73,20 +98,29 @@ public sealed class AgentRunService : IAgentRunService
         };
         _db.AgentRuns.Add(run);
         await _db.SaveChangesAsync(ct);
-        _dispatcher.Enqueue(run.Id);
-        return ToSnapshot(run, 0);
+        _admission.Enqueue(run.Id, run.UserId);
+        return ToSnapshot(run, 0, _admission.GetPosition(run.Id));
     }
 
     public async Task<AgentRunSnapshot> GetAsync(int userId, Guid runId, CancellationToken ct)
     {
-        var run = await FindOwnedAsync(userId, runId, ct);
-        var lastSequence = await _db.AgentRunEvents.Where(e => e.RunId == runId).Select(e => (long?)e.Sequence).MaxAsync(ct) ?? 0;
-        return ToSnapshot(run, lastSequence);
+        // AsNoTracking：SSE 轮询不能复用第一次读到的 Queued 实体，否则完成后流不会结束。
+        var run = await _db.AgentRuns.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == runId && r.UserId == userId, ct)
+            ?? throw new BusinessException("任务不存在", 404);
+        var lastSequence = await _db.AgentRunEvents.AsNoTracking()
+            .Where(e => e.RunId == runId)
+            .Select(e => (long?)e.Sequence)
+            .MaxAsync(ct) ?? 0;
+        var position = run.Status == AgentRunStatus.Queued ? _admission.GetPosition(run.Id) : null;
+        return ToSnapshot(run, lastSequence, position);
     }
 
     public async Task<IReadOnlyList<AgentRunEventDto>> GetEventsAsync(int userId, Guid runId, long afterSequence, CancellationToken ct)
     {
-        await FindOwnedAsync(userId, runId, ct);
+        var owned = await _db.AgentRuns.AsNoTracking()
+            .AnyAsync(r => r.Id == runId && r.UserId == userId, ct);
+        if (!owned) throw new BusinessException("任务不存在", 404);
         return await _db.AgentRunEvents.AsNoTracking()
             .Where(e => e.RunId == runId && e.Sequence > afterSequence)
             .OrderBy(e => e.Sequence)
@@ -94,61 +128,112 @@ public sealed class AgentRunService : IAgentRunService
             .ToListAsync(ct);
     }
 
+    public int CurrentSignalVersion(Guid runId) => _dispatcher.SignalVersion(runId);
+
+    public Task WaitForUpdateAsync(Guid runId, int observedSignalVersion, TimeSpan timeout, CancellationToken ct) =>
+        _dispatcher.WaitForSignalSinceAsync(runId, observedSignalVersion, timeout, ct);
+
     public async Task<bool> StopAsync(int userId, Guid runId, CancellationToken ct)
     {
-        var run = await FindOwnedAsync(userId, runId, ct);
+        var run = await FindOwnedTrackedAsync(userId, runId, ct);
         if (AgentRunState.IsTerminal(run.Status)) return false;
         run.Status = AgentRunStatus.Stopped;
         run.CompletedAt = DateTime.UtcNow;
         run.LastActivityAt = run.CompletedAt;
         await AppendEventAsync(run, "stopped", "{\"message\":\"已停止\"}", ct);
-        await _db.SaveChangesAsync(ct);
+        await SaveChangesDetachingFailedEventsAsync(ct);
+        // 还排在准入队列里时立刻腾出位置，避免之后被领走并占住名额。
+        _admission.TryRemovePending(runId);
+        _dispatcher.Signal(runId);
         _dispatcher.Stop(runId);
         return true;
     }
 
     public async Task<bool> ConfirmAsync(int userId, Guid runId, bool confirmed, CancellationToken ct)
     {
-        var run = await FindOwnedAsync(userId, runId, ct);
+        var run = await FindOwnedTrackedAsync(userId, runId, ct);
         if (run.Status != AgentRunStatus.AwaitingConfirmation) return false;
         run.Status = AgentRunStatus.Running;
         run.LastActivityAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        _dispatcher.Signal(runId);
         return _dispatcher.Confirm(runId, confirmed);
     }
 
     public async Task<bool> ResumeAsync(int userId, Guid runId, CancellationToken ct)
     {
-        var run = await FindOwnedAsync(userId, runId, ct);
+        var run = await FindOwnedTrackedAsync(userId, runId, ct);
         if (run.Status != AgentRunStatus.Recoverable) return false;
         run.Status = AgentRunStatus.Queued;
         run.RecoverableAt = null;
         run.LastActivityAt = DateTime.UtcNow;
         await AppendEventAsync(run, "context", "{\"message\":\"任务已恢复，正在继续执行\"}", ct);
-        await _db.SaveChangesAsync(ct);
-        _dispatcher.Enqueue(runId);
+        await SaveChangesDetachingFailedEventsAsync(ct);
+        _dispatcher.Signal(runId);
+        _admission.Enqueue(runId, run.UserId);
         return true;
     }
 
     public async Task RecoverInterruptedRunsAsync(CancellationToken ct)
     {
-        var runs = await _db.AgentRuns
+        var runs = await _db.AgentRuns.AsNoTracking()
             .Where(r => r.Status == AgentRunStatus.Queued || r.Status == AgentRunStatus.Running || r.Status == AgentRunStatus.AwaitingConfirmation)
+            .Select(r => new { r.Id, r.Status })
             .ToListAsync(ct);
-        foreach (var run in runs)
+        var now = DateTime.UtcNow;
+        foreach (var row in runs)
         {
-            run.Status = AgentRunStatus.Recoverable;
-            run.RecoverableAt = DateTime.UtcNow;
-            run.LastActivityAt = run.RecoverableAt;
+            // 条件更新：已经从 Queued 被 worker 领走的任务不会被覆盖回 recoverable。
+            var updated = await _db.AgentRuns
+                .Where(r => r.Id == row.Id && r.Status == row.Status)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(r => r.Status, AgentRunStatus.Recoverable)
+                    .SetProperty(r => r.RecoverableAt, now)
+                    .SetProperty(r => r.LastActivityAt, now), ct);
+            if (updated != 1) continue;
+
+            var run = await _db.AgentRuns.FirstAsync(r => r.Id == row.Id, ct);
             await AppendEventAsync(run, "context", "{\"message\":\"服务重启，任务可继续执行\",\"recoverable\":true}", ct);
+            await SaveChangesDetachingFailedEventsAsync(ct);
+            _dispatcher.Signal(run.Id);
         }
-        if (runs.Count > 0) await _db.SaveChangesAsync(ct);
     }
 
     public async Task ExecuteAsync(Guid runId, CancellationToken stoppingToken)
     {
+        if (!await TryClaimQueuedAsync(runId, stoppingToken)) return;
+        await ExecuteClaimedAsync(runId, stoppingToken);
+    }
+
+    public async Task<bool> TryClaimQueuedAsync(Guid runId, CancellationToken stoppingToken)
+    {
+        var now = DateTime.UtcNow;
+        var claimed = await _db.AgentRuns
+            .Where(r => r.Id == runId && r.Status == AgentRunStatus.Queued)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(r => r.Status, AgentRunStatus.Running)
+                .SetProperty(r => r.LastActivityAt, now)
+                .SetProperty(r => r.StartedAt, r => r.StartedAt ?? now), stoppingToken);
+        if (claimed != 1) return false;
+
+        // ExecuteUpdate 不刷新跟踪器。同一上下文里若还留着 Queued 实体，后续 SaveChanges 会把它写回去。
+        foreach (var stale in _db.ChangeTracker.Entries<AgentRun>().Where(e => e.Entity.Id == runId).ToList())
+            stale.State = EntityState.Detached;
+        return true;
+    }
+
+    public async Task ExecuteClaimedAsync(Guid runId, CancellationToken stoppingToken)
+    {
         var run = await _db.AgentRuns.FirstOrDefaultAsync(r => r.Id == runId, stoppingToken);
-        if (run == null || run.Status != AgentRunStatus.Queued) return;
+        if (run == null || run.Status != AgentRunStatus.Running) return;
+
+        _nextSequence = await _db.AgentRunEvents.AsNoTracking()
+            .Where(e => e.RunId == runId)
+            .Select(e => (long?)e.Sequence)
+            .MaxAsync(stoppingToken) ?? 0;
+        _ownsSequence = true;
+        _tokenBuffer.Clear();
+        _tokenBufferedSince = Environment.TickCount64;
 
         var request = JsonSerializer.Deserialize<SendMessageRequest>(run.RequestJson);
         if (request == null)
@@ -158,46 +243,43 @@ public sealed class AgentRunService : IAgentRunService
         }
 
         using var execution = _dispatcher.Begin(runId, stoppingToken);
-        run.Status = AgentRunStatus.Running;
-        run.StartedAt ??= DateTime.UtcNow;
-        run.LastActivityAt = DateTime.UtcNow;
-        await AppendEventAsync(run, "context", "{\"message\":\"任务开始执行\"}", execution.Token);
-        await _db.SaveChangesAsync(execution.Token);
-
-        async Task Callback(string type, string data)
-        {
-            if (run.Status == AgentRunStatus.Stopped) return;
-            await AppendEventAsync(run, type, data, execution.Token);
-            if (type == "user_msg") run.UserMessageId = ReadInt(data, "id") ?? run.UserMessageId;
-            if (type == "tool_result") run.CheckpointJson = data;
-            if (type == "done")
-            {
-                run.AssistantMessageId = ReadInt(data, "messageId") ?? run.AssistantMessageId;
-                run.Status = AgentRunStatus.Completed;
-                run.CompletedAt = DateTime.UtcNow;
-            }
-            else if (type == "error")
-            {
-                run.Status = AgentRunStatus.Failed;
-                run.FailureMessage = ReadString(data, "message");
-                run.CompletedAt = DateTime.UtcNow;
-            }
-            else if (type == "stopped")
-            {
-                run.Status = AgentRunStatus.Stopped;
-                run.CompletedAt = DateTime.UtcNow;
-            }
-            await _db.SaveChangesAsync(execution.Token);
-        }
-
         try
         {
-            // ExistingUserMessageId prevents a recovered run from writing its user prompt twice.
+            await AppendAndSaveAsync(run, "context", "{\"message\":\"任务开始执行\"}", execution.Token);
+
+            async Task Callback(string type, string data)
+            {
+                if (execution.Token.IsCancellationRequested) return;
+                if (type == "token")
+                {
+                    var chunk = TryReadString(data, "content");
+                    if (!string.IsNullOrEmpty(chunk))
+                        _tokenBuffer.Append(chunk);
+                    if (ShouldFlushTokens())
+                        await FlushTokensAsync(run, execution.Token);
+                    return;
+                }
+
+                await FlushTokensAsync(run, execution.Token);
+                var previous = SnapshotMutable(run);
+                ApplyRunUpdate(run, type, data);
+                try
+                {
+                    await AppendAndSaveAsync(run, type, data, execution.Token);
+                }
+                catch
+                {
+                    RestoreMutable(run, previous);
+                    throw;
+                }
+            }
+
             request.ExistingUserMessageId = run.UserMessageId;
             request.ResumeCheckpointJson = run.CheckpointJson;
             await _chatService.SendMessageAgentStreamAsync(
                 run.UserId, run.SessionId, request, Callback,
                 () => WaitForConfirmationAsync(run, execution.Token), execution.Token);
+            await FlushTokensAsync(run, execution.Token);
             if (!AgentRunState.IsTerminal(run.Status) && !execution.Token.IsCancellationRequested)
                 await MarkFailedAsync(run, "任务未返回完成状态", execution.Token);
         }
@@ -207,81 +289,295 @@ public sealed class AgentRunService : IAgentRunService
             // non-terminal so the next process marks it recoverable instead of replaying it.
             if (stoppingToken.IsCancellationRequested)
                 return;
+            DiscardAddedEvents();
+            try { await FlushTokensAsync(run, CancellationToken.None); }
+            catch (Exception flushEx)
+            {
+                _logger.LogWarning(flushEx, "Agent run {RunId} 停止前刷新 token 失败", runId);
+                DiscardAddedEvents();
+            }
             if (run.Status != AgentRunStatus.Stopped)
                 await MarkStoppedAsync(run, CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Agent run {RunId} 执行失败", runId);
+            DiscardAddedEvents();
             await MarkFailedAsync(run, "任务执行失败，请稍后重试", CancellationToken.None);
         }
     }
 
+    private bool ShouldFlushTokens() =>
+        _tokenBuffer.Length >= TokenCoalesceChars
+        || Environment.TickCount64 - _tokenBufferedSince >= TokenCoalesceWindowMs;
+
+    private async Task FlushTokensAsync(AgentRun run, CancellationToken ct)
+    {
+        if (_tokenBuffer.Length == 0) return;
+        var content = _tokenBuffer.ToString();
+        _tokenBuffer.Clear();
+        _tokenBufferedSince = Environment.TickCount64;
+        await AppendAndSaveAsync(run, "token", JsonSerializer.Serialize(new { content }), ct);
+    }
+
     private async Task<bool> WaitForConfirmationAsync(AgentRun run, CancellationToken ct)
     {
+        await FlushTokensAsync(run, ct);
         run.Status = AgentRunStatus.AwaitingConfirmation;
         run.LastActivityAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        _dispatcher.Signal(run.Id);
         return await _dispatcher.WaitForConfirmationAsync(run.Id, ct);
     }
 
     private async Task MarkStoppedAsync(AgentRun run, CancellationToken ct)
     {
         if (AgentRunState.IsTerminal(run.Status)) return;
+        DiscardAddedEvents();
         run.Status = AgentRunStatus.Stopped;
         run.CompletedAt = run.LastActivityAt = DateTime.UtcNow;
-        await AppendEventAsync(run, "stopped", "{\"message\":\"已停止\"}", ct);
-        await _db.SaveChangesAsync(ct);
+        await AppendAndSaveAsync(run, "stopped", "{\"message\":\"已停止\"}", ct);
     }
 
     private async Task MarkFailedAsync(AgentRun run, string message, CancellationToken ct)
     {
         if (AgentRunState.IsTerminal(run.Status)) return;
+        DiscardAddedEvents();
         run.Status = AgentRunStatus.Failed;
         run.FailureMessage = message;
         run.CompletedAt = run.LastActivityAt = DateTime.UtcNow;
-        await AppendEventAsync(run, "error", JsonSerializer.Serialize(new { message }), ct);
-        await _db.SaveChangesAsync(ct);
+        var json = JsonSerializer.Serialize(new { message });
+        try
+        {
+            await AppendAndSaveAsync(run, "error", json, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Agent run {RunId} 失败标记写入被拒绝，改用干净上下文重试", run.Id);
+            DiscardAddedEvents();
+            await WriteTerminalInFreshScopeAsync(run.Id, AgentRunStatus.Failed, message, "error", json);
+        }
+    }
+
+    private async Task WriteTerminalInFreshScopeAsync(Guid runId, string status, string? failure, string eventType, string dataJson)
+    {
+        if (_scopes == null) return;
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MiraiNoteDbContext>();
+        var run = await db.AgentRuns.FirstOrDefaultAsync(r => r.Id == runId);
+        if (run == null || AgentRunState.IsTerminal(run.Status)) return;
+
+        var dbMax = await db.AgentRunEvents.AsNoTracking()
+            .Where(e => e.RunId == runId)
+            .Select(e => (long?)e.Sequence)
+            .MaxAsync() ?? 0;
+        var sequence = Math.Max(dbMax, _ownsSequence ? _nextSequence : 0) + 1;
+        if (_ownsSequence) _nextSequence = sequence;
+
+        run.Status = status;
+        if (status == AgentRunStatus.Failed) run.FailureMessage = failure;
+        run.CompletedAt = run.LastActivityAt = DateTime.UtcNow;
+        db.AgentRunEvents.Add(new AgentRunEvent
+        {
+            RunId = runId,
+            Sequence = sequence,
+            Type = eventType,
+            DataJson = dataJson
+        });
+        await db.SaveChangesAsync();
+        _dispatcher.Signal(runId);
+    }
+
+    private async Task AppendAndSaveAsync(AgentRun run, string type, string dataJson, CancellationToken ct)
+    {
+        await AppendEventAsync(run, type, dataJson, ct);
+        await SaveChangesDetachingFailedEventsAsync(ct);
+        _dispatcher.Signal(run.Id);
     }
 
     private async Task AppendEventAsync(AgentRun run, string type, string dataJson, CancellationToken ct)
     {
-        var next = (await _db.AgentRunEvents.Where(e => e.RunId == run.Id).Select(e => (long?)e.Sequence).MaxAsync(ct) ?? 0) + 1;
-        _db.AgentRunEvents.Add(new AgentRunEvent { RunId = run.Id, Sequence = next, Type = type, DataJson = dataJson });
+        long sequence;
+        if (_ownsSequence)
+        {
+            // 失败后序号只增不减，避免把没写成功的 Sequence 再交给失败标记。
+            sequence = ++_nextSequence;
+        }
+        else
+        {
+            sequence = (await _db.AgentRunEvents.AsNoTracking()
+                .Where(e => e.RunId == run.Id)
+                .Select(e => (long?)e.Sequence)
+                .MaxAsync(ct) ?? 0) + 1;
+        }
+
+        _db.AgentRunEvents.Add(new AgentRunEvent
+        {
+            RunId = run.Id,
+            Sequence = sequence,
+            Type = type,
+            DataJson = dataJson
+        });
         run.LastActivityAt = DateTime.UtcNow;
-        _dispatcher.Signal(run.Id);
     }
 
-    private async Task<AgentRun> FindOwnedAsync(int userId, Guid runId, CancellationToken ct) =>
+    private async Task SaveChangesDetachingFailedEventsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // 失败的 Added 事件若留在跟踪器里，下次 SaveChanges 会连同失败标记一起重试，撞上唯一索引。
+            DiscardAddedEvents();
+            throw;
+        }
+
+        DetachPersistedEvents();
+    }
+
+    private void DiscardAddedEvents()
+    {
+        foreach (var entry in _db.ChangeTracker.Entries<AgentRunEvent>().ToList())
+        {
+            if (entry.State != EntityState.Added) continue;
+            var entity = entry.Entity;
+            entry.State = EntityState.Detached;
+            foreach (var runEntry in _db.ChangeTracker.Entries<AgentRun>().ToList())
+                runEntry.Entity.Events.Remove(entity);
+        }
+    }
+
+    private void DetachPersistedEvents()
+    {
+        foreach (var entry in _db.ChangeTracker.Entries<AgentRunEvent>().ToList())
+        {
+            if (entry.State != EntityState.Unchanged) continue;
+            var entity = entry.Entity;
+            entry.State = EntityState.Detached;
+            foreach (var runEntry in _db.ChangeTracker.Entries<AgentRun>().ToList())
+                runEntry.Entity.Events.Remove(entity);
+        }
+    }
+
+    private async Task<AgentRun> FindOwnedTrackedAsync(int userId, Guid runId, CancellationToken ct) =>
         await _db.AgentRuns.FirstOrDefaultAsync(r => r.Id == runId && r.UserId == userId, ct)
         ?? throw new BusinessException("任务不存在", 404);
 
-    private static AgentRunSnapshot ToSnapshot(AgentRun run, long lastSequence) =>
-        new(run.Id, run.SessionId, run.Status, lastSequence, run.FailureMessage, run.CreatedAt, run.LastActivityAt, run.RecoverableAt);
+    private static AgentRunSnapshot ToSnapshot(AgentRun run, long lastSequence, int? queuePosition = null) =>
+        new(run.Id, run.SessionId, run.Status, lastSequence, run.FailureMessage, run.CreatedAt, run.LastActivityAt, run.RecoverableAt, queuePosition);
 
-    private static int? ReadInt(string json, string name) =>
-        JsonDocument.Parse(json).RootElement.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : null;
-    private static string? ReadString(string json, string name) =>
-        JsonDocument.Parse(json).RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+    private static void ApplyRunUpdate(AgentRun run, string type, string data)
+    {
+        if (type == "user_msg") run.UserMessageId = ReadInt(data, "id") ?? run.UserMessageId;
+        if (type == "tool_result") run.CheckpointJson = data;
+        if (type == "done")
+        {
+            run.AssistantMessageId = ReadInt(data, "messageId") ?? run.AssistantMessageId;
+            run.Status = AgentRunStatus.Completed;
+            run.CompletedAt = DateTime.UtcNow;
+        }
+        else if (type == "error")
+        {
+            run.Status = AgentRunStatus.Failed;
+            run.FailureMessage = TryReadString(data, "message");
+            run.CompletedAt = DateTime.UtcNow;
+        }
+        else if (type == "stopped")
+        {
+            run.Status = AgentRunStatus.Stopped;
+            run.CompletedAt = DateTime.UtcNow;
+        }
+    }
+
+    private readonly record struct MutableSnapshot(
+        string Status,
+        string? FailureMessage,
+        DateTime? CompletedAt,
+        int? UserMessageId,
+        int? AssistantMessageId,
+        string? CheckpointJson);
+
+    private static MutableSnapshot SnapshotMutable(AgentRun run) =>
+        new(run.Status, run.FailureMessage, run.CompletedAt, run.UserMessageId, run.AssistantMessageId, run.CheckpointJson);
+
+    private static void RestoreMutable(AgentRun run, MutableSnapshot snapshot)
+    {
+        run.Status = snapshot.Status;
+        run.FailureMessage = snapshot.FailureMessage;
+        run.CompletedAt = snapshot.CompletedAt;
+        run.UserMessageId = snapshot.UserMessageId;
+        run.AssistantMessageId = snapshot.AssistantMessageId;
+        run.CheckpointJson = snapshot.CheckpointJson;
+    }
+
+    private static int? ReadInt(string json, string name)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : null;
+    }
+
+    private static string? TryReadString(string json, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }
 
-/// <summary>Live-only coordination: queue, cancellation and pending confirmation. Durable state stays in SQL.</summary>
+/// <summary>Live-only coordination: cancellation, confirmation, and subscriber wakeups. Durable state stays in SQL.</summary>
 public sealed class AgentRunDispatcher
 {
-    private readonly System.Threading.Channels.Channel<Guid> _queue = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
-    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _cancellations = new();
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<bool>> _confirmations = new();
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _signals = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource> _cancellations = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, TaskCompletionSource<bool>> _confirmations = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SignalSlot> _signals = new();
 
-    public void Enqueue(Guid runId) => _queue.Writer.TryWrite(runId);
-    public ValueTask<Guid> DequeueAsync(CancellationToken ct) => _queue.Reader.ReadAsync(ct);
     public void Signal(Guid runId)
     {
-        var signal = _signals.GetOrAdd(runId, _ => NewSignal());
-        signal.TrySetResult();
-        _signals[runId] = NewSignal();
+        var slot = _signals.GetOrAdd(runId, static _ => new SignalSlot());
+        lock (slot)
+        {
+            slot.Version++;
+            slot.Pulse.TrySetResult();
+            slot.Pulse = NewSignal();
+        }
     }
-    public Task WaitForSignalAsync(Guid runId, CancellationToken ct) => _signals.GetOrAdd(runId, _ => NewSignal()).Task.WaitAsync(ct);
+
+    public int SignalVersion(Guid runId)
+    {
+        var slot = _signals.GetOrAdd(runId, static _ => new SignalSlot());
+        lock (slot) return slot.Version;
+    }
+
+    public async Task WaitForSignalSinceAsync(Guid runId, int observedVersion, TimeSpan timeout, CancellationToken ct)
+    {
+        var slot = _signals.GetOrAdd(runId, static _ => new SignalSlot());
+        Task task;
+        lock (slot)
+        {
+            if (slot.Version != observedVersion) return;
+            task = slot.Pulse.Task;
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+        try
+        {
+            await task.WaitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 没有新事件时按间隔再读一次库，避免信号丢失后一直挂着。
+        }
+    }
+
     public bool Stop(Guid runId) => _cancellations.TryGetValue(runId, out var cts) && TryCancel(cts);
     public bool Confirm(Guid runId, bool confirmed) => _confirmations.TryRemove(runId, out var tcs) && tcs.TrySetResult(confirmed);
     public async Task<bool> WaitForConfirmationAsync(Guid runId, CancellationToken ct)
@@ -299,7 +595,14 @@ public sealed class AgentRunDispatcher
     }
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static bool TryCancel(CancellationTokenSource cts) { try { cts.Cancel(); return true; } catch (ObjectDisposedException) { return false; } }
-    public sealed class RunLease(ConcurrentDictionary<Guid, CancellationTokenSource> runs, Guid id, CancellationTokenSource cts) : IDisposable
+
+    private sealed class SignalSlot
+    {
+        public int Version;
+        public TaskCompletionSource Pulse = NewSignal();
+    }
+
+    public sealed class RunLease(System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource> runs, Guid id, CancellationTokenSource cts) : IDisposable
     {
         public CancellationToken Token => cts.Token;
         public void Dispose() { runs.TryRemove(id, out _); cts.Dispose(); }

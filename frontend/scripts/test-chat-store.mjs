@@ -39,6 +39,7 @@ function createStore(chatOverrides = {}, agentOverrides = {}) {
   const load = (id) => {
     if (id === '@/api/chat') return { chatApi }
     if (id === '@/api/agent') return { agentApi: agentOverrides }
+    if (id === '@/utils/idempotencyKey') return { createIdempotencyKey: () => `temp-${Math.random().toString(16).slice(2)}` }
     if (id === '@/composables/useToast') return { useToast: () => ({ error: (text) => errors.push(text), info: (text) => errors.push(`info:${text}`), success: () => {}, warning: () => {} }) }
     return require(id)
   }

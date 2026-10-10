@@ -1803,12 +1803,22 @@ public class ChatService : IChatService
         }
     }
 
-    private static string? NormalizeStreamDelta(StringBuilder previous, string? incoming, bool cumulative)
+    /// <summary>
+    /// MiniMax reasoning_split 可能把累计全文放在每个 chunk 里。
+    /// 增量片段通常比已累积文本短，先按长度短路，避免每个 token 都 ToString 整段缓冲。
+    /// </summary>
+    internal static string? NormalizeStreamDelta(StringBuilder previous, string? incoming, bool cumulative)
     {
         if (string.IsNullOrEmpty(incoming)) return incoming;
         if (!cumulative) return incoming;
-        var existing = previous.ToString();
-        return incoming.StartsWith(existing, StringComparison.Ordinal) ? incoming[existing.Length..] : incoming;
+        var existingLength = previous.Length;
+        if (incoming.Length < existingLength) return incoming;
+        for (var i = 0; i < existingLength; i++)
+        {
+            if (previous[i] != incoming[i]) return incoming;
+        }
+
+        return incoming[existingLength..];
     }
 
     /// <summary>
@@ -1829,6 +1839,7 @@ public class ChatService : IChatService
         var reasoningContent = new StringBuilder();
         var receivedReasoningContent = false;
         var toolCalls = new Dictionary<int, ToolCallInfo>(); // index → ToolCallInfo
+        var argumentBuffers = new Dictionary<int, StringBuilder>();
         var finishReason = "";
         var hasReasoningContent = false;
         var reasoningClosed = false;
@@ -1962,7 +1973,20 @@ public class ChatService : IChatService
                                     tc.FunctionName = nameEl.GetString()!;
 
                                 if (funcEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String)
-                                    tc.Arguments += argsEl.GetString(); // 流式参数是增量拼凑的
+                                {
+                                    var chunk = argsEl.GetString();
+                                    if (!string.IsNullOrEmpty(chunk))
+                                    {
+                                        if (!argumentBuffers.TryGetValue(index, out var argumentBuffer))
+                                        {
+                                            argumentBuffer = new StringBuilder();
+                                            if (!string.IsNullOrEmpty(tc.Arguments)) argumentBuffer.Append(tc.Arguments);
+                                            argumentBuffers[index] = argumentBuffer;
+                                        }
+
+                                        argumentBuffer.Append(chunk);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1981,6 +2005,12 @@ public class ChatService : IChatService
                     }
                 }
             }
+        }
+
+        foreach (var (index, argumentBuffer) in argumentBuffers)
+        {
+            if (toolCalls.TryGetValue(index, out var streamedCall))
+                streamedCall.Arguments = argumentBuffer.ToString();
         }
 
         // 每轮流结束：把模型直接写在 content 里的 <think> 变体归一化为 <thinking>
